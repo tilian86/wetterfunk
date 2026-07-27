@@ -672,6 +672,22 @@ function renderModels(md) {
   $('#modelAgree').textContent = verdict;
   $('#modelAgree').dataset.tone = tone;
 
+  // Verlässlichkeit in Klartext, direkt unter der Tagesreihe
+  const sicher = $('#confidence');
+  if (sicher) {
+    const tage = firstBad > 0 ? Math.max(1, Math.round(firstBad / 24)) : 5;
+    const stufe = near < 1.2 ? 'hoch' : near < 2.5 ? 'mittel' : 'gering';
+    sicher.dataset.level = stufe === 'hoch' ? 'good' : stufe === 'mittel' ? 'ok' : 'bad';
+    sicher.innerHTML =
+      `<b>Verlässlichkeit ${stufe}.</b> ` +
+      (stufe === 'hoch'
+        ? `Die Rechenmodelle sind sich für die kommenden Tage weitgehend einig — was hier steht, tritt mit hoher Wahrscheinlichkeit so ein.`
+        : stufe === 'mittel'
+        ? `Für die nächsten ein bis zwei Tage ist die Vorhersage belastbar, danach gehen die Modelle auseinander. Details können sich noch verschieben.`
+        : `Die Modelle rechnen deutlich unterschiedlich. Nimm vor allem die nächsten Stunden ernst, alles Weitere kann sich noch ändern.`) +
+      (firstBad > 0 ? ` Ab etwa ${tage} Tag${tage > 1 ? 'en' : ''} wird es unsicher.` : '');
+  }
+
   const when = firstBad > 0 ? new Date(H.time[i0 + firstBad]) : null;
   $('#modelNote').innerHTML =
     `Temperaturverlauf der nächsten 5 Tage. Das farbige Band zeigt die Spannweite zwischen den Modellen — je schmaler, desto verlässlicher. ` +
@@ -682,6 +698,53 @@ function renderModels(md) {
 }
 
 // ══ Rendering: Detail-Kacheln ══════════════════════════════
+// ══ Sonnenstand ════════════════════════════════════════════
+/** Sonnenhöhe für einen Zeitpunkt (NOAA-Näherung, genügt auf Minuten genau).
+    Damit lassen sich goldene und blaue Stunde sowie die Dämmerungen bestimmen. */
+function sunAltitude(date, lat, lon) {
+  const rad = Math.PI / 180;
+  const d = (date - Date.UTC(2000, 0, 1, 12)) / 86400000;          // Tage seit J2000
+  const g = (357.529 + 0.98560028 * d) * rad;                      // mittlere Anomalie
+  const q = (280.459 + 0.98564736 * d) * rad;                      // mittlere Länge
+  const L = q + (1.915 * Math.sin(g) + 0.020 * Math.sin(2 * g)) * rad;
+  const e = (23.439 - 0.00000036 * d) * rad;
+  const dec = Math.asin(Math.sin(e) * Math.sin(L));
+  const ra = Math.atan2(Math.cos(e) * Math.sin(L), Math.cos(L));
+  const gmst = (18.697374558 + 24.06570982441908 * d) % 24;
+  const lst = ((gmst * 15 + lon) % 360) * rad;
+  const H = lst - ra;
+  const la = lat * rad;
+  return Math.asin(Math.sin(la) * Math.sin(dec) + Math.cos(la) * Math.cos(dec) * Math.cos(H)) / rad;
+}
+
+/** Zeitpunkte suchen, an denen die Sonne eine bestimmte Höhe durchläuft. */
+function sunEvents(day, lat, lon) {
+  const start = new Date(day); start.setHours(0, 0, 0, 0);
+  const marken = [
+    { key: 'astroDaemmerung', h: -18, auf: true },
+    { key: 'blaueStundeMorgen', h: -6, auf: true },
+    { key: 'aufgang', h: -0.833, auf: true },
+    { key: 'goldenEndeMorgen', h: 6, auf: true },
+    { key: 'goldenStartAbend', h: 6, auf: false },
+    { key: 'untergang', h: -0.833, auf: false },
+    { key: 'blaueStundeEndeAbend', h: -6, auf: false },
+    { key: 'astroNacht', h: -18, auf: false }
+  ];
+  const out = {};
+  let vorher = sunAltitude(new Date(start.getTime()), lat, lon);
+  for (let m = 1; m <= 1440; m++) {
+    const t = new Date(start.getTime() + m * 60000);
+    const jetzt = sunAltitude(t, lat, lon);
+    for (const mk of marken) {
+      if (out[mk.key]) continue;
+      const kreuzt = mk.auf ? (vorher < mk.h && jetzt >= mk.h) : (vorher > mk.h && jetzt <= mk.h);
+      if (kreuzt) out[mk.key] = t;
+    }
+    vorher = jetzt;
+  }
+  return out;
+}
+
 const DIRS = ['N', 'NNO', 'NO', 'ONO', 'O', 'OSO', 'SO', 'SSO', 'S', 'SSW', 'SW', 'WSW', 'W', 'WNW', 'NW', 'NNW'];
 const dirName = (deg) => DIRS[Math.round(deg / 22.5) % 16];
 
@@ -744,6 +807,8 @@ function renderTiles(air) {
   const now = Date.now();
   const dayProg = clamp((now - sr) / (ss - sr), 0, 1);
   const sunH = Math.floor((d.sunshine_duration?.[0] ?? 0) / 3600);
+  const minutenTag = Math.round((ss - sr) / 60000);
+  const dayLen = `${Math.floor(minutenTag / 60)} Std. ${minutenTag % 60} Min.`;
   out.push(`<div class="tile t-wide">
     <span class="t-label">Sonne</span>
     <div class="sun-arc">
@@ -758,7 +823,25 @@ function renderTiles(air) {
       </svg>
       <div class="arc-times"><span>↑ ${hhmm(sr)}</span><span>↓ ${hhmm(ss)}</span></div>
     </div>
-    <span class="t-sub">${sunH} Std. Sonnenschein erwartet</span>
+    <span class="t-sub">${sunH} Std. Sonnenschein erwartet · Tag ${dayLen}</span>
+  </div>`);
+
+  // Goldene und blaue Stunde, Dämmerung
+  const ev = sunEvents(new Date(), place.lat, place.lon);
+  const z = (t) => (t ? hhmm(t) : '–');
+  const jetztAlt = sunAltitude(new Date(), place.lat, place.lon);
+  const phase = jetztAlt > 6 ? 'Tag' : jetztAlt > -0.833 ? 'Goldene Stunde'
+    : jetztAlt > -6 ? 'Blaue Stunde' : jetztAlt > -18 ? 'Dämmerung' : 'Nacht';
+
+  out.push(`<div class="tile t-wide">
+    <span class="t-label">Licht &amp; Dämmerung</span>
+    <span class="t-value">${phase} <em>${jetztAlt.toFixed(0)}° Sonnenhöhe</em></span>
+    <div class="light-rows">
+      <div class="lrow"><span class="ld gold"></span><span>Goldene Stunde früh</span><b>${z(ev.aufgang)}–${z(ev.goldenEndeMorgen)}</b></div>
+      <div class="lrow"><span class="ld gold"></span><span>Goldene Stunde abends</span><b>${z(ev.goldenStartAbend)}–${z(ev.untergang)}</b></div>
+      <div class="lrow"><span class="ld blau"></span><span>Blaue Stunde abends</span><b>${z(ev.untergang)}–${z(ev.blaueStundeEndeAbend)}</b></div>
+      <div class="lrow"><span class="ld nacht"></span><span>Astronomische Nacht</span><b>ab ${z(ev.astroNacht)}</b></div>
+    </div>
   </div>`);
 
   // Luftdruck
@@ -810,6 +893,67 @@ function renderTiles(air) {
   }
 
   $('#tiles').innerHTML = out.join('');
+}
+
+// ══ Himmelsereignisse ══════════════════════════════════════
+/** Kuratierte Liste. Wenn ein Termin in die Vorhersage fällt, kommt die
+    Bewölkung dazu — bei Himmelsbeobachtung ist das die entscheidende Frage. */
+const SKY_EVENTS = [
+  { von: '2026-08-12T19:30', bis: '2026-08-12T20:50', titel: 'Partielle Sonnenfinsternis',
+    text: 'In Süddeutschland rund 89 % der Sonnenfläche bedeckt. Beginn am späten Nachmittag, '
+        + 'größte Phase gegen halb neun — die Sonne geht als schmale Sichel unter.',
+    warnung: 'Nie ohne geprüfte Sonnenfinsternisbrille hineinsehen.', icon: 'sofi' },
+  { von: '2026-08-12T22:30', bis: '2026-08-13T04:30', titel: 'Perseiden — Maximum',
+    text: 'Bis zu 60 Sternschnuppen je Stunde, und der Neumond fällt genau auf diese Nacht: '
+        + 'kein Mondlicht stört. Beste Zeit nach Mitternacht, Blick Richtung Nordost.',
+    icon: 'meteor' }
+];
+
+function renderSky() {
+  const box = $('#sky-events');
+  if (!box) return;
+  const jetzt = Date.now();
+  const kommend = SKY_EVENTS
+    .map(e => ({ ...e, start: new Date(e.von), ende: new Date(e.bis) }))
+    .filter(e => e.ende.getTime() > jetzt)
+    .sort((a, b) => a.start - b.start)
+    .slice(0, 3);
+
+  if (!kommend.length) { box.closest('section').hidden = true; return; }
+  box.closest('section').hidden = false;
+
+  const h = data?.hourly;
+  box.innerHTML = kommend.map(e => {
+    const tage = Math.ceil((e.start - jetzt) / 864e5);
+    const wann = e.start.toLocaleDateString('de-DE', { weekday: 'long', day: 'numeric', month: 'long' });
+
+    // Bewölkung nachschlagen, falls der Termin schon in der Vorhersage liegt
+    let sicht = '';
+    if (h) {
+      const i = h.time.findIndex(t => new Date(t) >= e.start);
+      if (i >= 0) {
+        const cc = h.cloud_cover?.[i];
+        if (cc != null) {
+          const gut = cc < 35, mittel = cc < 70;
+          sicht = `<span class="sky-view ${gut ? 'ok' : mittel ? 'mid' : 'bad'}">
+            ${cc}% Bewölkung — ${gut ? 'gute Sicht zu erwarten' : mittel ? 'teils bewölkt' : 'wohl bedeckt'}</span>`;
+        }
+      } else {
+        sicht = `<span class="sky-view wait">Wetter dazu ab etwa ${tage - 9} Tagen vorher absehbar</span>`;
+      }
+    }
+
+    return `<article class="sky-item">
+      <div class="sky-head">
+        <span class="sky-icon ${e.icon}"></span>
+        <span class="sky-when"><b>${e.titel}</b><i>${wann} · ${hhmm(e.start)}–${hhmm(e.ende)} Uhr</i></span>
+        <span class="sky-days">${tage <= 0 ? 'heute' : `in ${tage} Tg.`}</span>
+      </div>
+      <p class="sky-text">${e.text}</p>
+      ${e.warnung ? `<p class="sky-warn">${e.warnung}</p>` : ''}
+      ${sicht}
+    </article>`;
+  }).join('');
 }
 
 // ══ Webcams ════════════════════════════════════════════════
@@ -953,7 +1097,16 @@ async function refresh() {
     renderScrub();
     renderModels(md);
     renderTiles(aq);
+    renderSky();
     renderCams();
+
+    // Radarbilder mitziehen — sonst zeigt die Karte nach dem Aktualisieren
+    // weiter den Stand vom Seitenaufruf.
+    if (radarReady) {
+      Radar.load()
+        .then(() => syncMap(+$('#scrubSlider').value || 0))
+        .catch(e => console.warn('Radar:', e));
+    }
 
     $('#footStamp').textContent =
       `Zuletzt aktualisiert: ${new Date().toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' })} · ` +
@@ -1070,6 +1223,7 @@ async function boot() {
       slider: $('#radarSlider'), play: $('#playBtn'), time: $('#radarTime'),
       legend: $('#radarLegend'), locate: $('#radarLocate'), empty: $('#radarEmpty'),
       globe: $('#radarGlobe'), ticks: $('#radarTicks'),
+      sharp: $('#mapSharp'),
       onLocate: () => Radar.setCenter(place.lat, place.lon)
     });
     await Radar.load();

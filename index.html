@@ -13,10 +13,10 @@
 <meta name="theme-color" content="#0b1220">
 <link rel="apple-touch-icon" href="icons/icon-180.png">
 <link rel="icon" href="icons/icon-192.png">
-<link rel="manifest" href="manifest.webmanifest?v=6">
+<link rel="manifest" href="manifest.webmanifest?v=7">
 
-<link rel="stylesheet" href="vendor/maplibre-gl.css?v=6">
-<link rel="stylesheet" href="css/style.css?v=6">
+<link rel="stylesheet" href="vendor/maplibre-gl.css?v=7">
+<link rel="stylesheet" href="css/style.css?v=7">
 </head>
 <body>
 
@@ -73,6 +73,11 @@
   <section class="card">
     <div class="card-head"><h2>10 Tage</h2><span class="card-sub" id="dailyRange"></span></div>
     <div class="daily" id="daily"></div>
+    <p class="daily-legend">
+      <span class="dl-bar"></span> Balken: Tiefst- bis Höchstwert, im Vergleich zur Woche.
+      Rechts daneben Regenwahrscheinlichkeit oder Sonnenstunden.
+    </p>
+    <p class="confidence" id="confidence"></p>
   </section>
 
   <!-- ══ REGENRADAR ══ -->
@@ -85,6 +90,7 @@
       <div id="map"></div>
       <p class="radar-empty" id="radarEmpty" hidden>Kein Niederschlag im Bild</p>
       <span class="map-mode" id="mapMode" data-mode="radar">Radarmessung</span>
+      <span class="map-sharp" id="mapSharp" hidden>DWD 1 km</span>
       <div class="radar-legend" id="radarLegend"></div>
       <button class="radar-locate" id="radarLocate" aria-label="Auf Standort zentrieren">
         <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3.2"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3"/><circle cx="12" cy="12" r="8"/></svg>
@@ -136,6 +142,15 @@
 
   <!-- ══ DETAILS ══ -->
   <section class="tiles" id="tiles"></section>
+
+  <!-- ══ HIMMELSEREIGNISSE ══ -->
+  <section class="card card-sky" hidden>
+    <div class="card-head">
+      <h2>Am Himmel</h2>
+      <span class="card-sub">demnächst</span>
+    </div>
+    <div id="sky-events"></div>
+  </section>
 
   <!-- ══ GESPROCHENER BERICHT ══ -->
   <section class="card card-brief">
@@ -282,12 +297,12 @@
 
 <div class="toast" id="toast" hidden></div>
 
-<script src="vendor/maplibre-gl.js?v=6"></script>
-<script src="js/icons.js?v=6"></script>
-<script src="js/radar.js?v=6"></script>
-<script src="js/forecast.js?v=6"></script>
-<script src="js/briefing.js?v=6"></script>
-<script src="js/news.js?v=6"></script>
-<script src="js/app.js?v=6"></script>
+<script src="vendor/maplibre-gl.js?v=7"></script>
+<script src="js/icons.js?v=7"></script>
+<script src="js/radar.js?v=7"></script>
+<script src="js/forecast.js?v=7"></script>
+<script src="js/briefing.js?v=7"></script>
+<script src="js/news.js?v=7"></script>
+<script src="js/app.js?v=7"></script>
 </body>
 </html>

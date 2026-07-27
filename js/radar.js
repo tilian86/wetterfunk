@@ -47,6 +47,7 @@ const Radar = (() => {
     // Globus: weit draußen Kugel, beim Hineinzoomen fließend flach
     map.on('style.load', () => {
       try { map.setProjection({ type: 'globe' }); } catch { /* ältere Fassung */ }
+      addDwdLayer();
       addHereMarker();
       ready = true;
       if (frames.length) mountLayers();
@@ -58,6 +59,40 @@ const Radar = (() => {
 
     wireControls();
     return map;
+  }
+
+  /** Das deutsche Radarkomposit des DWD: 1 km Auflösung, beliebig zoombar.
+      Deckt nur Deutschland ab und kennt keine Zeitschritte — deshalb liegt es
+      als scharfe Ebene über dem aktuellsten Bild, während die Animation
+      weiterhin von RainViewer kommt. */
+  function addDwdLayer() {
+    if (map.getSource('dwd')) return;
+    const wms = 'https://maps.dwd.de/geoserver/dwd/wms?service=WMS&version=1.1.1' +
+      '&request=GetMap&layers=dwd:Radar_rv_product_1x1km_ger' +
+      '&bbox={bbox-epsg-3857}&width=512&height=512&srs=EPSG:3857' +
+      '&format=image/png&transparent=true&styles=';
+    map.addSource('dwd', { type: 'raster', tiles: [wms], tileSize: 512 });
+    map.addLayer({
+      id: 'dwd-layer', type: 'raster', source: 'dwd',
+      paint: { 'raster-opacity': 0, 'raster-opacity-transition': { duration: 220 } }
+    });
+  }
+
+  /** Scharfes DWD-Bild nur zeigen, wenn der aktuellste Messwert gemeint ist
+      und gerade nichts abgespielt wird — sonst passt es nicht zur Animation. */
+  function updateSharp() {
+    if (!ready || !map.getLayer('dwd-layer')) return;
+    const letzteMessung = frames.findIndex(f => f.kind === 'now');
+    const istAktuell = idx === (letzteMessung > 0 ? letzteMessung - 1 : frames.length - 1);
+    const an = istAktuell && !playing && !fcVisible;
+    map.setPaintProperty('dwd-layer', 'raster-opacity', an ? 0.85 : 0);
+    frames.forEach((_, n) => {
+      if (map.getLayer(layerId(n))) {
+        map.setPaintProperty(layerId(n), 'raster-opacity',
+          !fcVisible && n === idx ? (an ? 0 : 0.8) : 0);
+      }
+    });
+    if (els.sharp) els.sharp.hidden = !an;
   }
 
   /** Standortpunkt als eigene Ebene, damit er auch auf der Kugel klebt. */
@@ -126,7 +161,11 @@ const Radar = (() => {
       map.addSource(sourceId(i), {
         type: 'raster',
         tiles: [`${host}${f.path}/${TILE}/{z}/{x}/{y}/${COLOR}/${OPTS}.png`],
-        tileSize: TILE
+        tileSize: TILE,
+        // Über Zoom 7 liefert RainViewer kostenlos nur noch ein Bild mit
+        // "Zoom Level Not Supported". Mit maxzoom skaliert MapLibre die
+        // letzte echte Kachel hoch, statt den Platzhalter anzuzeigen.
+        maxzoom: 7
       });
       map.addLayer({
         id: layerId(i), type: 'raster', source: sourceId(i),
@@ -140,14 +179,7 @@ const Radar = (() => {
   function show(i) {
     if (!frames.length) return;
     idx = (i + frames.length) % frames.length;
-
-    if (ready) {
-      frames.forEach((_, n) => {
-        if (map.getLayer(layerId(n))) {
-          map.setPaintProperty(layerId(n), 'raster-opacity', n === idx ? 0.8 : 0);
-        }
-      });
-    }
+    if (ready) updateSharp();
     els.slider.value = String(idx);
 
     const f = frames[idx];
@@ -222,6 +254,7 @@ const Radar = (() => {
   /** Eine leere Karte ist mehrdeutig — kein Regen oder nichts geladen?
       Wir schauen in die Kachel unter der Bildmitte und sagen es ausdrücklich. */
   let fcTimer = null;
+  let fcVisible = false;
   let echoTimer = null;
   function checkEchoes() {
     clearTimeout(echoTimer);
@@ -301,11 +334,8 @@ const Radar = (() => {
   }
 
   function setRadarVisible(on) {
-    frames.forEach((_, n) => {
-      if (map.getLayer(layerId(n))) {
-        map.setPaintProperty(layerId(n), 'raster-opacity', on && n === idx ? 0.8 : 0);
-      }
-    });
+    fcVisible = !on;
+    updateSharp();
   }
 
   return { init, load, setCenter, play, pause, toggle, show, isPlaying,
