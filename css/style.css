@@ -448,9 +448,12 @@ select#bfModel {
   font-size: 11px; line-height: 1.45; color: var(--ink-faint); margin-top: 9px;
 }
 
-/* Regler mit Markierungen darunter */
-.slider-wrap { position: relative; flex: 1; display: block; }
+/* Regler mit Markierungen darunter.
+   width:100% ist zwingend — im Wrapper greift kein flex mehr, und ohne
+   Angabe fällt der Regler auf die Standardbreite von rund 130px zurück. */
+.slider-wrap { position: relative; flex: 1; display: block; min-width: 0; }
 .slider-wrap.wide { width: 100%; margin: 4px 0 2px; }
+.slider-wrap input[type="range"] { width: 100%; display: block; }
 .slider-ticks { position: absolute; left: 0; right: 0; top: 100%; height: 13px; pointer-events: none; }
 .tick-now {
   position: absolute; top: -11px; width: 2px; height: 12px; border-radius: 2px;
@@ -475,16 +478,32 @@ select#bfModel {
 .play-btn.is-playing .ico-pause { display: block; }
 .play-btn:active { transform: scale(.92); }
 
-#radarSlider {
-  flex: 1; height: 4px; -webkit-appearance: none; appearance: none;
-  background: var(--card-hi); border-radius: 3px; outline: none;
+/* Beide Zeitregler gleich: dünne Spur, gut greifbarer Knopf.
+   Die Trefferfläche ist über padding größer als die sichtbare Spur, damit
+   man am Handy nicht auf 4 Pixel zielen muss. */
+#radarSlider, #scrubSlider {
+  -webkit-appearance: none; appearance: none;
+  height: 26px; padding: 11px 0; margin: 0;
+  background: transparent; outline: none; cursor: pointer;
 }
-#radarSlider::-webkit-slider-thumb {
-  -webkit-appearance: none; width: 17px; height: 17px; border-radius: 50%;
-  background: var(--ink); box-shadow: 0 1px 5px rgba(0,0,0,.45); cursor: pointer;
+#radarSlider::-webkit-slider-runnable-track,
+#scrubSlider::-webkit-slider-runnable-track {
+  height: 4px; border-radius: 3px; background: var(--card-hi);
 }
-#radarSlider::-moz-range-thumb {
-  width: 17px; height: 17px; border: 0; border-radius: 50%; background: var(--ink);
+#radarSlider::-moz-range-track,
+#scrubSlider::-moz-range-track {
+  height: 4px; border-radius: 3px; background: var(--card-hi);
+}
+#radarSlider::-webkit-slider-thumb,
+#scrubSlider::-webkit-slider-thumb {
+  -webkit-appearance: none; width: 19px; height: 19px; border-radius: 50%;
+  background: var(--ink); box-shadow: 0 1px 5px rgba(0,0,0,.45);
+  margin-top: -7.5px;                 /* mittig zur 4px-Spur */
+}
+#radarSlider::-moz-range-thumb,
+#scrubSlider::-moz-range-thumb {
+  width: 19px; height: 19px; border: 0; border-radius: 50%;
+  background: var(--ink); box-shadow: 0 1px 5px rgba(0,0,0,.45);
 }
 
 .radar-time {
