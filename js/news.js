@@ -6,7 +6,7 @@
 const News = (() => {
 'use strict';
 
-const API = 'https://api.anthropic.com/v1/messages';
+const DEFAULT_PROXY = 'https://wetterfunk.florian-s-thiel.workers.dev';
 
 /** Ebenen von nah nach fern. `direct: true` = ohne Worker abrufbar. */
 const FEEDS = [
@@ -36,11 +36,8 @@ const store = {
   get(k, fb) { try { return JSON.parse(localStorage.getItem(k)) ?? fb; } catch { return fb; } },
   set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch {} }
 };
-const settings = () => ({
-  key: store.get('wf.aikey', ''),
-  proxy: store.get('wf.proxy', ''),
-  model: store.get('wf.model', 'claude-opus-5')
-});
+const proxyUrl = () => (store.get('wf.proxy', '') || DEFAULT_PROXY).replace(/\/+$/, '');
+const model = () => store.get('wf.model', 'claude-opus-5');
 const count = () => store.get(LS.count, 3);
 
 // ══ Feeds holen ════════════════════════════════════════════
@@ -81,12 +78,8 @@ function parseFeed(xml, feed) {
 }
 
 async function fetchFeeds() {
-  const { proxy } = settings();
   return Promise.all(FEEDS.map(async (f) => {
-    if (!f.direct && !proxy) return { feed: f, items: [], skipped: true };
-    const url = proxy
-      ? `${proxy.replace(/\/+$/, '')}/rss?url=${encodeURIComponent(f.url)}`
-      : f.url;
+    const url = `${proxyUrl()}/rss?url=${encodeURIComponent(f.url)}`;
     try {
       const res = await fetch(url, { cache: 'no-store' });
       if (!res.ok) throw new Error(res.status);
@@ -99,34 +92,16 @@ async function fetchFeeds() {
 }
 
 // ══ Auswerten lassen ═══════════════════════════════════════
-const SCHEMA = {
-  type: 'object',
-  properties: {
-    lage: { type: 'string', description: 'Ein Satz: was ist gerade insgesamt los?' },
-    meldungen: {
-      type: 'array',
-      items: {
-        type: 'object',
-        properties: {
-          nr:       { type: 'integer', description: 'Nummer des Eintrags aus der Liste' },
-          ebene:    { type: 'string', enum: LEVEL_ORDER },
-          titel:    { type: 'string', description: 'Kurze eigene Schlagzeile, höchstens neun Wörter' },
-          kern:     { type: 'string', description: 'Ein Satz mit dem Wesentlichen' },
-          relevanz: { type: 'string', description: 'Sehr kurz: warum das wichtig ist' }
-        },
-        required: ['nr', 'ebene', 'titel', 'kern', 'relevanz'],
-        additionalProperties: false
-      }
-    }
-  },
-  required: ['lage', 'meldungen'],
-  additionalProperties: false
-};
+/** JSON aus einer Antwort ziehen, auch wenn Text drumherum steht. */
+function extractJson(s) {
+  const fenced = s.match(/```(?:json)?\s*([\s\S]*?)```/i);
+  const raw = fenced ? fenced[1] : s;
+  const a = raw.indexOf('{'), b = raw.lastIndexOf('}');
+  if (a < 0 || b <= a) throw new Error('Keine verwertbare Antwort');
+  return JSON.parse(raw.slice(a, b + 1));
+}
 
 async function rank(pool, n) {
-  const { key, proxy, model } = settings();
-  if (!key && !proxy) { host.toast('Zuerst API-Schlüssel eintragen (Wetterbericht → Einstellungen).'); return null; }
-
   const list = pool.map((x, i) =>
     `[${i}] (${x.level}, ${x.source}${x.at ? ', ' + new Date(x.at).toLocaleString('de-DE', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }) : ''})\n` +
     `${x.title}\n${x.teaser}`
@@ -143,35 +118,25 @@ Regeln:
 - Fasse zusammen, schreibe nicht ab. Eigene, knappe Schlagzeile.
 - Keine Dopplungen: dieselbe Sache aus mehreren Quellen nur einmal.
 - "nr" ist immer die Nummer aus der Liste, damit der Verweis stimmt.
-- Erfinde nichts. Nur was in den Meldungen steht.`;
+- Erfinde nichts. Nur was in den Meldungen steht.
 
-  const body = {
-    model,
-    max_tokens: 4000,
-    output_config: { effort: 'low', format: { type: 'json_schema', schema: SCHEMA } },
-    system,
-    messages: [{ role: 'user', content:
-      `Jetzt ist ${new Date().toLocaleString('de-DE')}.\n\nHier sind die Meldungen:\n\n${list}` }]
-  };
+Antworte ausschließlich mit diesem JSON, ohne Text davor oder danach, ohne Code-Zaun:
+{"lage":"ein Satz zur Gesamtlage","meldungen":[{"nr":0,"ebene":"lokal|regional|bundesweit|weltweit","titel":"eigene Schlagzeile, höchstens neun Wörter","kern":"ein Satz mit dem Wesentlichen","relevanz":"sehr kurz, warum das wichtig ist"}]}`;
 
-  const headers = { 'content-type': 'application/json' };
-  const url = proxy ? `${proxy.replace(/\/+$/, '')}/ai` : API;
-  if (!proxy) {
-    headers['x-api-key'] = key;
-    headers['anthropic-version'] = '2023-06-01';
-    headers['anthropic-dangerous-direct-browser-access'] = 'true';
-  }
+  const res = await fetch(`${proxyUrl()}/ai`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({
+      model: model(),
+      effort: 'low',
+      system,
+      user: `Jetzt ist ${new Date().toLocaleString('de-DE')}.\n\nHier sind die Meldungen:\n\n${list}`
+    })
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok || !data.text) throw new Error(data.error || `${res.status} ${res.statusText}`);
 
-  const res = await fetch(url, { method: 'POST', headers, body: JSON.stringify(body) });
-  if (!res.ok) {
-    const e = await res.json().catch(() => null);
-    throw new Error(e?.error?.message || `${res.status} ${res.statusText}`);
-  }
-  const out = await res.json();
-  if (out.stop_reason === 'refusal') throw new Error('Anfrage wurde abgelehnt');
-
-  const txt = (out.content || []).filter(b => b.type === 'text').map(b => b.text).join('');
-  return { parsed: JSON.parse(txt), usage: out.usage, model };
+  return { parsed: extractJson(data.text) };
 }
 
 // ══ Ablauf ═════════════════════════════════════════════════
@@ -187,23 +152,22 @@ async function load() {
       .sort((a, b) => b.at - a.at)
       .slice(0, 60);
 
-    const skipped = results.filter(r => r.skipped).map(r => r.feed.name);
+    const failed = results.filter(r => r.failed).map(r => r.feed.name);
 
     if (!pool.length) {
       $('#newsResult').innerHTML =
-        `<p class="empty">Keine Meldungen abrufbar.${skipped.length
-          ? ` Für ${skipped.join(' und ')} wird der Worker gebraucht — Adresse in den Einstellungen eintragen.` : ''}</p>`;
+        `<p class="empty">Keine Meldungen abrufbar. Läuft der Worker?</p>`;
       return;
     }
 
     const out = await rank(pool, count());
-    if (!out) return;
-
     items = (out.parsed.meldungen || [])
       .map(m => ({ ...m, src: pool[m.nr] }))
       .filter(m => m.src);
 
-    render(out.parsed.lage, out.usage, out.model, skipped);
+    if (!items.length) throw new Error('Keine Meldungen ausgewählt');
+
+    render(out.parsed.lage, failed);
     store.set(LS.cache, { at: Date.now(), lage: out.parsed.lage, items });
   } catch (e) {
     console.error(e);
@@ -223,17 +187,11 @@ function setBusy(on) {
   $('#newsGoLabel').textContent = on ? 'Wird gelesen…' : 'Nachrichtenlage laden';
 }
 
-const COSTS = { 'claude-opus-5': [5, 25], 'claude-sonnet-5': [3, 15], 'claude-haiku-4-5': [1, 5] };
-
 const grouped = () => LEVEL_ORDER
   .map(lv => ({ lv, list: items.filter(m => m.ebene === lv) }))
   .filter(g => g.list.length);
 
-function render(lage, usage, model, skipped) {
-  const [pin, pout] = COSTS[model] || COSTS['claude-opus-5'];
-  const cost = ((usage?.input_tokens ?? 0) / 1e6) * pin + ((usage?.output_tokens ?? 0) / 1e6) * pout;
-  const hasUsage = (usage?.input_tokens ?? 0) > 0;
-
+function render(lage, failed) {
   $('#newsResult').innerHTML = `
     <p class="news-lage">${lage}</p>
     ${grouped().map(g => `
@@ -253,10 +211,9 @@ function render(lage, usage, model, skipped) {
         <svg viewBox="0 0 24 24" class="ico-stop"><rect x="6" y="6" width="12" height="12" rx="2.5"/></svg>
         <span id="newsSpeakLabel">Vorlesen</span>
       </button>
-      ${hasUsage ? `<span class="bf-cost">${(cost * 100).toFixed(1)} Cent
-        <i>${usage.input_tokens} + ${usage.output_tokens} Tokens</i></span>` : ''}
+      <span class="bf-cost"><i>über Max-Abo · keine Zusatzkosten</i></span>
     </div>
-    ${skipped?.length ? `<p class="news-hint">Ohne Worker fehlen: ${skipped.join(', ')}.</p>` : ''}`;
+    ${failed?.length ? `<p class="news-hint">Nicht erreichbar: ${failed.join(', ')}.</p>` : ''}`;
 
   $('#newsSpeak').addEventListener('click', speak);
   setSpeaking(false);
@@ -314,7 +271,7 @@ function init(hostApi) {
   const c = store.get(LS.cache, null);
   if (c?.items?.length && Date.now() - c.at < 36e5) {
     items = c.items;
-    render(c.lage, {}, settings().model, []);
+    render(c.lage, []);
     $('#newsResult').insertAdjacentHTML('afterbegin',
       `<p class="news-hint">Stand ${new Date(c.at).toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' })} Uhr</p>`);
   }

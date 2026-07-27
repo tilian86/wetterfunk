@@ -189,15 +189,13 @@
 <div class="sheet-back" id="bfSheet" hidden>
   <div class="sheet" role="dialog" aria-label="Berichts-Einstellungen">
     <div class="sheet-grip"></div>
-    <h3>Wetterbericht — Einstellungen</h3>
-    <p class="sheet-note">Der Bericht wird von einem Sprachmodell formuliert. Dafür braucht es einen eigenen
-      API-Schlüssel von <b>console.anthropic.com</b>. Er wird nur auf diesem Gerät gespeichert und
-      ausschließlich an Anthropic geschickt.</p>
+    <h3>Bericht & Nachrichten</h3>
+    <p class="sheet-note">Texte werden auf dem Mac von der Claude-CLI geschrieben und laufen damit
+      über das <b>Max-Abo</b> — kein API-Schlüssel, keine Zusatzkosten. Der Mac muss dafür
+      eingeschaltet und online sein.</p>
 
-    <label class="field">
-      <span>Anthropic API-Schlüssel</span>
-      <input type="password" id="bfKey" placeholder="sk-ant-…" autocapitalize="off" spellcheck="false" autocomplete="off">
-    </label>
+    <div class="bridge-status" id="bfStatus">Verbindung noch nicht geprüft</div>
+    <button class="sheet-close check-btn" id="bfCheck">Verbindung prüfen</button>
 
     <label class="field">
       <span>Modell</span>
@@ -205,13 +203,11 @@
     </label>
 
     <details class="adv">
-      <summary>Sicherer: eigener Proxy statt Schlüssel</summary>
-      <p class="sheet-note">Ein Schlüssel im Browser ist auf diesem Gerät auslesbar. Wer das vermeiden will,
-        legt einen Cloudflare Worker an, der den Schlüssel serverseitig hält, und trägt hier nur dessen Adresse ein.
-        Ist ein Proxy eingetragen, wird der Schlüssel oben ignoriert.</p>
+      <summary>Worker-Adresse ändern</summary>
+      <p class="sheet-note">Leer lassen, um die eingebaute Adresse zu nutzen.</p>
       <label class="field">
-        <span>Proxy-Adresse (optional)</span>
-        <input type="url" id="bfProxy" placeholder="https://…workers.dev/" autocapitalize="off" spellcheck="false">
+        <span>Adresse des eigenen Workers</span>
+        <input type="url" id="bfProxy" autocapitalize="off" spellcheck="false">
       </label>
     </details>
 

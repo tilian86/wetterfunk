@@ -321,6 +321,17 @@ select#bfModel {
   -webkit-appearance: none; appearance: none;
 }
 
+.bridge-status {
+  padding: 11px 13px; border-radius: var(--r-md);
+  font-size: 13px; line-height: 1.45; margin-bottom: 9px;
+  background: rgba(255,255,255,.06); border: 1px solid var(--card-line);
+  color: var(--ink-dim);
+}
+.bridge-status.wait { color: var(--ink-dim); }
+.bridge-status.ok   { background: rgba(79,212,138,.13); border-color: rgba(79,212,138,.35); color: var(--good); }
+.bridge-status.bad  { background: rgba(255,107,94,.13); border-color: rgba(255,107,94,.35); color: var(--bad); }
+.check-btn { width: 100%; margin-bottom: 14px; }
+
 .adv { margin: 4px 0 14px; }
 .adv summary {
   font-size: 13px; color: var(--accent); cursor: pointer;

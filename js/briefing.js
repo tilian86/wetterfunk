@@ -1,17 +1,15 @@
 /* Wetterfunk — Gesprochener Wetterbericht
-   Baut aus den geladenen Daten einen Prompt, lässt ihn von Claude formulieren
-   und liest ihn mit der Systemstimme vor. API-Schlüssel bleibt auf dem Gerät. */
+   Baut aus den geladenen Daten einen Prompt, lässt ihn über die Mac-Bridge
+   von der Claude-CLI formulieren (läuft übers Max-Abo, keine API-Kosten)
+   und liest ihn mit der Systemstimme vor. */
 
 const Briefing = (() => {
 'use strict';
 
-const API = 'https://api.anthropic.com/v1/messages';
-
-// Preise in $ je 1 Mio. Tokens (Stand Juli 2026)
 const MODELS = [
-  { id: 'claude-opus-5',  name: 'Opus 5',   note: 'beste Qualität', in: 5,  out: 25 },
-  { id: 'claude-sonnet-5', name: 'Sonnet 5', note: 'günstiger',      in: 3,  out: 15 },
-  { id: 'claude-haiku-4-5', name: 'Haiku 4.5', note: 'am günstigsten', in: 1, out: 5 }
+  { id: 'claude-opus-5',    name: 'Opus 5',    note: 'am gründlichsten' },
+  { id: 'claude-sonnet-5',  name: 'Sonnet 5',  note: 'schneller' },
+  { id: 'claude-haiku-4-5', name: 'Haiku 4.5', note: 'am schnellsten' }
 ];
 
 const PARTS = [
@@ -31,7 +29,11 @@ const LENGTHS = [
   { id: 'lang',  label: 'Ausführlich', words: 320, hint: 'ca. 2 Minuten' }
 ];
 
-const LS = { key: 'wf.aikey', proxy: 'wf.proxy', model: 'wf.model', parts: 'wf.parts', len: 'wf.len' };
+const LS = { proxy: 'wf.proxy', model: 'wf.model', parts: 'wf.parts', len: 'wf.len' };
+
+/** Adresse des eigenen Cloudflare Workers; ohne ihn geht kein Bericht. */
+const DEFAULT_PROXY = 'https://wetterfunk.florian-s-thiel.workers.dev';
+const proxyUrl = () => (store.get(LS.proxy, '') || DEFAULT_PROXY).replace(/\/+$/, '');
 
 let host = null;      // Zustand aus app.js
 let text = '';        // letzter Bericht
@@ -188,67 +190,36 @@ ${buildFacts(parts)}`;
 }
 
 // ══ API-Aufruf ═════════════════════════════════════════════
+/** Schickt eine Textanfrage über den Worker an die Mac-Bridge. */
+async function askBridge(system, user, model) {
+  const res = await fetch(`${proxyUrl()}/ai`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ model, system, user, effort: 'low' })
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok || !data.text) throw new Error(data.error || `${res.status} ${res.statusText}`);
+  return data.text.trim();
+}
+
 async function generate() {
   const parts = selectedParts();
   if (!parts.length) { host.toast('Mindestens einen Punkt auswählen.'); return; }
 
-  const key = store.get(LS.key, '');
-  const proxy = store.get(LS.proxy, '');
-  if (!key && !proxy) { openSettings(); host.toast('Zuerst API-Schlüssel eintragen.'); return; }
-
   const { system, user } = buildPrompt(parts, selectedLength());
   const model = selectedModel();
 
-  const body = {
-    model,
-    max_tokens: 4000,
-    output_config: { effort: 'low' },
-    system,
-    messages: [{ role: 'user', content: user }]
-  };
-
-  const headers = { 'content-type': 'application/json' };
-  let url = proxy || API;
-  if (!proxy) {
-    headers['x-api-key'] = key;
-    headers['anthropic-version'] = '2023-06-01';
-    headers['anthropic-dangerous-direct-browser-access'] = 'true';
-  }
-
   setBusy(true);
   try {
-    const res = await fetch(url, { method: 'POST', headers, body: JSON.stringify(body) });
-    if (!res.ok) {
-      const err = await res.json().catch(() => null);
-      throw new Error(err?.error?.message || `${res.status} ${res.statusText}`);
-    }
-    const out = await res.json();
-
-    if (out.stop_reason === 'refusal') {
-      host.toast('Die Anfrage wurde abgelehnt.');
-      return;
-    }
-
-    text = (out.content || [])
-      .filter(b => b.type === 'text').map(b => b.text).join('\n').trim();
-
+    text = await askBridge(system, user, model);
     if (!text) { host.toast('Keine Antwort erhalten.'); return; }
-
-    renderResult(out.usage, model);
+    renderResult(model);
   } catch (e) {
     console.error(e);
-    host.toast(`Bericht fehlgeschlagen: ${e.message}`.slice(0, 120));
+    host.toast(`Bericht fehlgeschlagen: ${e.message}`.slice(0, 130));
   } finally {
     setBusy(false);
   }
-}
-
-function costOf(usage, modelId) {
-  const m = MODELS.find(x => x.id === modelId) || MODELS[0];
-  const inTok = (usage?.input_tokens ?? 0) + (usage?.cache_read_input_tokens ?? 0)
-              + (usage?.cache_creation_input_tokens ?? 0);
-  const outTok = usage?.output_tokens ?? 0;
-  return (inTok / 1e6) * m.in + (outTok / 1e6) * m.out;
 }
 
 // ══ Vorlesen ═══════════════════════════════════════════════
@@ -304,9 +275,8 @@ function setBusy(on) {
   $('#bfGoLabel').textContent = on ? 'Wird geschrieben…' : 'Bericht erstellen';
 }
 
-function renderResult(usage, model) {
+function renderResult(model) {
   const box = $('#bfResult');
-  const cost = costOf(usage, model);
   const mName = (MODELS.find(m => m.id === model) || {}).name || model;
 
   box.innerHTML = `
@@ -317,8 +287,7 @@ function renderResult(usage, model) {
         <svg viewBox="0 0 24 24" class="ico-stop"><rect x="6" y="6" width="12" height="12" rx="2.5"/></svg>
         <span id="bfSpeakLabel">Vorlesen</span>
       </button>
-      <span class="bf-cost">${mName} · ${(cost * 100).toFixed(1)} Cent
-        <i>${usage?.input_tokens ?? 0} + ${usage?.output_tokens ?? 0} Tokens</i></span>
+      <span class="bf-cost">${mName} <i>über Max-Abo · keine Zusatzkosten</i></span>
     </div>`;
 
   $('#bfSpeak').addEventListener('click', speak);
@@ -353,20 +322,45 @@ function renderChips() {
 
 // ══ Einstellungen ══════════════════════════════════════════
 function openSettings() {
-  $('#bfKey').value = store.get(LS.key, '');
   $('#bfProxy').value = store.get(LS.proxy, '');
+  $('#bfProxy').placeholder = DEFAULT_PROXY;
   const m = selectedModel();
   $('#bfModel').innerHTML = MODELS.map(x =>
-    `<option value="${x.id}"${x.id === m ? ' selected' : ''}>${x.name} — ${x.note} ($${x.in}/$${x.out} je Mio. Tokens)</option>`
+    `<option value="${x.id}"${x.id === m ? ' selected' : ''}>${x.name} — ${x.note}</option>`
   ).join('');
+  checkBridge();
   host.openSheet('#bfSheet');
 }
 
+/** Zeigt in den Einstellungen an, ob der Mac gerade antwortet. */
+async function checkBridge() {
+  const el = $('#bfStatus');
+  if (!el) return;
+  el.className = 'bridge-status wait';
+  el.textContent = 'Prüfe Verbindung zum Mac…';
+  try {
+    const res = await fetch(`${proxyUrl()}/ai`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ model: 'claude-haiku-4-5', system: 'Antworte mit genau einem Wort.', user: 'Sag OK.' })
+    });
+    const d = await res.json().catch(() => ({}));
+    if (res.ok && d.text) {
+      el.className = 'bridge-status ok';
+      el.textContent = '✓ Mac antwortet — Berichte laufen übers Max-Abo.';
+    } else {
+      el.className = 'bridge-status bad';
+      el.textContent = `✕ ${d.error || 'Keine Antwort'}`;
+    }
+  } catch (e) {
+    el.className = 'bridge-status bad';
+    el.textContent = `✕ Worker nicht erreichbar (${e.message})`;
+  }
+}
+
 function saveSettings() {
-  const key = $('#bfKey').value.trim();
   const proxy = $('#bfProxy').value.trim();
-  if (proxy && !/^https:\/\//i.test(proxy)) { host.toast('Proxy-Adresse muss mit https:// beginnen.'); return; }
-  store.set(LS.key, key);
+  if (proxy && !/^https:\/\//i.test(proxy)) { host.toast('Adresse muss mit https:// beginnen.'); return; }
   store.set(LS.proxy, proxy);
   store.set(LS.model, $('#bfModel').value);
   host.closeSheet('#bfSheet');
@@ -380,6 +374,7 @@ function init(hostApi) {
   $('#bfGo').addEventListener('click', generate);
   $('#bfSettings').addEventListener('click', openSettings);
   $('#bfSave').addEventListener('click', saveSettings);
+  $('#bfCheck').addEventListener('click', checkBridge);
   $('#bfClose').addEventListener('click', () => host.closeSheet('#bfSheet'));
   $('#bfSheet').addEventListener('click', e => { if (e.target.id === 'bfSheet') host.closeSheet('#bfSheet'); });
 
