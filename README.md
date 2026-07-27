@@ -17,8 +17,24 @@ Alles läuft im Browser; der Standort verlässt das Gerät nur als Koordinate an
 | Gesprochener Wetterbericht | Claude API + Systemstimme des Geräts |
 | Nachrichtenlage | SWR + tagesschau (RSS), sortiert von Claude |
 
-Wetter und Radar funktionieren ohne jede Einrichtung. Wetterbericht und Nachrichten
-brauchen einen Anthropic-API-Schlüssel.
+Live: **https://tilian86.github.io/wetterfunk/**
+
+## Kein API-Schlüssel
+
+Wetter und Radar laufen komplett ohne Einrichtung.
+
+Wetterbericht und Nachrichten werden **auf dem Mac von der Claude-CLI geschrieben** und
+laufen damit über das Max-Abo — kein API-Schlüssel, keine Zusatzkosten. Der Weg:
+
+```
+Browser  →  Cloudflare Worker  →  Tailscale Funnel  →  Mac-Bridge  →  Claude-CLI
+```
+
+Genutzt wird dieselbe Bridge wie bei Sprechfunk (`~/Projects/apps/sprechfunk/bridge/`,
+LaunchAgent auf Port 8790). Sie ist generisch: `POST /generate` mit `{model, system, user, effort}`.
+
+**Voraussetzung: der Mac läuft und ist online.** Ist er aus, sagt die App das klar —
+es gibt bewusst keinen kostenpflichtigen Ausweichweg.
 
 ## Lokal starten
 
@@ -31,29 +47,21 @@ python3 -m http.server 8099
 Seite in Safari öffnen → Teilen → **Zum Home-Bildschirm**. Danach startet sie
 ohne Browserleiste im Vollbild.
 
-## Wetterbericht und Nachrichten einrichten
+## Worker
 
-Zwei Wege — der zweite ist sicherer:
-
-**A) Schlüssel direkt im Browser**
-API-Schlüssel von console.anthropic.com in *Wetterbericht → Einstellungen* eintragen.
-Er liegt dann im localStorage dieses Geräts. Nachrichten liefern so nur die SWR-Feeds,
-weil tagesschau keinen direkten Browser-Abruf erlaubt (CORS).
-
-**B) Cloudflare Worker** *(empfohlen)*
-Der Schlüssel bleibt auf dem Server, und alle Feeds funktionieren.
+Läuft unter `https://wetterfunk.florian-s-thiel.workers.dev` und macht zweierlei:
+`/rss?url=…` holt Feeds (der Browser darf das wegen CORS nicht selbst) und
+`/ai` reicht Textanfragen an die Bridge weiter.
 
 ```bash
 cd worker
 wrangler deploy
-wrangler secret put ANTHROPIC_API_KEY
+wrangler secret put BRIDGE_URL      # https://macbook-pro.<tailnet>.ts.net
+wrangler secret put BRIDGE_SECRET   # gleicher Wert wie in bridge/secret.txt
 ```
 
-Danach in `worker/worker.js` die eigene Adresse in `ALLOWED_ORIGINS` eintragen,
-neu deployen und die Worker-URL in den App-Einstellungen unter *Proxy-Adresse* hinterlegen.
-
-Kosten: ein Wetterbericht liegt bei rund 1–3 Cent mit Opus 5, deutlich darunter mit
-Sonnet 5 oder Haiku 4.5. Die tatsächlichen Kosten stehen nach jedem Abruf unter dem Text.
+Neue Absender müssen in `ALLOWED_ORIGINS`, neue Feeds in `ALLOWED_FEED_HOSTS` —
+sonst wäre der Worker ein offener Proxy.
 
 ## Aufbau
 
