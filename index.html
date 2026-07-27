@@ -1,0 +1,234 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, maximum-scale=1, user-scalable=no">
+<title>Wetterfunk</title>
+<meta name="description" content="Wetter, Regenradar und Webcams – ohne Tracker.">
+
+<!-- iOS Homescreen -->
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Wetterfunk">
+<meta name="theme-color" content="#0b1220">
+<link rel="apple-touch-icon" href="icons/icon-180.png">
+<link rel="icon" href="icons/icon-192.png">
+<link rel="manifest" href="manifest.webmanifest">
+
+<link rel="stylesheet" href="vendor/leaflet.css">
+<link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+
+<div class="sky" id="sky" aria-hidden="true">
+  <div class="sky-grad"></div>
+  <div class="sky-fx" id="skyFx"></div>
+</div>
+
+<header class="topbar">
+  <button class="place-btn" id="placeBtn" aria-haspopup="dialog">
+    <svg class="pin" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 22s7-6.1 7-11a7 7 0 1 0-14 0c0 4.9 7 11 7 11z"/><circle cx="12" cy="11" r="2.6"/></svg>
+    <span id="placeName">Standort wird geladen…</span>
+    <svg class="chev" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 9l6 6 6-6"/></svg>
+  </button>
+  <button class="icon-btn" id="refreshBtn" aria-label="Aktualisieren">
+    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 11a8 8 0 1 0-.6 4"/><path d="M20 4v7h-7"/></svg>
+  </button>
+</header>
+
+<main id="app">
+
+  <!-- ══ JETZT ══ -->
+  <section class="hero" id="hero">
+    <div class="hero-icon" id="heroIcon"></div>
+    <div class="hero-temp"><span id="heroTemp">–</span><span class="deg">°</span></div>
+    <div class="hero-desc" id="heroDesc">lädt…</div>
+    <div class="hero-meta">
+      <span id="heroFeels"></span>
+      <span class="hi-lo"><b id="heroMax">–°</b> <i id="heroMin">–°</i></span>
+    </div>
+  </section>
+
+  <!-- ══ KLARTEXT ══ -->
+  <p class="verdict" id="verdict"></p>
+
+  <!-- ══ WARNUNGEN (DWD) ══ -->
+  <div id="warnings" class="warnings"></div>
+
+  <!-- ══ NACHRICHTENLAGE ══ -->
+  <section class="card card-news">
+    <div class="card-head">
+      <h2>Nachrichtenlage</h2>
+      <div class="chips chips-len" id="newsCount"></div>
+    </div>
+    <p class="card-note">Das Wichtigste von Tübingen bis weltweit, nach Bedeutung geordnet.</p>
+    <button class="bf-go news-go" id="newsGo">
+      <svg viewBox="0 0 24 24"><path d="M4 5.5h11a1.5 1.5 0 0 1 1.5 1.5v11.5H5.5A1.5 1.5 0 0 1 4 17z"/><path d="M16.5 9.5H19a1 1 0 0 1 1 1V17a1.5 1.5 0 0 1-3 0"/><path d="M7 9h5M7 12h5M7 15h3"/></svg>
+      <span id="newsGoLabel">Nachrichtenlage laden</span>
+    </button>
+    <div id="newsResult" class="news-result"></div>
+  </section>
+
+  <!-- ══ GESPROCHENER BERICHT ══ -->
+  <section class="card card-brief">
+    <div class="card-head">
+      <h2>Wetterbericht</h2>
+      <button class="link-btn" id="bfSettings">⚙︎ Einstellungen</button>
+    </div>
+    <p class="card-note">Was soll drin vorkommen? Der Bericht startet immer beim jetzigen Zeitpunkt.</p>
+    <div class="chips" id="bfParts"></div>
+    <div class="chips chips-len" id="bfLen"></div>
+    <button class="bf-go" id="bfGo">
+      <svg viewBox="0 0 24 24"><path d="M12 3v10.5"/><path d="M8.5 10 12 13.5 15.5 10"/><path d="M4 15v3.5A1.5 1.5 0 0 0 5.5 20h13a1.5 1.5 0 0 0 1.5-1.5V15"/></svg>
+      <span id="bfGoLabel">Bericht erstellen</span>
+    </button>
+    <div id="bfResult" class="bf-result"></div>
+  </section>
+
+  <!-- ══ REGENRADAR ══ -->
+  <section class="card card-radar">
+    <div class="card-head">
+      <h2>Regenradar</h2>
+      <span class="card-sub" id="radarStamp"></span>
+    </div>
+    <div class="radar-wrap">
+      <div id="map"></div>
+      <div class="radar-legend" id="radarLegend"></div>
+      <button class="radar-locate" id="radarLocate" aria-label="Auf Standort zentrieren">
+        <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3.2"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3"/><circle cx="12" cy="12" r="8"/></svg>
+      </button>
+    </div>
+    <div class="radar-ctrl">
+      <button class="play-btn" id="playBtn" aria-label="Animation abspielen">
+        <svg class="ico-play" viewBox="0 0 24 24"><path d="M7 4.5v15l13-7.5z"/></svg>
+        <svg class="ico-pause" viewBox="0 0 24 24"><path d="M8 4.5h3.2v15H8zM12.8 4.5H16v15h-3.2z"/></svg>
+      </button>
+      <input type="range" id="radarSlider" min="0" max="12" value="12" step="1" aria-label="Radar-Zeitpunkt">
+      <span class="radar-time" id="radarTime">–</span>
+    </div>
+  </section>
+
+  <!-- ══ STÜNDLICH ══ -->
+  <section class="card">
+    <div class="card-head"><h2>Stündlich</h2><span class="card-sub">48 Stunden</span></div>
+    <div class="hourly-scroll" id="hourly"></div>
+  </section>
+
+  <!-- ══ 10 TAGE ══ -->
+  <section class="card">
+    <div class="card-head"><h2>10 Tage</h2><span class="card-sub" id="dailyRange"></span></div>
+    <div class="daily" id="daily"></div>
+  </section>
+
+  <!-- ══ MODELLVERGLEICH ══ -->
+  <section class="card">
+    <div class="card-head">
+      <h2>Wettermodelle</h2>
+      <span class="card-sub" id="modelAgree"></span>
+    </div>
+    <p class="card-note" id="modelNote">Wie einig sind sich die großen Rechenmodelle?</p>
+    <div class="model-chart" id="modelChart"></div>
+    <div class="model-legend" id="modelLegend"></div>
+  </section>
+
+  <!-- ══ DETAILS ══ -->
+  <section class="tiles" id="tiles"></section>
+
+  <!-- ══ WEBCAMS ══ -->
+  <section class="card">
+    <div class="card-head">
+      <h2>Webcams</h2>
+      <button class="link-btn" id="camAddBtn">＋ Hinzufügen</button>
+    </div>
+    <div class="cams" id="cams"></div>
+  </section>
+
+  <footer class="foot">
+    <p>Daten: <b>Open-Meteo</b> (DWD ICON-D2, ECMWF, GFS) · Radar: <b>RainViewer</b> · Warnungen: <b>DWD</b> · Karte: <b>OpenStreetMap</b></p>
+    <p class="foot-privacy">Keine Tracker, keine Cookies, keine Konten. Standort bleibt auf dem Gerät.</p>
+    <p class="foot-stamp" id="footStamp"></p>
+  </footer>
+
+</main>
+
+<!-- ══ ORTS-DIALOG ══ -->
+<div class="sheet-back" id="placeSheet" hidden>
+  <div class="sheet" role="dialog" aria-label="Ort wählen">
+    <div class="sheet-grip"></div>
+    <h3>Ort wählen</h3>
+    <div class="search-row">
+      <input type="search" id="placeSearch" placeholder="Stadt suchen…" autocomplete="off" enterkeyhint="search">
+    </div>
+    <button class="gps-btn" id="gpsBtn">
+      <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3.2"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3"/><circle cx="12" cy="12" r="8"/></svg>
+      Aktuellen Standort verwenden
+    </button>
+    <div class="place-results" id="placeResults"></div>
+    <div class="saved-places" id="savedPlaces"></div>
+    <button class="sheet-close" id="placeClose">Schließen</button>
+  </div>
+</div>
+
+<!-- ══ WEBCAM-DIALOG ══ -->
+<div class="sheet-back" id="camSheet" hidden>
+  <div class="sheet" role="dialog" aria-label="Webcam hinzufügen">
+    <div class="sheet-grip"></div>
+    <h3>Webcam hinzufügen</h3>
+    <p class="sheet-note">Direkte Bild-Adresse einer öffentlichen Webcam (endet meist auf <code>.jpg</code>). Wird nur auf diesem Gerät gespeichert.</p>
+    <label class="field"><span>Name</span><input type="text" id="camName" placeholder="z. B. Neckarfront"></label>
+    <label class="field"><span>Bild-URL</span><input type="url" id="camUrl" placeholder="https://…/webcam.jpg" autocapitalize="off" spellcheck="false"></label>
+    <div class="sheet-actions">
+      <button class="btn-primary" id="camSave">Speichern</button>
+      <button class="sheet-close" id="camClose">Abbrechen</button>
+    </div>
+    <div class="cam-manage" id="camManage"></div>
+  </div>
+</div>
+
+<!-- ══ BERICHT-EINSTELLUNGEN ══ -->
+<div class="sheet-back" id="bfSheet" hidden>
+  <div class="sheet" role="dialog" aria-label="Berichts-Einstellungen">
+    <div class="sheet-grip"></div>
+    <h3>Wetterbericht — Einstellungen</h3>
+    <p class="sheet-note">Der Bericht wird von einem Sprachmodell formuliert. Dafür braucht es einen eigenen
+      API-Schlüssel von <b>console.anthropic.com</b>. Er wird nur auf diesem Gerät gespeichert und
+      ausschließlich an Anthropic geschickt.</p>
+
+    <label class="field">
+      <span>Anthropic API-Schlüssel</span>
+      <input type="password" id="bfKey" placeholder="sk-ant-…" autocapitalize="off" spellcheck="false" autocomplete="off">
+    </label>
+
+    <label class="field">
+      <span>Modell</span>
+      <select id="bfModel"></select>
+    </label>
+
+    <details class="adv">
+      <summary>Sicherer: eigener Proxy statt Schlüssel</summary>
+      <p class="sheet-note">Ein Schlüssel im Browser ist auf diesem Gerät auslesbar. Wer das vermeiden will,
+        legt einen Cloudflare Worker an, der den Schlüssel serverseitig hält, und trägt hier nur dessen Adresse ein.
+        Ist ein Proxy eingetragen, wird der Schlüssel oben ignoriert.</p>
+      <label class="field">
+        <span>Proxy-Adresse (optional)</span>
+        <input type="url" id="bfProxy" placeholder="https://…workers.dev/" autocapitalize="off" spellcheck="false">
+      </label>
+    </details>
+
+    <div class="sheet-actions">
+      <button class="btn-primary" id="bfSave">Speichern</button>
+      <button class="sheet-close" id="bfClose">Abbrechen</button>
+    </div>
+  </div>
+</div>
+
+<div class="toast" id="toast" hidden></div>
+
+<script src="vendor/leaflet.js"></script>
+<script src="js/icons.js"></script>
+<script src="js/radar.js"></script>
+<script src="js/briefing.js"></script>
+<script src="js/news.js"></script>
+<script src="js/app.js"></script>
+</body>
+</html>
