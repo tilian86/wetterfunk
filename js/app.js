@@ -559,9 +559,33 @@ function renderScrub() {
       </span>`;
   };
 
-  sl.oninput = paint;
+  sl.oninput = () => { paint(); syncMap(+sl.value); };
   sl.value = '0';
   paint();
+  syncMap(0);
+}
+
+/** Karte an den Zeitstrahl koppeln: bis 30 Minuten zeigt das echte Radar,
+    danach die selbst gezeichnete Flächenvorhersage. */
+function syncMap(k) {
+  if (!radarReady) return;
+  const h = data.hourly;
+  const i0 = nowIndex(h.time);
+  const ziel = new Date(h.time[i0 + k]);
+  const vorlauf = (ziel - Date.now()) / 60000;      // Minuten voraus
+
+  const label = $('#mapMode');
+  if (vorlauf <= 35) {
+    Radar.showRadar();
+    if (label) { label.textContent = 'Radarmessung'; label.dataset.mode = 'radar'; }
+  } else {
+    const hi = Forecast.indexFor(ziel);
+    const ok = hi >= 0 && Radar.showForecast(hi);
+    if (label) {
+      label.textContent = ok ? 'Vorhersage · gröber' : 'Vorhersage nicht geladen';
+      label.dataset.mode = ok ? 'forecast' : 'none';
+    }
+  }
 }
 
 // ══ Rendering: Modellvergleich ═════════════════════════════
@@ -1051,6 +1075,12 @@ async function boot() {
     await Radar.load();
     radarReady = true;
     $('#radarStamp').textContent = 'letzte 2 Std. + Prognose';
+
+    // Flächenvorhersage im Hintergrund nachladen — sie deckt die Zeit ab,
+    // die das Radar nicht mehr schafft.
+    Forecast.load(place.lat, place.lon)
+      .then(() => { if (data) syncMap(+$('#scrubSlider').value || 0); })
+      .catch(e => console.warn('Flächenvorhersage:', e));
   } catch (e) {
     console.warn('Radar:', e);
     $('#radarStamp').textContent = 'nicht verfügbar';

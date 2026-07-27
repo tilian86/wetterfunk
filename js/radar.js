@@ -37,6 +37,7 @@ const Radar = (() => {
       minZoom: 1.3,        // darunter hat die Vektorkarte keine Daten mehr
       maxZoom: 12,
       attributionControl: false,
+      preserveDrawingBuffer: true,   // erlaubt Bildschirmfotos und Prüfung des Kartenbilds
       dragRotate: false,
       pitchWithRotate: false,
       touchZoomRotate: true,
@@ -220,6 +221,7 @@ const Radar = (() => {
 
   /** Eine leere Karte ist mehrdeutig — kein Regen oder nichts geladen?
       Wir schauen in die Kachel unter der Bildmitte und sagen es ausdrücklich. */
+  let fcTimer = null;
   let echoTimer = null;
   function checkEchoes() {
     clearTimeout(echoTimer);
@@ -260,6 +262,52 @@ const Radar = (() => {
 
   const isPlaying = () => playing;
 
+  // ── Flächenvorhersage über die Karte legen ───────────────
+  /** Ab 30 Minuten reicht das Radar nicht mehr. Dann blenden wir die
+      selbst gezeichnete Rastervorhersage ein — gröber, aber über fünf Tage. */
+  function showForecast(hourIndex) {
+    if (!ready || !map || !Forecast.ready()) return false;
+    const bild = Forecast.frame(hourIndex);
+    if (!bild) return false;
+
+    if (!map.getSource('fc')) {
+      map.addSource('fc', {
+        type: 'canvas', canvas: bild,
+        coordinates: Forecast.corners(),
+        animate: true            // MapLibre liest das Canvas nur, solange es läuft
+      });
+      map.addLayer({ id: 'fc-layer', type: 'raster', source: 'fc',
+        paint: { 'raster-opacity': 0.88, 'raster-resampling': 'linear' } }, 'here-halo');
+    } else {
+      // Kurz laufen lassen, damit das neu gezeichnete Bild übernommen wird,
+      // danach anhalten — sonst rendert die Karte dauerhaft weiter.
+      const src = map.getSource('fc');
+      src.play();
+      clearTimeout(fcTimer);
+      fcTimer = setTimeout(() => { try { src.pause(); } catch {} }, 260);
+    }
+    map.setLayoutProperty('fc-layer', 'visibility', 'visible');
+    setRadarVisible(false);
+    els.empty.hidden = true;
+    return true;
+  }
+
+  /** Zurück auf die Radarmessung. */
+  function showRadar() {
+    if (!ready || !map) return;
+    if (map.getLayer('fc-layer')) map.setLayoutProperty('fc-layer', 'visibility', 'none');
+    setRadarVisible(true);
+    show(idx);
+  }
+
+  function setRadarVisible(on) {
+    frames.forEach((_, n) => {
+      if (map.getLayer(layerId(n))) {
+        map.setPaintProperty(layerId(n), 'raster-opacity', on && n === idx ? 0.8 : 0);
+      }
+    });
+  }
+
   return { init, load, setCenter, play, pause, toggle, show, isPlaying,
-           get map() { return map; } };
+           showForecast, showRadar, get map() { return map; } };
 })();

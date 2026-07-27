@@ -4,7 +4,7 @@
 
 // Bei jeder Auslieferung hochzählen — sonst behalten Geräte die alte
 // Programmhülle im Cache und sehen Korrekturen nicht.
-const VERSION = 'wetterfunk-v5';
+const VERSION = 'wetterfunk-v6';
 const SHELL = [
   './',
   './index.html',
@@ -12,6 +12,7 @@ const SHELL = [
   './js/app.js',
   './js/icons.js',
   './js/radar.js',
+  './js/forecast.js',
   './js/briefing.js',
   './js/news.js',
   './vendor/maplibre-gl.js',
