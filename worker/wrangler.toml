@@ -1,6 +1,7 @@
 name = "wetterfunk"
 main = "worker.js"
 compatibility_date = "2026-07-01"
+workers_dev = true
 
 # Schlüssel nicht hier eintragen, sondern:
 #   wrangler secret put ANTHROPIC_API_KEY
