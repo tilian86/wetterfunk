@@ -2,7 +2,9 @@
    Programmhülle offline verfügbar halten. Wetterdaten kommen immer frisch
    aus dem Netz; nur bei Netzausfall greift die letzte Antwort aus dem Cache. */
 
-const VERSION = 'wetterfunk-v1';
+// Bei jeder Auslieferung hochzählen — sonst behalten Geräte die alte
+// Programmhülle im Cache und sehen Korrekturen nicht.
+const VERSION = 'wetterfunk-v2';
 const SHELL = [
   './',
   './index.html',
