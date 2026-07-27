@@ -13,6 +13,7 @@ const Radar = (() => {
   let layers = [];          // parallel zu frames
   let idx = 0, timer = null, playing = false;
   let els = {};
+  let host = 'https://tilecache.rainviewer.com';
   let onFrame = () => {};
 
   // ── Karte aufbauen ───────────────────────────────────────
@@ -25,8 +26,18 @@ const Radar = (() => {
       zoom: 8,
       zoomControl: false,
       attributionControl: false,
-      preferCanvas: true
+      preferCanvas: true,
+      dragging: true,
+      tap: false,                 // sonst schluckt Leaflets Tap-Emulation auf iOS das Ziehen
+      touchZoom: true,
+      doubleClickZoom: true,
+      scrollWheelZoom: false,     // Seitenscrollen soll nicht in die Karte zoomen
+      bounceAtZoomLimits: false
     });
+
+    // Ziehen darf die Seite nicht mitscrollen
+    const c = map.getContainer();
+    c.style.touchAction = 'none';
 
     L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_nolabels/{z}/{x}/{y}{r}.png', {
       subdomains: 'abcd', maxZoom: 12, minZoom: 4, detectRetina: true
@@ -40,6 +51,8 @@ const Radar = (() => {
       icon: L.divIcon({ className: 'here-dot', html: '<span></span>', iconSize: [18, 18] }),
       interactive: false, keyboard: false
     }).addTo(map);
+
+    map.on('moveend zoomend', checkEchoes);
 
     wireControls();
     return map;
@@ -60,7 +73,7 @@ const Radar = (() => {
 
     const past = (data.radar?.past || []).map(f => ({ ...f, kind: 'past' }));
     const now  = (data.radar?.nowcast || []).map(f => ({ ...f, kind: 'now' }));
-    const host = data.host || 'https://tilecache.rainviewer.com';
+    host = data.host || host;
 
     // Vergangenheit auf die letzten 2 h begrenzen
     const fresh = past.slice(-12);
@@ -94,6 +107,7 @@ const Radar = (() => {
     const hhmm = t.toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' });
     els.time.textContent = f.kind === 'now' ? `${hhmm} · Prognose` : hhmm;
     els.time.classList.toggle('is-forecast', f.kind === 'now');
+    checkEchoes();
     onFrame(f);
   }
 
@@ -145,6 +159,48 @@ const Radar = (() => {
       <span class="lg-bar"></span>
       <span class="lg-label">stark</span>`;
   }
+
+  /** Eine leere schwarze Karte ist mehrdeutig: kein Regen oder nicht geladen?
+      Wir prüfen deshalb, ob im sichtbaren Bild überhaupt Echos stecken, und
+      sagen es ausdrücklich. Geprüft wird eine Kachel aus der Bildmitte. */
+  let echoTimer = null;
+  function checkEchoes() {
+    clearTimeout(echoTimer);
+    echoTimer = setTimeout(async () => {
+      const note = els.empty;
+      if (!note || !frames[idx]) return;
+      const f = frames[idx];
+      const z = 5;
+      const c = map.getCenter();
+      const n = Math.pow(2, z);
+      const x = Math.floor((c.lng + 180) / 360 * n);
+      const latRad = c.lat * Math.PI / 180;
+      const y = Math.floor((1 - Math.asinh(Math.tan(latRad)) / Math.PI) / 2 * n);
+
+      try {
+        const url = `${host}${f.path}/256/${z}/${x}/${y}/${COLOR}/${OPTS}.png`;
+        const img = await loadImage(url);
+        const cv = document.createElement('canvas');
+        cv.width = cv.height = 64;
+        const ctx = cv.getContext('2d', { willReadFrequently: true });
+        ctx.drawImage(img, 0, 0, 64, 64);
+        const px = ctx.getImageData(0, 0, 64, 64).data;
+        let hits = 0;
+        for (let i = 3; i < px.length; i += 4) if (px[i] > 12) hits++;
+        note.hidden = hits > 3;
+      } catch {
+        note.hidden = true;         // im Zweifel nichts behaupten
+      }
+    }, 350);
+  }
+
+  const loadImage = (src) => new Promise((res, rej) => {
+    const i = new Image();
+    i.crossOrigin = 'anonymous';
+    i.onload = () => res(i);
+    i.onerror = rej;
+    i.src = src;
+  });
 
   /** Grober Regen-Check am Standort für den nächsten halben Tag ist Aufgabe der
       Vorhersage – hier nur: läuft gerade eine Animation? */

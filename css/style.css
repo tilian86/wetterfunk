@@ -401,6 +401,17 @@ select#bfModel {
   border-radius: 50%; box-shadow: 0 0 0 4px rgba(108, 198, 255, .28), 0 1px 6px rgba(0,0,0,.5);
 }
 
+.radar-empty {
+  position: absolute; left: 50%; top: 50%; z-index: 500;
+  transform: translate(-50%, -50%);
+  padding: 8px 15px; border-radius: 30px;
+  background: rgba(10, 16, 26, .78);
+  backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px);
+  font-size: 12.5px; color: var(--ink-dim); pointer-events: none;
+  border: 1px solid var(--card-line); white-space: nowrap;
+}
+.radar-empty[hidden] { display: none; }
+
 .radar-legend {
   position: absolute; left: 9px; bottom: 9px; z-index: 500;
   display: flex; align-items: center; gap: 6px;
@@ -493,6 +504,36 @@ select#bfModel {
 .wx-sunmini circle { fill: rgba(255,208,122,.22); }
 .wx-sunmini .arrow { stroke-width: 2; }
 
+/* ── Datenquelle unter der Stundenleiste ──────────────────── */
+.source-line {
+  width: 100%; margin-top: 12px; padding: 9px 11px;
+  display: flex; align-items: center; gap: 8px;
+  background: rgba(255,255,255,.05); border: 1px solid var(--card-line);
+  border-radius: var(--r-md); color: var(--ink-dim);
+  font: 12px var(--font); text-align: left; cursor: pointer;
+}
+.source-line b { color: var(--ink); font-weight: 600; }
+.source-line span:nth-child(2) { flex: 1; }
+.source-line .chev { width: 15px; height: 15px; flex: none; opacity: .5; }
+.source-line:active { background: rgba(255,255,255,.09); }
+.src-dot {
+  width: 7px; height: 7px; flex: none; border-radius: 50%;
+  background: var(--good); box-shadow: 0 0 7px rgba(79,212,138,.7);
+}
+
+.model-list { display: grid; gap: 7px; margin-bottom: 14px; }
+.model-row {
+  display: grid; gap: 4px; padding: 12px 14px; text-align: left;
+  background: rgba(255,255,255,.05); border: 1px solid var(--card-line);
+  border-radius: var(--r-md); color: var(--ink); cursor: pointer;
+}
+.model-row.on { background: rgba(108,198,255,.14); border-color: rgba(108,198,255,.42); }
+.mr-head { display: flex; align-items: center; justify-content: space-between; }
+.mr-head b { font-size: 15px; font-weight: 600; }
+.mr-check { color: var(--accent); font-weight: 700; }
+.mr-desc { font-size: 12px; line-height: 1.45; color: var(--ink-dim); }
+.model-row:active { transform: scale(.99); }
+
 /* ── 10 Tage ──────────────────────────────────────────────── */
 .daily { display: grid; gap: 1px; }
 
@@ -512,6 +553,9 @@ select#bfModel {
 .d-rain i { font-style: normal; font-size: 10px; color: var(--ink-faint); }
 .d-min { font-size: 14.5px; color: var(--ink-faint); text-align: right; }
 .d-max { font-size: 14.5px; font-weight: 500; text-align: right; }
+
+.d-sun { display: grid; line-height: 1.15; font-size: 12px; color: #ffd07a; opacity: .8; }
+.d-sun i { font-style: normal; font-size: 10px; color: var(--ink-faint); }
 
 .d-track {
   height: 4px; border-radius: 3px;
@@ -624,6 +668,25 @@ select#bfModel {
 }
 .cam-err img { display: none; }
 .cam-err .cam-err-msg { display: grid; }
+.cam-links { display: grid; gap: 7px; }
+.cam-link {
+  display: grid; grid-template-columns: 1fr auto; align-items: center;
+  gap: 2px 10px; padding: 12px 14px;
+  background: rgba(255,255,255,.05); border: 1px solid var(--card-line);
+  border-radius: var(--r-md); text-decoration: none; color: var(--ink);
+}
+.cl-name { font-size: 14.5px; font-weight: 600; }
+.cl-hint { font-size: 11.5px; color: var(--ink-faint); grid-column: 1; }
+.cl-arrow { width: 15px; height: 15px; grid-row: 1 / 3; grid-column: 2; opacity: .45; }
+.cam-link:active { background: rgba(255,255,255,.09); }
+.cam-note {
+  font-size: 11.5px; line-height: 1.5; color: var(--ink-faint); margin-top: 11px;
+}
+.cam-note code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 10.5px;
+  background: rgba(255,255,255,.09); padding: 1px 4px; border-radius: 4px;
+}
+
 .cam figcaption {
   display: flex; align-items: center; justify-content: space-between;
   padding: 8px 11px; font-size: 13px; font-weight: 500;
@@ -651,6 +714,9 @@ select#bfModel {
   display: flex; align-items: flex-end;
   opacity: 0; transition: opacity .26s ease;
 }
+/* MUSS nach der Regel oben stehen: sonst gewinnt display:flex gegen [hidden]
+   und die unsichtbaren Overlays fangen sämtliche Klicks ab. */
+.sheet-back[hidden] { display: none; }
 .sheet-back.open { opacity: 1; }
 
 .sheet {

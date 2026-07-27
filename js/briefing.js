@@ -29,11 +29,19 @@ const LENGTHS = [
   { id: 'lang',  label: 'Ausführlich', words: 320, hint: 'ca. 2 Minuten' }
 ];
 
-const LS = { proxy: 'wf.proxy', model: 'wf.model', parts: 'wf.parts', len: 'wf.len' };
+const LS = { proxy: 'wf.proxy', model: 'wf.model', parts: 'wf.parts', len: 'wf.len',
+             route: 'wf.route', key: 'wf.aikey' };
 
-/** Adresse des eigenen Cloudflare Workers; ohne ihn geht kein Bericht. */
+/** Adresse des eigenen Cloudflare Workers. */
 const DEFAULT_PROXY = 'https://wetterfunk.florian-s-thiel.workers.dev';
 const proxyUrl = () => (store.get(LS.proxy, '') || DEFAULT_PROXY).replace(/\/+$/, '');
+
+/** 'mac' = über die Bridge (Standard, kostenlos übers Max-Abo)
+    'api' = direkt an die Anthropic-API mit eigenem Schlüssel (kostet).
+    Es wird nie automatisch gewechselt — die Wahl trifft ausschließlich der Nutzer. */
+const route = () => store.get(LS.route, 'mac');
+const apiKey = () => store.get(LS.key, '');
+const API_URL = 'https://api.anthropic.com/v1/messages';
 
 let host = null;      // Zustand aus app.js
 let text = '';        // letzter Bericht
@@ -190,8 +198,36 @@ ${buildFacts(parts)}`;
 }
 
 // ══ API-Aufruf ═════════════════════════════════════════════
-/** Schickt eine Textanfrage über den Worker an die Mac-Bridge. */
-async function askBridge(system, user, model) {
+/** Schickt eine Textanfrage auf dem eingestellten Weg. Wird von Bericht und
+    Nachrichten gemeinsam genutzt. */
+async function ask(system, user, model, maxTokens = 4000) {
+  if (route() === 'api') {
+    const key = apiKey();
+    if (!key) throw new Error('Kein API-Schlüssel hinterlegt');
+
+    const res = await fetch(API_URL, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        'x-api-key': key,
+        'anthropic-version': '2023-06-01',
+        'anthropic-dangerous-direct-browser-access': 'true'
+      },
+      body: JSON.stringify({
+        model, max_tokens: maxTokens,
+        output_config: { effort: 'low' },
+        system,
+        messages: [{ role: 'user', content: user }]
+      })
+    });
+    const out = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(out?.error?.message || `${res.status} ${res.statusText}`);
+    if (out.stop_reason === 'refusal') throw new Error('Anfrage wurde abgelehnt');
+    const txt = (out.content || []).filter(b => b.type === 'text').map(b => b.text).join('\n').trim();
+    if (!txt) throw new Error('Leere Antwort');
+    return { text: txt, usage: out.usage, via: 'api' };
+  }
+
   const res = await fetch(`${proxyUrl()}/ai`, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
@@ -199,7 +235,7 @@ async function askBridge(system, user, model) {
   });
   const data = await res.json().catch(() => ({}));
   if (!res.ok || !data.text) throw new Error(data.error || `${res.status} ${res.statusText}`);
-  return data.text.trim();
+  return { text: data.text.trim(), via: 'mac' };
 }
 
 async function generate() {
@@ -211,9 +247,10 @@ async function generate() {
 
   setBusy(true);
   try {
-    text = await askBridge(system, user, model);
+    const out = await ask(system, user, model);
+    text = out.text;
     if (!text) { host.toast('Keine Antwort erhalten.'); return; }
-    renderResult(model);
+    renderResult(model, out);
   } catch (e) {
     console.error(e);
     host.toast(`Bericht fehlgeschlagen: ${e.message}`.slice(0, 130));
@@ -275,9 +312,20 @@ function setBusy(on) {
   $('#bfGoLabel').textContent = on ? 'Wird geschrieben…' : 'Bericht erstellen';
 }
 
-function renderResult(model) {
-  const box = $('#bfResult');
+const PRICES = { 'claude-opus-5': [5, 25], 'claude-sonnet-5': [3, 15], 'claude-haiku-4-5': [1, 5] };
+
+/** Fußzeile unter dem Text: welcher Weg, welches Modell, ggf. was es gekostet hat. */
+function viaLabel(model, out) {
   const mName = (MODELS.find(m => m.id === model) || {}).name || model;
+  if (out?.via !== 'api') return `${mName} <i>über Max-Abo · keine Zusatzkosten</i>`;
+  const [pin, pout] = PRICES[model] || PRICES['claude-opus-5'];
+  const u = out.usage || {};
+  const cost = ((u.input_tokens ?? 0) / 1e6) * pin + ((u.output_tokens ?? 0) / 1e6) * pout;
+  return `${mName} <i>über API · ${(cost * 100).toFixed(1)} Cent</i>`;
+}
+
+function renderResult(model, out) {
+  const box = $('#bfResult');
 
   box.innerHTML = `
     <p class="bf-text">${text.replace(/\n+/g, '</p><p class="bf-text">')}</p>
@@ -287,7 +335,7 @@ function renderResult(model) {
         <svg viewBox="0 0 24 24" class="ico-stop"><rect x="6" y="6" width="12" height="12" rx="2.5"/></svg>
         <span id="bfSpeakLabel">Vorlesen</span>
       </button>
-      <span class="bf-cost">${mName} <i>über Max-Abo · keine Zusatzkosten</i></span>
+      <span class="bf-cost">${viaLabel(model, out)}</span>
     </div>`;
 
   $('#bfSpeak').addEventListener('click', speak);
@@ -321,14 +369,38 @@ function renderChips() {
 }
 
 // ══ Einstellungen ══════════════════════════════════════════
+function renderRoute() {
+  const r = route();
+  $('#bfRoute').innerHTML = [
+    { id: 'mac', label: 'Über den Mac', note: 'Max-Abo · kostenlos' },
+    { id: 'api', label: 'Über die API', note: 'kostet pro Bericht' }
+  ].map(o => `<button class="chip route${o.id === r ? ' on' : ''}" data-route="${o.id}">
+      ${o.label}<i>${o.note}</i></button>`).join('');
+
+  $$('#bfRoute .chip').forEach(b => b.addEventListener('click', () => {
+    store.set(LS.route, b.dataset.route);
+    $$('#bfRoute .chip').forEach(x => x.classList.toggle('on', x === b));
+    $('#bfKeyField').hidden = b.dataset.route !== 'api';
+    $('#bfCheck').hidden = b.dataset.route !== 'mac';
+    $('#bfStatus').hidden = b.dataset.route !== 'mac';
+    if (b.dataset.route === 'mac') checkBridge();
+  }));
+
+  $('#bfKeyField').hidden = r !== 'api';
+  $('#bfCheck').hidden = r !== 'mac';
+  $('#bfStatus').hidden = r !== 'mac';
+}
+
 function openSettings() {
   $('#bfProxy').value = store.get(LS.proxy, '');
   $('#bfProxy').placeholder = DEFAULT_PROXY;
+  $('#bfKey').value = apiKey();
   const m = selectedModel();
   $('#bfModel').innerHTML = MODELS.map(x =>
     `<option value="${x.id}"${x.id === m ? ' selected' : ''}>${x.name} — ${x.note}</option>`
   ).join('');
-  checkBridge();
+  renderRoute();
+  if (route() === 'mac') checkBridge();
   host.openSheet('#bfSheet');
 }
 
@@ -361,10 +433,13 @@ async function checkBridge() {
 function saveSettings() {
   const proxy = $('#bfProxy').value.trim();
   if (proxy && !/^https:\/\//i.test(proxy)) { host.toast('Adresse muss mit https:// beginnen.'); return; }
+  const key = $('#bfKey').value.trim();
+  if (route() === 'api' && !key) { host.toast('Für den API-Weg wird ein Schlüssel gebraucht.'); return; }
   store.set(LS.proxy, proxy);
+  store.set(LS.key, key);
   store.set(LS.model, $('#bfModel').value);
   host.closeSheet('#bfSheet');
-  host.toast('Gespeichert.');
+  host.toast(route() === 'api' ? 'Gespeichert — läuft jetzt über die API.' : 'Gespeichert.');
 }
 
 // ══ Start ══════════════════════════════════════════════════
@@ -387,5 +462,5 @@ function init(hostApi) {
   document.addEventListener('visibilitychange', () => { if (document.hidden && speaking) stopSpeaking(); });
 }
 
-return { init };
+return { init, ask };   // ask wird auch vom Nachrichten-Modul genutzt
 })();

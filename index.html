@@ -55,19 +55,63 @@
   <!-- ══ WARNUNGEN (DWD) ══ -->
   <div id="warnings" class="warnings"></div>
 
-  <!-- ══ NACHRICHTENLAGE ══ -->
-  <section class="card card-news">
+  <!-- ══ STÜNDLICH ══ -->
+  <section class="card card-hourly">
     <div class="card-head">
-      <h2>Nachrichtenlage</h2>
-      <div class="chips chips-len" id="newsCount"></div>
+      <h2>Stündlich</h2>
+      <span class="card-sub">48 Stunden</span>
     </div>
-    <p class="card-note">Das Wichtigste von Tübingen bis weltweit, nach Bedeutung geordnet.</p>
-    <button class="bf-go news-go" id="newsGo">
-      <svg viewBox="0 0 24 24"><path d="M4 5.5h11a1.5 1.5 0 0 1 1.5 1.5v11.5H5.5A1.5 1.5 0 0 1 4 17z"/><path d="M16.5 9.5H19a1 1 0 0 1 1 1V17a1.5 1.5 0 0 1-3 0"/><path d="M7 9h5M7 12h5M7 15h3"/></svg>
-      <span id="newsGoLabel">Nachrichtenlage laden</span>
+    <div class="hourly-scroll" id="hourly"></div>
+    <button class="source-line" id="modelPick">
+      <span class="src-dot"></span>
+      <span id="modelName">Datenquelle wird geladen…</span>
+      <svg class="chev" viewBox="0 0 24 24"><path d="M6 9l6 6 6-6"/></svg>
     </button>
-    <div id="newsResult" class="news-result"></div>
   </section>
+
+  <!-- ══ 10 TAGE ══ -->
+  <section class="card">
+    <div class="card-head"><h2>10 Tage</h2><span class="card-sub" id="dailyRange"></span></div>
+    <div class="daily" id="daily"></div>
+  </section>
+
+  <!-- ══ REGENRADAR ══ -->
+  <section class="card card-radar">
+    <div class="card-head">
+      <h2>Regenradar</h2>
+      <span class="card-sub" id="radarStamp"></span>
+    </div>
+    <div class="radar-wrap">
+      <div id="map"></div>
+      <p class="radar-empty" id="radarEmpty" hidden>Kein Niederschlag im Bild</p>
+      <div class="radar-legend" id="radarLegend"></div>
+      <button class="radar-locate" id="radarLocate" aria-label="Auf Standort zentrieren">
+        <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3.2"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3"/><circle cx="12" cy="12" r="8"/></svg>
+      </button>
+    </div>
+    <div class="radar-ctrl">
+      <button class="play-btn" id="playBtn" aria-label="Animation abspielen">
+        <svg class="ico-play" viewBox="0 0 24 24"><path d="M7 4.5v15l13-7.5z"/></svg>
+        <svg class="ico-pause" viewBox="0 0 24 24"><path d="M8 4.5h3.2v15H8zM12.8 4.5H16v15h-3.2z"/></svg>
+      </button>
+      <input type="range" id="radarSlider" min="0" max="12" value="12" step="1" aria-label="Radar-Zeitpunkt">
+      <span class="radar-time" id="radarTime">–</span>
+    </div>
+  </section>
+
+  <!-- ══ MODELLVERGLEICH ══ -->
+  <section class="card">
+    <div class="card-head">
+      <h2>Wettermodelle</h2>
+      <span class="card-sub" id="modelAgree"></span>
+    </div>
+    <p class="card-note" id="modelNote">Wie einig sind sich die großen Rechenmodelle?</p>
+    <div class="model-chart" id="modelChart"></div>
+    <div class="model-legend" id="modelLegend"></div>
+  </section>
+
+  <!-- ══ DETAILS ══ -->
+  <section class="tiles" id="tiles"></section>
 
   <!-- ══ GESPROCHENER BERICHT ══ -->
   <section class="card card-brief">
@@ -85,55 +129,6 @@
     <div id="bfResult" class="bf-result"></div>
   </section>
 
-  <!-- ══ REGENRADAR ══ -->
-  <section class="card card-radar">
-    <div class="card-head">
-      <h2>Regenradar</h2>
-      <span class="card-sub" id="radarStamp"></span>
-    </div>
-    <div class="radar-wrap">
-      <div id="map"></div>
-      <div class="radar-legend" id="radarLegend"></div>
-      <button class="radar-locate" id="radarLocate" aria-label="Auf Standort zentrieren">
-        <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3.2"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3"/><circle cx="12" cy="12" r="8"/></svg>
-      </button>
-    </div>
-    <div class="radar-ctrl">
-      <button class="play-btn" id="playBtn" aria-label="Animation abspielen">
-        <svg class="ico-play" viewBox="0 0 24 24"><path d="M7 4.5v15l13-7.5z"/></svg>
-        <svg class="ico-pause" viewBox="0 0 24 24"><path d="M8 4.5h3.2v15H8zM12.8 4.5H16v15h-3.2z"/></svg>
-      </button>
-      <input type="range" id="radarSlider" min="0" max="12" value="12" step="1" aria-label="Radar-Zeitpunkt">
-      <span class="radar-time" id="radarTime">–</span>
-    </div>
-  </section>
-
-  <!-- ══ STÜNDLICH ══ -->
-  <section class="card">
-    <div class="card-head"><h2>Stündlich</h2><span class="card-sub">48 Stunden</span></div>
-    <div class="hourly-scroll" id="hourly"></div>
-  </section>
-
-  <!-- ══ 10 TAGE ══ -->
-  <section class="card">
-    <div class="card-head"><h2>10 Tage</h2><span class="card-sub" id="dailyRange"></span></div>
-    <div class="daily" id="daily"></div>
-  </section>
-
-  <!-- ══ MODELLVERGLEICH ══ -->
-  <section class="card">
-    <div class="card-head">
-      <h2>Wettermodelle</h2>
-      <span class="card-sub" id="modelAgree"></span>
-    </div>
-    <p class="card-note" id="modelNote">Wie einig sind sich die großen Rechenmodelle?</p>
-    <div class="model-chart" id="modelChart"></div>
-    <div class="model-legend" id="modelLegend"></div>
-  </section>
-
-  <!-- ══ DETAILS ══ -->
-  <section class="tiles" id="tiles"></section>
-
   <!-- ══ WEBCAMS ══ -->
   <section class="card">
     <div class="card-head">
@@ -141,6 +136,20 @@
       <button class="link-btn" id="camAddBtn">＋ Hinzufügen</button>
     </div>
     <div class="cams" id="cams"></div>
+  </section>
+
+  <!-- ══ NACHRICHTENLAGE ══ -->
+  <section class="card card-news">
+    <div class="card-head">
+      <h2>Nachrichtenlage</h2>
+      <div class="chips chips-len" id="newsCount"></div>
+    </div>
+    <p class="card-note">Das Wichtigste von Tübingen bis weltweit, nach Bedeutung geordnet.</p>
+    <button class="bf-go news-go" id="newsGo">
+      <svg viewBox="0 0 24 24"><path d="M4 5.5h11a1.5 1.5 0 0 1 1.5 1.5v11.5H5.5A1.5 1.5 0 0 1 4 17z"/><path d="M16.5 9.5H19a1 1 0 0 1 1 1V17a1.5 1.5 0 0 1-3 0"/><path d="M7 9h5M7 12h5M7 15h3"/></svg>
+      <span id="newsGoLabel">Nachrichtenlage laden</span>
+    </button>
+    <div id="newsResult" class="news-result"></div>
   </section>
 
   <footer class="foot">
@@ -185,17 +194,41 @@
   </div>
 </div>
 
+<!-- ══ MODELL-DIALOG ══ -->
+<div class="sheet-back" id="modelSheet" hidden>
+  <div class="sheet" role="dialog" aria-label="Wettermodell wählen">
+    <div class="sheet-grip"></div>
+    <h3>Wettermodell</h3>
+    <p class="sheet-note">Welches Rechenmodell soll die stündliche Vorhersage und die Tage liefern?
+      <b>Bestes verfügbares</b> wählt automatisch — in Deutschland das hochaufgelöste DWD ICON-D2
+      für die ersten zwei Tage, danach gröbere Modelle mit größerer Reichweite.</p>
+    <div class="model-list" id="modelList"></div>
+    <button class="sheet-close" id="modelClose">Schließen</button>
+  </div>
+</div>
+
 <!-- ══ BERICHT-EINSTELLUNGEN ══ -->
 <div class="sheet-back" id="bfSheet" hidden>
   <div class="sheet" role="dialog" aria-label="Berichts-Einstellungen">
     <div class="sheet-grip"></div>
     <h3>Bericht & Nachrichten</h3>
-    <p class="sheet-note">Texte werden auf dem Mac von der Claude-CLI geschrieben und laufen damit
-      über das <b>Max-Abo</b> — kein API-Schlüssel, keine Zusatzkosten. Der Mac muss dafür
-      eingeschaltet und online sein.</p>
+    <p class="sheet-note">Standardmäßig schreibt die Claude-CLI auf dem Mac die Texte — das läuft
+      über das <b>Max-Abo</b> und kostet nichts extra, setzt aber voraus, dass der Mac
+      läuft. Ist er aus, kannst du hier bewusst auf die API umschalten. Automatisch
+      wechselt nichts.</p>
+
+    <label class="field">
+      <span>Weg</span>
+      <div class="chips chips-len" id="bfRoute"></div>
+    </label>
 
     <div class="bridge-status" id="bfStatus">Verbindung noch nicht geprüft</div>
     <button class="sheet-close check-btn" id="bfCheck">Verbindung prüfen</button>
+
+    <label class="field" id="bfKeyField" hidden>
+      <span>Anthropic API-Schlüssel</span>
+      <input type="password" id="bfKey" placeholder="sk-ant-…" autocapitalize="off" spellcheck="false" autocomplete="off">
+    </label>
 
     <label class="field">
       <span>Modell</span>

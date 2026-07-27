@@ -123,20 +123,13 @@ Regeln:
 Antworte ausschließlich mit diesem JSON, ohne Text davor oder danach, ohne Code-Zaun:
 {"lage":"ein Satz zur Gesamtlage","meldungen":[{"nr":0,"ebene":"lokal|regional|bundesweit|weltweit","titel":"eigene Schlagzeile, höchstens neun Wörter","kern":"ein Satz mit dem Wesentlichen","relevanz":"sehr kurz, warum das wichtig ist"}]}`;
 
-  const res = await fetch(`${proxyUrl()}/ai`, {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({
-      model: model(),
-      effort: 'low',
-      system,
-      user: `Jetzt ist ${new Date().toLocaleString('de-DE')}.\n\nHier sind die Meldungen:\n\n${list}`
-    })
-  });
-  const data = await res.json().catch(() => ({}));
-  if (!res.ok || !data.text) throw new Error(data.error || `${res.status} ${res.statusText}`);
-
-  return { parsed: extractJson(data.text) };
+  // Gleicher Weg wie beim Wetterbericht (Mac oder API, je nach Einstellung)
+  const out = await Briefing.ask(
+    system,
+    `Jetzt ist ${new Date().toLocaleString('de-DE')}.\n\nHier sind die Meldungen:\n\n${list}`,
+    model()
+  );
+  return { parsed: extractJson(out.text), via: out.via };
 }
 
 // ══ Ablauf ═════════════════════════════════════════════════
@@ -167,7 +160,7 @@ async function load() {
 
     if (!items.length) throw new Error('Keine Meldungen ausgewählt');
 
-    render(out.parsed.lage, failed);
+    render(out.parsed.lage, failed, out.via);
     store.set(LS.cache, { at: Date.now(), lage: out.parsed.lage, items });
   } catch (e) {
     console.error(e);
@@ -191,7 +184,7 @@ const grouped = () => LEVEL_ORDER
   .map(lv => ({ lv, list: items.filter(m => m.ebene === lv) }))
   .filter(g => g.list.length);
 
-function render(lage, failed) {
+function render(lage, failed, via) {
   $('#newsResult').innerHTML = `
     <p class="news-lage">${lage}</p>
     ${grouped().map(g => `
@@ -211,7 +204,7 @@ function render(lage, failed) {
         <svg viewBox="0 0 24 24" class="ico-stop"><rect x="6" y="6" width="12" height="12" rx="2.5"/></svg>
         <span id="newsSpeakLabel">Vorlesen</span>
       </button>
-      <span class="bf-cost"><i>über Max-Abo · keine Zusatzkosten</i></span>
+      <span class="bf-cost"><i>${via === 'api' ? 'über API' : 'über Max-Abo · keine Zusatzkosten'}</i></span>
     </div>
     ${failed?.length ? `<p class="news-hint">Nicht erreichbar: ${failed.join(', ')}.</p>` : ''}`;
 

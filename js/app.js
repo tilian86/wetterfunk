@@ -19,11 +19,25 @@ const MODELS = [
   { id: 'gfs_seamless',  name: 'GFS',      org: 'NOAA',  color: '#ff9f6a', note: '13 km · bis 16 Tage' }
 ];
 
+/** Auswählbare Datenquellen für Stunden- und Tageswerte. */
+const SOURCES = [
+  { id: 'best_match', name: 'Bestes verfügbares', desc: 'Automatisch — in Deutschland DWD ICON-D2 (2 km) für die ersten zwei Tage, danach ICON-EU und ICON global.', best: true },
+  { id: 'icon_seamless', name: 'DWD ICON', desc: 'Deutscher Wetterdienst, nahtlos: D2 (2 km) → EU (7 km) → global (11 km). Das amtliche deutsche Modell.' },
+  { id: 'ecmwf_ifs025', name: 'ECMWF IFS', desc: 'Europäisches Zentrum, 25 km. Gilt weltweit als das treffsicherste Globalmodell auf mehrere Tage.' },
+  { id: 'gfs_seamless', name: 'GFS', desc: 'US-Wetterdienst NOAA, 13 km. Reicht am weitesten, streut auf kurze Sicht stärker.' },
+  { id: 'ukmo_seamless', name: 'UK Met Office', desc: 'Britischer Wetterdienst, 2 km über Westeuropa.' },
+  { id: 'meteofrance_seamless', name: 'Météo-France', desc: 'Französisches AROME/ARPEGE, 1,5 km über Mitteleuropa.' }
+];
+
+const sourceId = () => store.get(LS.source, 'best_match');
+const sourceOf = (id) => SOURCES.find(s => s.id === id) || SOURCES[0];
+
 const LS = {
   places: 'wf.places',
   active: 'wf.active',
   cams:   'wf.cams',
-  cache:  'wf.cache'
+  cache:  'wf.cache',
+  source: 'wf.source'
 };
 
 // ══ State ══════════════════════════════════════════════════
@@ -69,15 +83,32 @@ function nowIndex(times) {
 }
 
 // ══ Datenabruf ═════════════════════════════════════════════
-async function fetchJSON(url, opts) {
-  const res = await fetch(url, opts);
-  if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
-  return res.json();
+/** Open-Meteo antwortet unter Last gelegentlich mit 429 oder 503. Ein kurzer
+    zweiter Anlauf rettet das in aller Regel, statt die Anzeige leer zu lassen. */
+async function fetchJSON(url, opts, tries = 3) {
+  let lastErr;
+  for (let n = 0; n < tries; n++) {
+    try {
+      const res = await fetch(url, opts);
+      if (res.ok) return res.json();
+      if (![429, 500, 502, 503, 504].includes(res.status)) {
+        throw new Error(`${res.status} ${res.statusText}`);
+      }
+      lastErr = new Error(`${res.status} ${res.statusText}`);
+    } catch (e) {
+      lastErr = e;
+      if (e.message?.startsWith('4') && !e.message.startsWith('429')) throw e;
+    }
+    if (n < tries - 1) await new Promise(r => setTimeout(r, 400 * Math.pow(2, n)));
+  }
+  throw lastErr;
 }
 
 function loadForecast(lat, lon) {
+  const src = sourceId();
   const p = new URLSearchParams({
     latitude: lat, longitude: lon, timezone: 'auto', forecast_days: '10',
+    ...(src !== 'best_match' ? { models: src } : {}),
     current: [
       'temperature_2m', 'relative_humidity_2m', 'apparent_temperature', 'is_day',
       'precipitation', 'weather_code', 'cloud_cover', 'pressure_msl',
@@ -87,7 +118,7 @@ function loadForecast(lat, lon) {
     hourly: [
       'temperature_2m', 'apparent_temperature', 'precipitation_probability', 'precipitation',
       'weather_code', 'wind_speed_10m', 'wind_gusts_10m', 'uv_index', 'is_day',
-      'relative_humidity_2m', 'dew_point_2m', 'visibility'
+      'relative_humidity_2m', 'dew_point_2m', 'visibility', 'cloud_cover'
     ].join(','),
     daily: [
       'weather_code', 'temperature_2m_max', 'temperature_2m_min', 'sunrise', 'sunset',
@@ -364,6 +395,45 @@ const sunUpSvg = () => `<svg viewBox="0 0 24 24" class="wx-sunmini"><circle cx="
 const sunDownSvg = () => `<svg viewBox="0 0 24 24" class="wx-sunmini down"><circle cx="12" cy="14" r="4"/><path d="M12 4v3M5 14H2M22 14h-3M6.5 8.5 4.4 6.4M17.5 8.5l2.1-2.1M2 19h20"/><path d="m9 4 3 3 3-3" class="arrow"/></svg>`;
 
 // ══ Rendering: 10 Tage ═════════════════════════════════════
+/** Open-Meteo liefert als Tages-Code den ungünstigsten Wert des Tages: zwei
+    trübe Abendstunden machen aus einem Sonnentag "bedeckt". Für die Tagesreihe
+    leiten wir das Symbol deshalb aus den echten Tagstunden ab — vorrangig aus
+    dem Niederschlag, sonst aus der mittleren Bewölkung. */
+function daySymbol(dayIndex) {
+  const d = data.daily, h = data.hourly;
+  const day = d.time[dayIndex];
+  const raw = d.weather_code[dayIndex];
+
+  const idx = [];
+  for (let i = 0; i < h.time.length; i++) {
+    if (!h.time[i].startsWith(day)) continue;
+    const hour = +h.time[i].slice(11, 13);
+    if (hour >= 7 && hour <= 20) idx.push(i);           // Tagstunden
+  }
+  if (!idx.length) return raw;
+
+  // Niederschlag hat Vorrang: häufigster Regen-/Schnee-Code der nassen Stunden
+  const wet = idx.filter(i => (h.precipitation[i] ?? 0) >= 0.1);
+  const wetShare = wet.length / idx.length;
+  if (wetShare >= 0.2 || (d.precipitation_sum[dayIndex] ?? 0) >= 1.5) {
+    const counts = {};
+    wet.forEach(i => { const c = h.weather_code[i]; counts[c] = (counts[c] || 0) + 1; });
+    const top = Object.entries(counts).sort((a, b) => b[1] - a[1])[0];
+    if (top) return +top[0];
+  }
+  // Gewitter nie verschlucken
+  if (idx.some(i => [95, 96, 99].includes(h.weather_code[i]))) return 95;
+
+  // Sonst: mittlere Bewölkung der Tagstunden entscheidet
+  const cc = idx.map(i => h.cloud_cover?.[i]).filter(v => v != null);
+  if (!cc.length) return raw;
+  const avg = cc.reduce((a, b) => a + b, 0) / cc.length;
+  if (avg < 20) return 0;
+  if (avg < 45) return 1;
+  if (avg < 80) return 2;
+  return 3;
+}
+
 function renderDaily() {
   const d = data.daily;
   const lo = Math.min(...d.temperature_2m_min), hi = Math.max(...d.temperature_2m_max);
@@ -379,15 +449,49 @@ function renderDaily() {
     const width = Math.max(6, ((max - min) / span) * 100);
     const prob = d.precipitation_probability_max[i] ?? 0;
     const mm = d.precipitation_sum[i] ?? 0;
+    const sun = Math.round((d.sunshine_duration?.[i] ?? 0) / 3600);
     return `<div class="drow${isToday ? ' is-today' : ''}">
       <span class="d-day">${isToday ? 'Heute' : weekday(day)}</span>
-      <span class="d-icon">${WX.icon(d.weather_code[i], 1)}</span>
-      <span class="d-rain">${prob >= 20 ? `<b>${prob}%</b>${mm >= 0.5 ? `<i>${mm.toFixed(mm < 10 ? 1 : 0)} mm</i>` : ''}` : ''}</span>
+      <span class="d-icon" title="${WX.text(daySymbol(i), 1)}">${WX.icon(daySymbol(i), 1)}</span>
+      <span class="d-rain">${prob >= 20
+        ? `<b>${prob}%</b>${mm >= 0.5 ? `<i>${mm.toFixed(mm < 10 ? 1 : 0)} mm</i>` : ''}`
+        : `<span class="d-sun">${sun} Std.<i>Sonne</i></span>`}</span>
       <span class="d-min">${round(min)}°</span>
       <span class="d-track"><i class="d-fill" style="left:${left}%;width:${width}%"></i></span>
       <span class="d-max">${round(max)}°</span>
     </div>`;
   }).join('');
+}
+
+// ══ Datenquelle: Anzeige und Auswahl ═══════════════════════
+/** Zeigt unter der Stundenleiste, woher die Zahlen stammen. */
+function renderSource() {
+  const s = sourceOf(sourceId());
+  const el = $('#modelName');
+  if (!el) return;
+  el.innerHTML = s.best
+    ? `Quelle: <b>bestes verfügbares Modell</b> — hier DWD ICON-D2, 2 km`
+    : `Quelle: <b>${s.name}</b>`;
+}
+
+function renderSourceList() {
+  const cur = sourceId();
+  $('#modelList').innerHTML = SOURCES.map(s => `
+    <button class="model-row${s.id === cur ? ' on' : ''}" data-src="${s.id}">
+      <span class="mr-head">
+        <b>${s.name}</b>
+        ${s.id === cur ? '<span class="mr-check">✓</span>' : ''}
+      </span>
+      <span class="mr-desc">${s.desc}</span>
+    </button>`).join('');
+
+  $$('#modelList .model-row').forEach(b => b.addEventListener('click', async () => {
+    store.set(LS.source, b.dataset.src);
+    closeSheet('#modelSheet');
+    renderSource();
+    toast(`Quelle: ${sourceOf(b.dataset.src).name}`);
+    await refresh();
+  }));
 }
 
 // ══ Rendering: Modellvergleich ═════════════════════════════
@@ -615,15 +719,41 @@ function renderTiles(air) {
 }
 
 // ══ Webcams ════════════════════════════════════════════════
+/** Kameras der Umgebung. Die großen Portale liefern ihre Bilder nur per
+    JavaScript hinter einem Zustimmungsdialog aus — die lassen sich nicht
+    einbetten, deshalb öffnen diese Einträge die jeweilige Seite. Trägt man
+    eine direkte Bild-Adresse ein, wird sie stattdessen hier angezeigt. */
+const CAM_PRESETS = [
+  { name: 'Tübingen · Neckarfront', page: 'https://www.tuebingen-info.de/de/webcam',
+    hint: 'Blick von der Touristinformation auf Neckarbrücke und Stiftskirche' },
+  { name: 'Rottenburg · Marktplatz', page: 'https://www.rottenburg.de/webcam.11.htm',
+    hint: 'Marktplatz und Eugen-Bolz-Platz' },
+  { name: 'Reutlingen', page: 'https://www.reutlingen.de/webcam',
+    hint: 'Stadtmitte' },
+  { name: 'Region · Übersicht', page: 'https://www.wetteronline.de/webcam/tuebingen',
+    hint: 'Alle Kameras im Umkreis bei WetterOnline' }
+];
+
 function getCams() { return store.get(LS.cams, []); }
 
 function renderCams() {
   const cams = getCams();
   const box = $('#cams');
-  if (!cams.length) {
-    box.innerHTML = `<p class="empty">Noch keine Webcams. Über <b>＋ Hinzufügen</b> die Bild-Adresse einer öffentlichen Webcam eintragen — z. B. von der Stadt, einer Bergbahn oder einem Wetterverein.</p>`;
-    return;
-  }
+
+  const presets = `
+    <div class="cam-links">
+      ${CAM_PRESETS.map(c => `
+        <a class="cam-link" href="${c.page}" target="_blank" rel="noopener noreferrer">
+          <span class="cl-name">${c.name}</span>
+          <span class="cl-hint">${c.hint}</span>
+          <svg class="cl-arrow" viewBox="0 0 24 24"><path d="M7 17 17 7M9 7h8v8"/></svg>
+        </a>`).join('')}
+    </div>
+    <p class="cam-note">Diese Anbieter lassen sich nicht direkt einbetten — die Einträge öffnen
+      die jeweilige Seite. Wer eine Kamera mit direkter Bild-Adresse kennt (endet auf
+      <code>.jpg</code>), trägt sie über <b>＋ Hinzufügen</b> ein und sieht das Bild dann hier.</p>`;
+
+  if (!cams.length) { box.innerHTML = presets; return; }
   const bust = Date.now();
   box.innerHTML = cams.map((c, i) => `
     <figure class="cam" data-i="${i}">
@@ -634,7 +764,7 @@ function renderCams() {
         <span class="cam-err-msg">Bild nicht abrufbar</span>
       </div>
       <figcaption>${c.name}<button class="cam-del" data-i="${i}" aria-label="Entfernen">✕</button></figcaption>
-    </figure>`).join('');
+    </figure>`).join('') + presets;
 
   $$('.cam-del', box).forEach(b => b.addEventListener('click', () => {
     const list = getCams(); list.splice(+b.dataset.i, 1);
@@ -650,8 +780,10 @@ function renderCamManage() {
 
 // ══ Orts-Dialog ════════════════════════════════════════════
 function openSheet(id) {
-  const s = $(id); s.hidden = false;
-  requestAnimationFrame(() => s.classList.add('open'));
+  const s = $(id);
+  s.hidden = false;
+  void s.offsetWidth;              // Reflow erzwingen – requestAnimationFrame feuert
+  s.classList.add('open');         // im Hintergrundtab nicht und ließe das Blatt unsichtbar
 }
 function closeSheet(id) {
   const s = $(id); s.classList.remove('open');
@@ -722,6 +854,7 @@ async function refresh() {
     renderVerdict();
     renderWarnings(warn);
     renderHourly();
+    renderSource();
     renderDaily();
     renderModels(md);
     renderTiles(aq);
@@ -760,6 +893,11 @@ function wire() {
   $('#placeSheet').addEventListener('click', e => { if (e.target.id === 'placeSheet') closeSheet('#placeSheet'); });
   $('#gpsBtn').addEventListener('click', useGPS);
   $('#refreshBtn').addEventListener('click', refresh);
+
+  // Datenquelle
+  $('#modelPick').addEventListener('click', () => { renderSourceList(); openSheet('#modelSheet'); });
+  $('#modelClose').addEventListener('click', () => closeSheet('#modelSheet'));
+  $('#modelSheet').addEventListener('click', e => { if (e.target.id === 'modelSheet') closeSheet('#modelSheet'); });
 
   let searchTimer;
   $('#placeSearch').addEventListener('input', (e) => {
@@ -835,7 +973,7 @@ async function boot() {
   try {
     Radar.init(place.lat, place.lon, {
       slider: $('#radarSlider'), play: $('#playBtn'), time: $('#radarTime'),
-      legend: $('#radarLegend'), locate: $('#radarLocate'),
+      legend: $('#radarLegend'), locate: $('#radarLocate'), empty: $('#radarEmpty'),
       onLocate: () => Radar.setCenter(place.lat, place.lon)
     });
     await Radar.load();
