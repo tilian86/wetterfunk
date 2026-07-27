@@ -1,68 +1,96 @@
 /* Wetterfunk — Regenradar
-   Leaflet + RainViewer. Vergangenheit (2 h) + Nowcast (30 min), animiert. */
+   MapLibre GL mit Vektorkarte (OpenFreeMap, ohne Schlüssel) und echter
+   Globus-Projektion: weit herausgezoomt sieht man die Erdkugel, beim
+   Hineinzoomen geht sie fließend in die flache Karte über.
+   Niederschlag kommt von RainViewer: 2 Stunden zurück, bis 30 Minuten voraus. */
 
 const Radar = (() => {
 
-  const API = 'https://api.rainviewer.com/public/weather-maps.json';
+  const API   = 'https://api.rainviewer.com/public/weather-maps.json';
+  const STYLE = 'https://tiles.openfreemap.org/styles/liberty';
   const COLOR = 4;          // Farbschema "The Weather Channel"
-  const OPTS = '1_1';       // smooth_snow
-  const TILE = 512;
+  const OPTS  = '1_1';      // geglättet, mit Schnee
+  const TILE  = 256;
 
-  let map = null, marker = null;
+  let map = null, ready = false;
   let frames = [];          // [{time, path, kind}]
-  let layers = [];          // parallel zu frames
   let idx = 0, timer = null, playing = false;
   let els = {};
   let host = 'https://tilecache.rainviewer.com';
   let onFrame = () => {};
+  let here = null;
+
+  const layerId = (i) => `rv-layer-${i}`;
+  const sourceId = (i) => `rv-src-${i}`;
 
   // ── Karte aufbauen ───────────────────────────────────────
   function init(lat, lon, refs, frameCb) {
     els = refs;
     onFrame = frameCb || onFrame;
+    here = [lon, lat];
 
-    map = L.map('map', {
-      center: [lat, lon],
-      zoom: 8,
-      zoomControl: false,
+    map = new maplibregl.Map({
+      container: 'map',
+      style: STYLE,
+      center: here,
+      zoom: 6.4,
+      minZoom: 1.3,        // darunter hat die Vektorkarte keine Daten mehr
+      maxZoom: 12,
       attributionControl: false,
-      preferCanvas: true,
-      dragging: true,
-      tap: false,                 // sonst schluckt Leaflets Tap-Emulation auf iOS das Ziehen
-      touchZoom: true,
-      doubleClickZoom: true,
-      scrollWheelZoom: false,     // Seitenscrollen soll nicht in die Karte zoomen
-      bounceAtZoomLimits: false
+      dragRotate: false,
+      pitchWithRotate: false,
+      touchZoomRotate: true,
+      cooperativeGestures: false
     });
 
-    // Ziehen darf die Seite nicht mitscrollen
-    const c = map.getContainer();
-    c.style.touchAction = 'none';
+    // Globus: weit draußen Kugel, beim Hineinzoomen fließend flach
+    map.on('style.load', () => {
+      try { map.setProjection({ type: 'globe' }); } catch { /* ältere Fassung */ }
+      addHereMarker();
+      ready = true;
+      if (frames.length) mountLayers();
+    });
 
-    L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_nolabels/{z}/{x}/{y}{r}.png', {
-      subdomains: 'abcd', maxZoom: 12, minZoom: 4, detectRetina: true
-    }).addTo(map);
-
-    L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_only_labels/{z}/{x}/{y}{r}.png', {
-      subdomains: 'abcd', maxZoom: 12, minZoom: 4, detectRetina: true, pane: 'shadowPane'
-    }).addTo(map);
-
-    marker = L.marker([lat, lon], {
-      icon: L.divIcon({ className: 'here-dot', html: '<span></span>', iconSize: [18, 18] }),
-      interactive: false, keyboard: false
-    }).addTo(map);
-
-    map.on('moveend zoomend', checkEchoes);
+    map.addControl(new maplibregl.NavigationControl({ showCompass: false }), 'top-right');
+    map.on('moveend', checkEchoes);
+    map.getContainer().style.touchAction = 'none';
 
     wireControls();
     return map;
   }
 
+  /** Standortpunkt als eigene Ebene, damit er auch auf der Kugel klebt. */
+  function addHereMarker() {
+    if (map.getSource('here')) return;
+    map.addSource('here', {
+      type: 'geojson',
+      data: { type: 'Feature', geometry: { type: 'Point', coordinates: here } }
+    });
+    map.addLayer({
+      id: 'here-halo', type: 'circle', source: 'here',
+      paint: {
+        'circle-radius': 13, 'circle-color': '#6cc6ff', 'circle-opacity': .25,
+        'circle-stroke-width': 0
+      }
+    });
+    map.addLayer({
+      id: 'here-dot', type: 'circle', source: 'here',
+      paint: {
+        'circle-radius': 5.5, 'circle-color': '#ffffff',
+        'circle-stroke-width': 3, 'circle-stroke-color': '#2f9fe0'
+      }
+    });
+  }
+
   function setCenter(lat, lon, fly = true) {
+    here = [lon, lat];
     if (!map) return;
-    marker.setLatLng([lat, lon]);
-    fly ? map.flyTo([lat, lon], Math.max(map.getZoom(), 8), { duration: .8 })
-        : map.setView([lat, lon], 8);
+    map.getSource('here')?.setData({
+      type: 'Feature', geometry: { type: 'Point', coordinates: here }
+    });
+    const z = Math.max(map.getZoom(), 6.4);
+    fly ? map.flyTo({ center: here, zoom: z, duration: 900 })
+        : map.jumpTo({ center: here, zoom: z });
   }
 
   // ── Frames laden ─────────────────────────────────────────
@@ -71,35 +99,54 @@ const Radar = (() => {
     if (!res.ok) throw new Error('Radar nicht erreichbar');
     const data = await res.json();
 
-    const past = (data.radar?.past || []).map(f => ({ ...f, kind: 'past' }));
-    const now  = (data.radar?.nowcast || []).map(f => ({ ...f, kind: 'now' }));
     host = data.host || host;
+    const past = (data.radar?.past || []).slice(-13).map(f => ({ ...f, kind: 'past' }));
+    const now  = (data.radar?.nowcast || []).map(f => ({ ...f, kind: 'now' }));
+    frames = [...past, ...now];
+    if (!frames.length) throw new Error('Keine Radardaten');
 
-    // Vergangenheit auf die letzten 2 h begrenzen
-    const fresh = past.slice(-12);
-    const next = frames = [...fresh, ...now];
-    if (!next.length) throw new Error('Keine Radardaten');
-
-    layers.forEach(l => map.removeLayer(l));
-    layers = next.map(f => L.tileLayer(
-      `${host}${f.path}/${TILE}/{z}/{x}/{y}/${COLOR}/${OPTS}.png`,
-      { opacity: 0, zIndex: 400, maxZoom: 12, tileSize: TILE, zoomOffset: -1, className: 'radar-tile' }
-    ).addTo(map));
-
-    // Standard: der aktuellste echte Messwert, nicht die Vorhersage
-    idx = Math.max(0, fresh.length - 1);
-    els.slider.max = String(next.length - 1);
+    idx = Math.max(0, past.length - 1);          // aktuellste Messung, nicht die Prognose
+    els.slider.max = String(frames.length - 1);
     els.slider.value = String(idx);
-    show(idx);
+
+    if (ready) mountLayers();
     renderLegend();
-    return next;
+    renderTicks();
+    return frames;
+  }
+
+  /** Je Frame eine Rasterquelle; umgeschaltet wird über die Deckkraft,
+      damit die Animation nicht bei jedem Schritt nachladen muss. */
+  function mountLayers() {
+    frames.forEach((f, i) => {
+      if (map.getLayer(layerId(i))) map.removeLayer(layerId(i));
+      if (map.getSource(sourceId(i))) map.removeSource(sourceId(i));
+
+      map.addSource(sourceId(i), {
+        type: 'raster',
+        tiles: [`${host}${f.path}/${TILE}/{z}/{x}/{y}/${COLOR}/${OPTS}.png`],
+        tileSize: TILE
+      });
+      map.addLayer({
+        id: layerId(i), type: 'raster', source: sourceId(i),
+        paint: { 'raster-opacity': 0, 'raster-opacity-transition': { duration: 0 } }
+      }, 'here-halo');
+    });
+    show(idx);
   }
 
   // ── Frame anzeigen ───────────────────────────────────────
   function show(i) {
-    if (!layers.length) return;
-    idx = (i + layers.length) % layers.length;
-    layers.forEach((l, n) => l.setOpacity(n === idx ? 0.82 : 0));
+    if (!frames.length) return;
+    idx = (i + frames.length) % frames.length;
+
+    if (ready) {
+      frames.forEach((_, n) => {
+        if (map.getLayer(layerId(n))) {
+          map.setPaintProperty(layerId(n), 'raster-opacity', n === idx ? 0.8 : 0);
+        }
+      });
+    }
     els.slider.value = String(idx);
 
     const f = frames[idx];
@@ -113,33 +160,35 @@ const Radar = (() => {
 
   const step = () => show(idx + 1);
 
-  // ── Abspielen ────────────────────────────────────────────
-  function play() {
-    if (playing || !layers.length) return;
-    playing = true;
-    els.play.classList.add('is-playing');
-    timer = setInterval(() => {
-      // am Ende kurz stehenbleiben, dann von vorn
-      if (idx === layers.length - 1) {
-        clearInterval(timer);
-        timer = setTimeout(() => { if (playing) { show(0); resume(); } }, 900);
-      } else step();
-    }, 420);
+  /** Markiert auf der Leiste, wo die Messung endet und die Prognose beginnt. */
+  function renderTicks() {
+    if (!els.ticks) return;
+    const firstNow = frames.findIndex(f => f.kind === 'now');
+    const pct = firstNow > 0 ? (firstNow / (frames.length - 1)) * 100 : null;
+    els.ticks.innerHTML = pct == null ? '' :
+      `<span class="tick-now" style="left:${pct.toFixed(1)}%"></span>`;
   }
 
-  function resume() {
-    clearInterval(timer);
-    timer = setInterval(() => {
-      if (idx === layers.length - 1) {
-        clearInterval(timer);
-        timer = setTimeout(() => { if (playing) { show(0); resume(); } }, 900);
-      } else step();
-    }, 420);
+  // ── Abspielen ────────────────────────────────────────────
+  function play() {
+    if (playing || !frames.length) return;
+    playing = true;
+    els.play.classList.add('is-playing');
+    tick();
+  }
+
+  function tick() {
+    clearTimeout(timer);
+    timer = setTimeout(() => {
+      if (!playing) return;
+      if (idx === frames.length - 1) { show(0); timer = setTimeout(tick, 700); }
+      else { step(); tick(); }
+    }, idx === frames.length - 1 ? 900 : 420);
   }
 
   function pause() {
     playing = false;
-    clearInterval(timer); clearTimeout(timer);
+    clearTimeout(timer);
     els.play.classList.remove('is-playing');
   }
 
@@ -149,6 +198,15 @@ const Radar = (() => {
     els.play.addEventListener('click', toggle);
     els.slider.addEventListener('input', e => { pause(); show(+e.target.value); });
     els.locate?.addEventListener('click', () => els.onLocate?.());
+
+    // Zwischen Standort und Erdkugel hin- und herspringen
+    els.globe?.addEventListener('click', () => {
+      if (!map) return;
+      const weit = map.getZoom() < 3;
+      weit ? map.flyTo({ center: here, zoom: 6.4, duration: 1400 })
+           : map.flyTo({ center: here, zoom: 1.4, duration: 1600 });
+      els.globe.classList.toggle('on', !weit);
+    });
   }
 
   // ── Legende ──────────────────────────────────────────────
@@ -160,17 +218,16 @@ const Radar = (() => {
       <span class="lg-label">stark</span>`;
   }
 
-  /** Eine leere schwarze Karte ist mehrdeutig: kein Regen oder nicht geladen?
-      Wir prüfen deshalb, ob im sichtbaren Bild überhaupt Echos stecken, und
-      sagen es ausdrücklich. Geprüft wird eine Kachel aus der Bildmitte. */
+  /** Eine leere Karte ist mehrdeutig — kein Regen oder nichts geladen?
+      Wir schauen in die Kachel unter der Bildmitte und sagen es ausdrücklich. */
   let echoTimer = null;
   function checkEchoes() {
     clearTimeout(echoTimer);
     echoTimer = setTimeout(async () => {
       const note = els.empty;
-      if (!note || !frames[idx]) return;
+      if (!note || !frames[idx] || !map) return;
       const f = frames[idx];
-      const z = 5;
+      const z = Math.max(3, Math.min(7, Math.round(map.getZoom())));
       const c = map.getCenter();
       const n = Math.pow(2, z);
       const x = Math.floor((c.lng + 180) / 360 * n);
@@ -178,8 +235,7 @@ const Radar = (() => {
       const y = Math.floor((1 - Math.asinh(Math.tan(latRad)) / Math.PI) / 2 * n);
 
       try {
-        const url = `${host}${f.path}/256/${z}/${x}/${y}/${COLOR}/${OPTS}.png`;
-        const img = await loadImage(url);
+        const img = await loadImage(`${host}${f.path}/256/${z}/${x}/${y}/${COLOR}/${OPTS}.png`);
         const cv = document.createElement('canvas');
         cv.width = cv.height = 64;
         const ctx = cv.getContext('2d', { willReadFrequently: true });
@@ -191,7 +247,7 @@ const Radar = (() => {
       } catch {
         note.hidden = true;         // im Zweifel nichts behaupten
       }
-    }, 350);
+    }, 400);
   }
 
   const loadImage = (src) => new Promise((res, rej) => {
@@ -202,9 +258,8 @@ const Radar = (() => {
     i.src = src;
   });
 
-  /** Grober Regen-Check am Standort für den nächsten halben Tag ist Aufgabe der
-      Vorhersage – hier nur: läuft gerade eine Animation? */
   const isPlaying = () => playing;
 
-  return { init, load, setCenter, play, pause, toggle, show, isPlaying, get map() { return map; } };
+  return { init, load, setCenter, play, pause, toggle, show, isPlaying,
+           get map() { return map; } };
 })();

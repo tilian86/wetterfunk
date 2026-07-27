@@ -391,15 +391,20 @@ select#bfModel {
   border-radius: var(--r-md); overflow: hidden;
   height: 268px; background: #10161f;
 }
-#map { position: absolute; inset: 0; background: #10161f; }
-.leaflet-container { background: #10161f !important; font-family: var(--font) !important; }
-.radar-tile { image-rendering: -webkit-optimize-contrast; }
+#map { position: absolute; inset: 0; background: #0e1726; }
+.maplibregl-map { font-family: var(--font) !important; }
+.maplibregl-canvas { outline: none; }
 
-.here-dot span {
-  display: block; width: 14px; height: 14px; margin: 2px;
-  background: #fff; border: 3px solid var(--accent);
-  border-radius: 50%; box-shadow: 0 0 0 4px rgba(108, 198, 255, .28), 0 1px 6px rgba(0,0,0,.5);
+/* Bedienelemente der Karte an das dunkle Thema angleichen */
+.maplibregl-ctrl-group {
+  background: rgba(12, 20, 32, .82) !important;
+  border: 1px solid var(--card-line) !important;
+  border-radius: var(--r-sm) !important;
+  backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px);
+  box-shadow: none !important;
 }
+.maplibregl-ctrl-group button + button { border-top: 1px solid var(--card-line) !important; }
+.maplibregl-ctrl-group button span { filter: invert(1) brightness(1.6); }
 
 .radar-empty {
   position: absolute; left: 50%; top: 50%; z-index: 500;
@@ -425,17 +430,40 @@ select#bfModel {
   background: linear-gradient(90deg, #3ba7f0, #4fd48a, #ffd426, #ff8c3a, #ff4d4d, #d34dd3);
 }
 
-.radar-locate {
-  position: absolute; right: 9px; bottom: 9px; z-index: 500;
+.radar-locate, .radar-globe {
+  position: absolute; right: 9px; z-index: 500;
   width: 33px; height: 33px; display: grid; place-items: center;
   background: rgba(10, 16, 26, .72); border: 1px solid var(--card-line);
   border-radius: 50%; color: var(--ink); cursor: pointer;
   backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px);
 }
-.radar-locate svg { width: 16px; height: 16px; }
-.radar-locate:active { transform: scale(.9); }
+.radar-locate { bottom: 9px; }
+.radar-globe  { bottom: 50px; }
+.radar-locate svg, .radar-globe svg { width: 16px; height: 16px; }
+.radar-locate:active, .radar-globe:active { transform: scale(.9); }
+.radar-globe.on { background: rgba(108,198,255,.28); border-color: rgba(108,198,255,.55); color: var(--accent); }
 
 .radar-ctrl { display: flex; align-items: center; gap: 12px; margin-top: 11px; }
+.radar-hint {
+  font-size: 11px; line-height: 1.45; color: var(--ink-faint); margin-top: 9px;
+}
+
+/* Regler mit Markierungen darunter */
+.slider-wrap { position: relative; flex: 1; display: block; }
+.slider-wrap.wide { width: 100%; margin: 4px 0 2px; }
+.slider-ticks { position: absolute; left: 0; right: 0; top: 100%; height: 13px; pointer-events: none; }
+.tick-now {
+  position: absolute; top: -11px; width: 2px; height: 12px; border-radius: 2px;
+  background: var(--accent); opacity: .85; transform: translateX(-1px);
+}
+.tick-day {
+  position: absolute; top: -9px; width: 1px; height: 8px;
+  background: rgba(255,255,255,.28);
+}
+.tick-day::after {
+  content: attr(data-label); position: absolute; top: 9px; left: 0;
+  transform: translateX(-50%); font-size: 9px; color: var(--ink-faint); white-space: nowrap;
+}
 
 .play-btn {
   width: 38px; height: 38px; flex: none; display: grid; place-items: center;
@@ -503,6 +531,42 @@ select#bfModel {
 .wx-sunmini { width: 27px; height: 27px; color: #ffd07a; }
 .wx-sunmini circle { fill: rgba(255,208,122,.22); }
 .wx-sunmini .arrow { stroke-width: 2; }
+
+/* ── Zeitstrahl ───────────────────────────────────────────── */
+.card-scrub .card-sub { color: var(--accent); font-weight: 600; font-size: 13px; }
+
+.scrub-read {
+  display: grid; grid-template-columns: 58px 1fr; gap: 4px 12px;
+  align-items: center; margin-bottom: 14px;
+}
+.sr-icon { grid-row: 1 / 3; }
+.sr-icon .wx { width: 58px; height: 58px; }
+.sr-main { display: flex; align-items: baseline; gap: 10px; }
+.sr-main b { font-size: 34px; font-weight: 300; letter-spacing: -.03em; }
+.sr-main i { font-style: normal; font-size: 14px; color: var(--ink-dim); }
+.sr-grid {
+  grid-column: 2; display: grid; grid-template-columns: repeat(3, 1fr);
+  gap: 5px 10px; font-size: 12.5px;
+}
+.sr-grid span { display: flex; flex-direction: column; }
+.sr-grid em { font-style: normal; font-size: 10px; color: var(--ink-faint); }
+
+.scrub-strip {
+  display: flex; align-items: flex-end; gap: 1px;
+  height: 34px; margin-top: 17px;
+  padding-top: 4px; border-bottom: 1px solid var(--card-line);
+}
+.scrub-strip i {
+  flex: 1; min-width: 0; border-radius: 2px 2px 0 0;
+  background: rgba(255,255,255,.1);
+}
+.scrub-strip i.night { background: rgba(255,255,255,.055); }
+.scrub-strip i.maybe { background: rgba(108,198,255,.34); }
+.scrub-strip i.on    { background: var(--accent); }
+
+@media (max-width: 400px) {
+  .sr-grid { grid-template-columns: repeat(2, 1fr); }
+}
 
 /* ── Datenquelle unter der Stundenleiste ──────────────────── */
 .source-line {
@@ -703,6 +767,20 @@ select#bfModel {
   font-size: 11px; line-height: 1.6; color: var(--ink-faint);
 }
 .foot b { font-weight: 600; color: var(--ink-dim); }
+
+.foot-author {
+  display: inline-flex; align-items: center; gap: 9px;
+  padding: 9px 15px 9px 9px; margin-bottom: 14px;
+  background: var(--card); border: 1px solid var(--card-line);
+  border-radius: 30px;
+}
+.fa-mark {
+  width: 27px; height: 27px; flex: none; display: grid; place-items: center;
+  border-radius: 50%; background: linear-gradient(140deg, #6cc6ff, #3a7fd0);
+  color: #06121e; font-size: 11px; font-weight: 800; letter-spacing: .02em;
+}
+.fa-text { font-size: 12.5px; color: var(--ink-dim); }
+.fa-text b { color: var(--ink); font-weight: 600; }
 .foot-privacy { margin-top: 5px; }
 .foot-stamp { margin-top: 7px; opacity: .72; }
 

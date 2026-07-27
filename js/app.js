@@ -494,6 +494,76 @@ function renderSourceList() {
   }));
 }
 
+// ══ Zeitstrahl: 5 Tage durchschieben ═══════════════════════
+/** Ein Regler über die kommenden 120 Stunden. Zu jedem Punkt stehen die Werte
+    für genau diese Stunde da — die flächige Radarkarte reicht nur 30 Minuten
+    voraus, hier sieht man die ganze Spanne am eigenen Standort. */
+function renderScrub() {
+  const h = data.hourly, d = data.daily;
+  const i0 = nowIndex(h.time);
+  const span = Math.min(120, h.time.length - i0);
+  const sl = $('#scrubSlider');
+  sl.max = String(span - 1);
+
+  // Tagesgrenzen markieren
+  const ticks = [];
+  for (let k = 0; k < span; k++) {
+    const t = new Date(h.time[i0 + k]);
+    if (t.getHours() === 0 && k > 0) {
+      ticks.push(`<span class="tick-day" style="left:${(k / (span - 1) * 100).toFixed(1)}%"
+        data-label="${weekday(t)}"></span>`);
+    }
+  }
+  $('#scrubTicks').innerHTML = ticks.join('');
+
+  // Regenband als Überblick unter dem Regler
+  const maxMm = Math.max(0.6, ...h.precipitation.slice(i0, i0 + span).map(v => v ?? 0));
+  $('#scrubStrip').innerHTML = Array.from({ length: span }, (_, k) => {
+    const i = i0 + k;
+    const mm = h.precipitation[i] ?? 0;
+    const prob = h.precipitation_probability[i] ?? 0;
+    const night = !h.is_day[i];
+    const hgt = mm > 0 ? Math.max(9, (mm / maxMm) * 100) : (prob >= 20 ? 5 : 2);
+    return `<i class="${mm > 0 ? 'on' : prob >= 20 ? 'maybe' : ''}${night ? ' night' : ''}"
+      style="height:${hgt.toFixed(0)}%"></i>`;
+  }).join('');
+
+  const paint = () => {
+    const k = +sl.value;
+    const i = i0 + k;
+    const t = new Date(h.time[i]);
+    const heute = t.toDateString() === new Date().toDateString();
+    const morgen = t.toDateString() === new Date(Date.now() + 864e5).toDateString();
+    const tag = heute ? 'Heute' : morgen ? 'Morgen'
+      : t.toLocaleDateString('de-DE', { weekday: 'long' });
+
+    $('#scrubWhen').textContent = k === 0
+      ? 'jetzt' : `${tag}, ${hhmm(t)} Uhr`;
+
+    const prob = h.precipitation_probability[i] ?? 0;
+    const mm = h.precipitation[i] ?? 0;
+
+    $('#scrubRead').innerHTML = `
+      <span class="sr-icon">${WX.icon(h.weather_code[i], h.is_day[i])}</span>
+      <span class="sr-main">
+        <b>${round(h.temperature_2m[i])}°</b>
+        <i>${WX.text(h.weather_code[i], h.is_day[i])}</i>
+      </span>
+      <span class="sr-grid">
+        <span><em>Gefühlt</em>${round(h.apparent_temperature[i])}°</span>
+        <span><em>Regen</em>${prob}%${mm >= 0.1 ? ` · ${mm.toFixed(1)} mm` : ''}</span>
+        <span><em>Wind</em>${round(h.wind_speed_10m[i])} km/h</span>
+        <span><em>Böen</em>${round(h.wind_gusts_10m[i])} km/h</span>
+        <span><em>Feuchte</em>${round(h.relative_humidity_2m[i])}%</span>
+        <span><em>Wolken</em>${round(h.cloud_cover?.[i])}%</span>
+      </span>`;
+  };
+
+  sl.oninput = paint;
+  sl.value = '0';
+  paint();
+}
+
 // ══ Rendering: Modellvergleich ═════════════════════════════
 /** Zeigt, wo sich die Rechenmodelle einig sind – und ab wann nicht mehr. */
 function renderModels(md) {
@@ -856,6 +926,7 @@ async function refresh() {
     renderHourly();
     renderSource();
     renderDaily();
+    renderScrub();
     renderModels(md);
     renderTiles(aq);
     renderCams();
@@ -974,6 +1045,7 @@ async function boot() {
     Radar.init(place.lat, place.lon, {
       slider: $('#radarSlider'), play: $('#playBtn'), time: $('#radarTime'),
       legend: $('#radarLegend'), locate: $('#radarLocate'), empty: $('#radarEmpty'),
+      globe: $('#radarGlobe'), ticks: $('#radarTicks'),
       onLocate: () => Radar.setCenter(place.lat, place.lon)
     });
     await Radar.load();

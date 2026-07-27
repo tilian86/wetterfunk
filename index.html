@@ -15,7 +15,7 @@
 <link rel="icon" href="icons/icon-192.png">
 <link rel="manifest" href="manifest.webmanifest">
 
-<link rel="stylesheet" href="vendor/leaflet.css">
+<link rel="stylesheet" href="vendor/maplibre-gl.css">
 <link rel="stylesheet" href="css/style.css">
 </head>
 <body>
@@ -88,15 +88,37 @@
       <button class="radar-locate" id="radarLocate" aria-label="Auf Standort zentrieren">
         <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3.2"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3"/><circle cx="12" cy="12" r="8"/></svg>
       </button>
+      <button class="radar-globe" id="radarGlobe" aria-label="Erdkugel anzeigen">
+        <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M3 12h18"/><path d="M12 3a14 14 0 0 1 0 18a14 14 0 0 1 0-18z"/></svg>
+      </button>
     </div>
     <div class="radar-ctrl">
       <button class="play-btn" id="playBtn" aria-label="Animation abspielen">
         <svg class="ico-play" viewBox="0 0 24 24"><path d="M7 4.5v15l13-7.5z"/></svg>
         <svg class="ico-pause" viewBox="0 0 24 24"><path d="M8 4.5h3.2v15H8zM12.8 4.5H16v15h-3.2z"/></svg>
       </button>
-      <input type="range" id="radarSlider" min="0" max="12" value="12" step="1" aria-label="Radar-Zeitpunkt">
+      <span class="slider-wrap">
+        <input type="range" id="radarSlider" min="0" max="12" value="12" step="1" aria-label="Radar-Zeitpunkt">
+        <span class="slider-ticks" id="radarTicks"></span>
+      </span>
       <span class="radar-time" id="radarTime">–</span>
     </div>
+    <p class="radar-hint">Messung bis jetzt, danach 30 Minuten Prognose. Weiter voraus zeigt
+      der Zeitstrahl unten — flächige Regenkarten gibt es frei nur für diese Spanne.</p>
+  </section>
+
+  <!-- ══ ZEITSTRAHL ══ -->
+  <section class="card card-scrub">
+    <div class="card-head">
+      <h2>Zeitstrahl</h2>
+      <span class="card-sub" id="scrubWhen">jetzt</span>
+    </div>
+    <div class="scrub-read" id="scrubRead"></div>
+    <span class="slider-wrap wide">
+      <input type="range" id="scrubSlider" min="0" max="119" value="0" step="1" aria-label="Vorhersagezeitpunkt">
+      <span class="slider-ticks" id="scrubTicks"></span>
+    </span>
+    <div class="scrub-strip" id="scrubStrip"></div>
   </section>
 
   <!-- ══ MODELLVERGLEICH ══ -->
@@ -153,7 +175,12 @@
   </section>
 
   <footer class="foot">
-    <p>Daten: <b>Open-Meteo</b> (DWD ICON-D2, ECMWF, GFS) · Radar: <b>RainViewer</b> · Warnungen: <b>DWD</b> · Karte: <b>OpenStreetMap</b></p>
+    <p class="foot-author">
+      <span class="fa-mark">FT</span>
+      <span class="fa-text">Wetterfunk — gebaut von <b>Florian S. Thiel</b></span>
+    </p>
+    <p>Daten: <b>Open-Meteo</b> (DWD ICON-D2, ECMWF, GFS) · Radar: <b>RainViewer</b> ·
+      Warnungen: <b>DWD</b> · Karte: <b>OpenFreeMap</b> / <b>OpenStreetMap</b></p>
     <p class="foot-privacy">Keine Tracker, keine Cookies, keine Konten. Standort bleibt auf dem Gerät.</p>
     <p class="foot-stamp" id="footStamp"></p>
   </footer>
@@ -253,7 +280,7 @@
 
 <div class="toast" id="toast" hidden></div>
 
-<script src="vendor/leaflet.js"></script>
+<script src="vendor/maplibre-gl.js"></script>
 <script src="js/icons.js"></script>
 <script src="js/radar.js"></script>
 <script src="js/briefing.js"></script>
