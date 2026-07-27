@@ -1057,9 +1057,40 @@ async function boot() {
     $('#map').innerHTML = '<p class="empty">Radardaten gerade nicht erreichbar.</p>';
   }
 
-  if ('serviceWorker' in navigator) {
-    navigator.serviceWorker.register('sw.js').catch(() => {});
-  }
+  registerWorker();
+}
+
+/** Der Service Worker liefert die Programmhülle. Kommt eine neue Fassung,
+    laden wir genau einmal neu — sonst mischen sich alte und neue Dateien,
+    weil GitHub Pages Antworten zehn Minuten zwischenspeichern lässt. */
+function registerWorker() {
+  if (!('serviceWorker' in navigator)) return;
+
+  let reloading = false;
+  navigator.serviceWorker.addEventListener('controllerchange', () => {
+    if (reloading) return;
+    reloading = true;
+    location.reload();
+  });
+
+  navigator.serviceWorker.register('sw.js')
+    .then(reg => {
+      reg.addEventListener('updatefound', () => {
+        const sw = reg.installing;
+        sw?.addEventListener('statechange', () => {
+          // Nur wenn schon eine Fassung lief – beim allerersten Besuch nicht neu laden
+          if (sw.state === 'installed' && navigator.serviceWorker.controller) {
+            toast('Neue Fassung wird geladen…', 1800);
+          }
+        });
+      });
+      // Beim Start und bei Rückkehr auf Aktualisierungen prüfen
+      reg.update().catch(() => {});
+      document.addEventListener('visibilitychange', () => {
+        if (!document.hidden) reg.update().catch(() => {});
+      });
+    })
+    .catch(() => {});
 }
 
 document.addEventListener('DOMContentLoaded', boot);
