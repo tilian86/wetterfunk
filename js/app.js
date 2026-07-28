@@ -54,6 +54,8 @@ const $  = (s, r = document) => r.querySelector(s);
 const $$ = (s, r = document) => [...r.querySelectorAll(s)];
 const clamp = (v, a, b) => Math.min(b, Math.max(a, v));
 const round = (v) => (v === null || v === undefined || Number.isNaN(v) ? null : Math.round(v));
+/** Zahl mit deutschem Komma — 0,6 statt 0.6. */
+const dez = (v, n = 1) => (v == null ? "–" : v.toFixed(n).replace(".", ","));
 
 const store = {
   get(k, fb) { try { return JSON.parse(localStorage.getItem(k)) ?? fb; } catch { return fb; } },
@@ -461,7 +463,7 @@ function renderHourly() {
         <span class="h-bar"><i style="height:${clamp(prob, 3, 100)}%"></i></span>
         <span class="h-prob">${prob >= 15 ? prob + '%' : ''}</span>
       </span>
-      ${mm >= 0.1 ? `<span class="h-mm">${mm.toFixed(1)}</span>` : '<span class="h-mm"></span>'}
+      ${mm >= 0.1 ? `<span class="h-mm">${dez(mm)}</span>` : '<span class="h-mm"></span>'}
     </div>`;
   }).join('');
 
@@ -578,6 +580,23 @@ function rainWindow(dayIndex) {
   return { von: a, bis: b, anteil: nass.length / Math.max(1, stunden.length) };
 }
 
+/* Open-Meteo liefert `sunshine_duration` als Tageswert — bei längerer Vorhersage
+   aus einem anderen Modelllauf als die Stundenwerte. Dann stehen "12 Stunden
+   Sonne" neben einem Streifen, der ab Mittag zu ist. Deshalb rechnen wir die
+   Sonnenstunden aus denselben Stundenwerten wie den Streifen: alles aus einer
+   Quelle, in sich stimmig. */
+function sonnenStunden(dayISO) {
+  const h = data.hourly;
+  let summe = 0;
+  for (let u = 0; u < 24; u++) {
+    const k = h.time.indexOf(`${dayISO}T${String(u).padStart(2, '0')}:00`);
+    if (k < 0 || h.is_day[k] !== 1) continue;
+    if ((h.precipitation[k] ?? 0) >= 0.3) continue;      // bei Regen keine Sonne
+    summe += Math.max(0, (100 - (h.cloud_cover[k] ?? 100)) / 100);
+  }
+  return summe;
+}
+
 /** Farbe einer Tagesstunde für den Verlaufsbalken.
     Reihenfolge zählt: Regen schlägt Bewölkung, Nacht färbt den Rest ein. */
 function hourShade(mm, wolken, tags) {
@@ -619,7 +638,7 @@ function renderDaily() {
     const min = d.temperature_2m_min[i], max = d.temperature_2m_max[i];
     const prob = d.precipitation_probability_max[i] ?? 0;
     const mm = d.precipitation_sum[i] ?? 0;
-    const sun = Math.round((d.sunshine_duration?.[i] ?? 0) / 3600);
+    const sun = Math.round(sonnenStunden(day));
     const wind = round(d.wind_speed_10m_max?.[i]);
     const boe = round(d.wind_gusts_10m_max?.[i]);
     const w = mm >= 0.2 ? rainWindow(i) : null;
@@ -636,7 +655,7 @@ function renderDaily() {
       <span class="d-temps"><b>${round(max)}°</b> / ${round(min)}°</span>
       ${dayStrip(day)}
       <span class="d-hours"><i>0</i><i>6</i><i>12</i><i>18</i><i>24</i></span>
-      ${w ? `<span class="d-detail">${worte} · ${hhmm(w.von)}–${hhmm(w.bis)} · ${mm.toFixed(1)} mm</span>` : ''}
+      ${w ? `<span class="d-detail">${worte} · ${hhmm(w.von)}–${hhmm(w.bis)} · ${dez(mm)} mm</span>` : ''}
     </div>`;
   }).join('');
 }
@@ -1281,14 +1300,14 @@ function showPointDetail(props, lngLat) {
     }
   }
 
-  $('#explainTitle').textContent = mm >= 0.1 ? `${mm.toFixed(1)} mm Regen` : `${props.grad}°`;
+  $('#explainTitle').textContent = mm >= 0.1 ? `${dez(mm)} mm Regen` : `${props.grad}°`;
   $('#explainText').innerHTML = `
     <p style="margin:0 0 12px">${mm >= 0.1
-      ? `An dieser Stelle fällt in der gezeigten Stunde <b>${mm.toFixed(1)} mm</b> Regen — ${rainWords(mm)}.`
+      ? `An dieser Stelle fällt in der gezeigten Stunde <b>${dez(mm)} mm</b> Regen — ${rainWords(mm)}.`
       : `An dieser Stelle sind <b>${props.grad}°</b> vorhergesagt. Zeigt die Karte Regen, steht dort statt der Temperatur die Menge in Millimetern.`}</p>
     ${phase ? `<div class="ds-span" style="margin-bottom:12px">
       <b>${hhmm(phase.von)}–${hhmm(phase.bis)}</b>
-      <span>🌧 ${phase.summe.toFixed(1)} mm insgesamt</span>
+      <span>🌧 ${dez(phase.summe)} mm insgesamt</span>
     </div>` : '<p class="ds-note" style="margin-bottom:12px">In den nächsten zwei Tagen ist hier kein Regen vorhergesagt.</p>'}
     <dl class="ds-facts">
       <dt>unter 0,5 mm</dt><dd>Nieseln — Jacke reicht</dd>
@@ -1309,7 +1328,7 @@ function openDaySheet(i) {
   if (!dayISO) return;
   const stunden = dayHours(dayISO);
   const spans = daySpans(stunden).filter(s => s.art !== 'nacht' || s.bis - s.von >= 3);
-  const sun = Math.round((d.sunshine_duration?.[i] ?? 0) / 3600);
+  const sun = Math.round(sonnenStunden(dayISO));
   const mm = d.precipitation_sum[i] ?? 0;
   const warm = stunden.reduce((a, b) => (b.temp > a.temp ? b : a), stunden[0] || { u: 12, temp: 0 });
   const kalt = stunden.reduce((a, b) => (b.temp < a.temp ? b : a), stunden[0] || { u: 5, temp: 0 });
@@ -1322,14 +1341,14 @@ function openDaySheet(i) {
     <div class="ds-spans">
       ${spans.map(s => `<div class="ds-span">
         <b>${String(s.von).padStart(2, '0')}–${String(s.bis).padStart(2, '0')} Uhr</b>
-        <span>${SPAN_WORT[s.art]}${s.art === 'regen' ? ` · ${s.mm.toFixed(1)} mm` : ''}</span>
+        <span>${SPAN_WORT[s.art]}${s.art === 'regen' ? ` · ${dez(s.mm)} mm` : ''}</span>
       </div>`).join('')}
     </div>
     <dl class="ds-facts">
       <dt>Wärmster Moment</dt><dd>${round(warm.temp)}° gegen ${String(warm.u).padStart(2, '0')} Uhr</dd>
       <dt>Kältester Moment</dt><dd>${round(kalt.temp)}° gegen ${String(kalt.u).padStart(2, '0')} Uhr</dd>
       <dt>Sonne</dt><dd>${sun} Stunden${sun >= 8 ? ' — viel' : sun <= 2 ? ' — wenig' : ''}</dd>
-      <dt>Regen</dt><dd>${mm < 0.2 ? 'keiner erwartet' : `${mm.toFixed(1)} mm — ${rainWords(mm)}`}</dd>
+      <dt>Regen</dt><dd>${mm < 0.2 ? 'keiner erwartet' : `${dez(mm)} mm — ${rainWords(mm)}`}</dd>
       <dt>Wind</dt><dd>bis ${round(d.wind_speed_10m_max?.[i])} km/h, Böen bis ${round(d.wind_gusts_10m_max?.[i])} km/h${
         d.wind_gusts_10m_max?.[i] >= 60 ? ' — auf lose Gegenstände achten' : ''}</dd>
       <dt>Sonnenaufgang</dt><dd>${hhmm(d.sunrise[i])}</dd>
