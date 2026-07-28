@@ -1032,8 +1032,55 @@ body.loading .hero-temp, body.loading .hero-desc { opacity: .45; }
   .tile.t-wide { grid-column: span 2; }
   .cams { grid-template-columns: 1fr 1fr; }
   .radar-wrap { height: 330px; }
-  .sheet { max-width: 560px; margin: 0 auto; border-radius: 26px; margin-bottom: 20px; }
+  .sheet { max-width: 560px; margin: 0 auto 20px; border-radius: 26px; }
   .sheet-back { align-items: center; }
+}
+
+/* Ab Tablet-Breite zweispaltig — auf dem Rechner soll die Fläche genutzt
+   werden, statt alles in eine schmale Spalte zu quetschen. */
+@media (min-width: 1000px) {
+  body { max-width: 1180px; }
+
+  #app {
+    display: grid; align-items: start;
+    grid-template-columns: 1fr 1fr;
+    gap: var(--gap);
+  }
+  /* Ohne min-width:0 sprengt die waagerecht scrollende Stundenleiste
+     ihre Spalte — Grid-Kinder schrumpfen sonst nicht unter ihren Inhalt. */
+  #app > * { min-width: 0; }
+  /* Über die volle Breite: Kopf, Klartext, Warnungen, Karte, Zeitstrahl, Fuß */
+  .hero, .verdict, .warnings, .card-radar, .card-scrub, .tiles, .foot {
+    grid-column: 1 / -1;
+  }
+  #app > .card, #app > section { margin-top: 0; }
+
+  .hero { padding: 18px 0 10px; }
+  .hero-icon { height: 124px; }
+  .hero-icon .wx { width: 134px; height: 134px; }
+  .hero-temp { font-size: 104px; }
+
+  .radar-wrap { height: 460px; }
+  .tiles { grid-template-columns: repeat(4, 1fr); }
+  .tile.t-wide { grid-column: span 2; }
+  .cams { grid-template-columns: repeat(3, 1fr); }
+
+  /* Der Zeitstrahl bekommt die Werte neben den Regler statt darüber */
+  .card-scrub { display: grid; grid-template-columns: minmax(0, 320px) 1fr;
+                gap: 6px 26px; align-items: center; }
+  .card-scrub .card-head { grid-column: 1 / -1; }
+  .scrub-read { margin-bottom: 0; }
+  .card-scrub .slider-wrap.wide { grid-column: 2; grid-row: 2; margin: 0; }
+  .scrub-strip { grid-column: 2; grid-row: 3; margin-top: 22px; }
+  .scrub-hint  { grid-column: 1 / -1; }
+
+  .model-chart .mchart { height: 220px; }
+}
+
+@media (min-width: 1400px) {
+  body { max-width: 1360px; }
+  .tiles { grid-template-columns: repeat(5, 1fr); }
+  .radar-wrap { height: 520px; }
 }
 
 .map-sharp {
@@ -1135,3 +1182,57 @@ body.loading .hero-temp, body.loading .hero-desc { opacity: .45; }
   color: var(--ink-dim);
 }
 .foot-clock b { color: var(--ink); font-weight: 600; }
+
+/* ── Countdown Sonne & Mond ───────────────────────────────── */
+.cd-main {
+  display: flex; align-items: center; gap: 14px;
+  padding-bottom: 14px; margin-bottom: 12px;
+  border-bottom: 1px solid var(--card-line);
+}
+.cd-icon {
+  width: 46px; height: 46px; flex: none; border-radius: 50%;
+}
+.cd-icon.sonne { background: radial-gradient(circle at 40% 35%, #ffe9a8, #ffcf6b 60%, #f0a33c);
+                 box-shadow: 0 0 18px rgba(255,199,90,.4); }
+.cd-icon.gold  { background: radial-gradient(circle at 40% 35%, #ffd98f, #f0a33c 70%, #c9762a);
+                 box-shadow: 0 0 18px rgba(240,163,60,.4); }
+.cd-icon.blau  { background: radial-gradient(circle at 40% 35%, #8fb4e8, #4a6fa8 70%, #2b4570);
+                 box-shadow: 0 0 18px rgba(91,141,217,.35); }
+.cd-icon.mond  { background: radial-gradient(circle at 36% 32%, #fdfbf3, #d9dee8 62%, #aeb6c4);
+                 box-shadow: 0 0 16px rgba(230,238,255,.3); }
+
+.cd-body { display: grid; gap: 2px; min-width: 0; }
+.cd-label { font-size: 12px; font-weight: 700; letter-spacing: .07em;
+            text-transform: uppercase; color: var(--ink-faint); }
+.cd-rest  { font-size: 27px; font-weight: 300; letter-spacing: -.02em;
+            font-variant-numeric: tabular-nums; }
+.cd-clock { font-size: 12px; color: var(--ink-dim); }
+
+.cd-list { display: grid; gap: 8px; }
+.cd-row {
+  display: grid; grid-template-columns: 9px 1fr auto auto; align-items: center;
+  gap: 10px; font-size: 13px; color: var(--ink-dim);
+}
+.cd-dot { width: 9px; height: 9px; border-radius: 50%; }
+.cd-dot.sonne { background: #ffcf6b; }
+.cd-dot.gold  { background: #f0a33c; }
+.cd-dot.blau  { background: #5b8dd9; }
+.cd-dot.mond  { background: #dfe6f2; }
+.cd-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cd-time { font-variant-numeric: tabular-nums; color: var(--ink); font-weight: 600; }
+.cd-in   { font-variant-numeric: tabular-nums; font-size: 11.5px; color: var(--ink-faint);
+           min-width: 92px; text-align: right; }
+
+/* Feinbereich am Zeitstrahl */
+.tick-fine {
+  position: absolute; top: -11px; width: 2px; height: 12px; border-radius: 2px;
+  background: var(--good); opacity: .75;
+}
+.tick-fine::after {
+  content: attr(data-label); position: absolute; top: 13px; left: 0;
+  transform: translateX(-50%); font-size: 8.5px; color: var(--good);
+  opacity: .8; white-space: nowrap;
+}
+.scrub-strip i.fine { background: rgba(79,212,138,.28); }
+.scrub-strip i.fine.on { background: var(--accent); }
+#scrubWhen em { font-style: normal; opacity: .65; font-size: 11px; }

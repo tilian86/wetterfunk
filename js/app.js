@@ -114,7 +114,7 @@ function loadForecast(lat, lon) {
       'precipitation', 'weather_code', 'cloud_cover', 'pressure_msl',
       'wind_speed_10m', 'wind_direction_10m', 'wind_gusts_10m'
     ].join(','),
-    minutely_15: 'precipitation,weather_code',
+    minutely_15: 'precipitation,weather_code,temperature_2m,wind_speed_10m,is_day',
     hourly: [
       'temperature_2m', 'apparent_temperature', 'precipitation_probability', 'precipitation',
       'weather_code', 'wind_speed_10m', 'wind_gusts_10m', 'uv_index', 'is_day',
@@ -499,80 +499,120 @@ function renderSourceList() {
 /** Ein Regler über die kommenden 120 Stunden. Zu jedem Punkt stehen die Werte
     für genau diese Stunde da — die flächige Radarkarte reicht nur 30 Minuten
     voraus, hier sieht man die ganze Spanne am eigenen Standort. */
-function renderScrub() {
-  const h = data.hourly, d = data.daily;
-  const i0 = nowIndex(h.time);
-  const span = Math.min(120, h.time.length - i0);
-  const sl = $('#scrubSlider');
-  sl.max = String(span - 1);
+/** Stützstellen des Zeitstrahls: die ersten drei Stunden im Viertelstundentakt,
+    danach stündlich. So lässt sich der Regenbeginn auf die Viertelstunde genau
+    ablesen, ohne dass der Regler für fünf Tage unbrauchbar lang wird. */
+function buildScrubPoints() {
+  const h = data.hourly, m = data.minutely_15;
+  const jetzt = Date.now();
+  const punkte = [];
 
-  // Tagesgrenzen markieren
-  const ticks = [];
-  for (let k = 0; k < span; k++) {
-    const t = new Date(h.time[i0 + k]);
-    if (t.getHours() === 0 && k > 0) {
-      ticks.push(`<span class="tick-day" style="left:${(k / (span - 1) * 100).toFixed(1)}%"
-        data-label="${weekday(t)}"></span>`);
+  if (m?.time?.length) {
+    const start = m.time.findIndex(t => new Date(t).getTime() >= jetzt - 9e5);
+    if (start >= 0) {
+      for (let k = start; k < m.time.length; k++) {
+        const t = new Date(m.time[k]);
+        if (t.getTime() > jetzt + 3 * 36e5) break;       // nur die nächsten 3 Std.
+        punkte.push({ t, fein: true, i: k });
+      }
     }
   }
+
+  const i0 = nowIndex(h.time);
+  for (let k = 0; k < h.time.length - i0; k++) {
+    const t = new Date(h.time[i0 + k]);
+    if (punkte.length && t.getTime() <= punkte[punkte.length - 1].t.getTime()) continue;
+    if (punkte.length >= 1 && t.getTime() > jetzt + 120 * 36e5) break;
+    punkte.push({ t, fein: false, i: i0 + k });
+  }
+  return punkte;
+}
+
+function renderScrub() {
+  const h = data.hourly, m = data.minutely_15;
+  const punkte = buildScrubPoints();
+  if (!punkte.length) return;
+
+  const sl = $('#scrubSlider');
+  sl.max = String(punkte.length - 1);
+  const anteil = (k) => (k / (punkte.length - 1)) * 100;
+
+  // Marken: Ende des Feinbereichs und Tagesgrenzen
+  const ticks = [];
+  const letzteFein = punkte.findLastIndex(p => p.fein);
+  if (letzteFein > 0) {
+    ticks.push(`<span class="tick-fine" style="left:${anteil(letzteFein).toFixed(1)}%"
+      data-label="15-Min-Takt"></span>`);
+  }
+  punkte.forEach((p, k) => {
+    if (k > 0 && p.t.getHours() === 0 && p.t.getMinutes() === 0) {
+      ticks.push(`<span class="tick-day" style="left:${anteil(k).toFixed(1)}%"
+        data-label="${weekday(p.t)}"></span>`);
+    }
+  });
   $('#scrubTicks').innerHTML = ticks.join('');
 
-  // Regenband als Überblick unter dem Regler
-  const maxMm = Math.max(0.6, ...h.precipitation.slice(i0, i0 + span).map(v => v ?? 0));
-  $('#scrubStrip').innerHTML = Array.from({ length: span }, (_, k) => {
-    const i = i0 + k;
-    const mm = h.precipitation[i] ?? 0;
-    const prob = h.precipitation_probability[i] ?? 0;
-    const night = !h.is_day[i];
-    const hgt = mm > 0 ? Math.max(9, (mm / maxMm) * 100) : (prob >= 20 ? 5 : 2);
-    return `<i class="${mm > 0 ? 'on' : prob >= 20 ? 'maybe' : ''}${night ? ' night' : ''}"
-      style="height:${hgt.toFixed(0)}%"></i>`;
+  // Regenband über alle Stützstellen
+  const mmVon = (p) => (p.fein ? (m.precipitation[p.i] ?? 0) * 4 : (h.precipitation[p.i] ?? 0));
+  const maxMm = Math.max(0.6, ...punkte.map(mmVon));
+  $('#scrubStrip').innerHTML = punkte.map(p => {
+    const mm = mmVon(p);
+    const prob = p.fein ? 0 : (h.precipitation_probability[p.i] ?? 0);
+    const nacht = p.fein ? !m.is_day?.[p.i] : !h.is_day[p.i];
+    const hoehe = mm > 0 ? Math.max(9, (mm / maxMm) * 100) : (prob >= 20 ? 5 : 2);
+    return `<i class="${mm > 0 ? 'on' : prob >= 20 ? 'maybe' : ''}${nacht ? ' night' : ''}${p.fein ? ' fine' : ''}"
+      style="height:${hoehe.toFixed(0)}%"></i>`;
   }).join('');
 
   const paint = () => {
-    const k = +sl.value;
-    const i = i0 + k;
-    const t = new Date(h.time[i]);
+    const p = punkte[Math.min(+sl.value, punkte.length - 1)];
+    const t = p.t;
     const heute = t.toDateString() === new Date().toDateString();
     const morgen = t.toDateString() === new Date(Date.now() + 864e5).toDateString();
-    const tag = heute ? 'Heute' : morgen ? 'Morgen'
-      : t.toLocaleDateString('de-DE', { weekday: 'long' });
+    const tag = heute ? 'Heute' : morgen ? 'Morgen' : t.toLocaleDateString('de-DE', { weekday: 'long' });
+    const minuten = Math.round((t - Date.now()) / 60000);
 
-    $('#scrubWhen').textContent = k === 0
-      ? 'jetzt' : `${tag}, ${hhmm(t)} Uhr`;
+    $('#scrubWhen').innerHTML = minuten <= 7
+      ? 'jetzt'
+      : `${tag}, ${hhmm(t)} Uhr${p.fein ? ` <em>in ${minuten} Min.</em>` : ''}`;
 
-    const prob = h.precipitation_probability[i] ?? 0;
-    const mm = h.precipitation[i] ?? 0;
+    // Feinbereich: echte Viertelstundenwerte, sonst Stundenwerte.
+    // Was es nur stündlich gibt, kommt aus der nächstgelegenen Stunde.
+    const hi = p.fein ? Math.max(0, h.time.findIndex(x => new Date(x) >= t) - 1) : p.i;
+    const code = p.fein ? m.weather_code[p.i] : h.weather_code[p.i];
+    const tag_ = p.fein ? (m.is_day?.[p.i] ?? 1) : h.is_day[p.i];
+    const temp = p.fein ? m.temperature_2m[p.i] : h.temperature_2m[p.i];
+    const wind = p.fein ? m.wind_speed_10m[p.i] : h.wind_speed_10m[p.i];
+    const mm = p.fein ? (m.precipitation[p.i] ?? 0) : (h.precipitation[p.i] ?? 0);
+    const prob = h.precipitation_probability[hi] ?? 0;
 
     $('#scrubRead').innerHTML = `
-      <span class="sr-icon">${WX.icon(h.weather_code[i], h.is_day[i])}</span>
+      <span class="sr-icon">${WX.icon(code, tag_)}</span>
       <span class="sr-main">
-        <b>${round(h.temperature_2m[i])}°</b>
-        <i>${WX.text(h.weather_code[i], h.is_day[i])}</i>
+        <b>${round(temp)}°</b>
+        <i>${WX.text(code, tag_)}</i>
       </span>
       <span class="sr-grid">
-        <span><em>Gefühlt</em>${round(h.apparent_temperature[i])}°</span>
-        <span><em>Regen</em>${prob}%${mm >= 0.1 ? ` · ${mm.toFixed(1)} mm` : ''}</span>
-        <span><em>Wind</em>${round(h.wind_speed_10m[i])} km/h</span>
-        <span><em>Böen</em>${round(h.wind_gusts_10m[i])} km/h</span>
-        <span><em>Feuchte</em>${round(h.relative_humidity_2m[i])}%</span>
-        <span><em>Wolken</em>${round(h.cloud_cover?.[i])}%</span>
+        <span><em>Gefühlt</em>${round(h.apparent_temperature[hi])}°</span>
+        <span><em>Regen</em>${prob}%${mm >= 0.05
+          ? ` · ${mm.toFixed(mm < 1 ? 2 : 1)} mm${p.fein ? '/15min' : ''}` : ''}</span>
+        <span><em>Wind</em>${round(wind)} km/h</span>
+        <span><em>Böen</em>${round(h.wind_gusts_10m[hi])} km/h</span>
+        <span><em>Feuchte</em>${round(h.relative_humidity_2m[hi])}%</span>
+        <span><em>Wolken</em>${round(h.cloud_cover?.[hi])}%</span>
       </span>`;
   };
 
-  sl.oninput = () => { paint(); syncMap(+sl.value); };
+  sl.oninput = () => { paint(); syncMapAt(punkte[+sl.value]?.t); };
   sl.value = '0';
   paint();
-  syncMap(0);
+  syncMapAt(punkte[0].t);
 }
 
 /** Karte an den Zeitstrahl koppeln: bis 30 Minuten zeigt das echte Radar,
     danach die selbst gezeichnete Flächenvorhersage. */
-function syncMap(k) {
-  if (!radarReady) return;
-  const h = data.hourly;
-  const i0 = nowIndex(h.time);
-  const ziel = new Date(h.time[i0 + k]);
+function syncMapAt(ziel) {
+  if (!radarReady || !ziel) return;
   const vorlauf = (ziel - Date.now()) / 60000;      // Minuten voraus
 
   const label = $('#mapMode');
@@ -1019,6 +1059,101 @@ function renderTiles(air) {
   $('#tiles').innerHTML = out.join('');
 }
 
+// ══ Countdown zu Sonne und Mond ════════════════════════════
+let countdownTimer = null;
+
+/** Zeitpunkt des höchsten Sonnenstands (wahrer Mittag). */
+function solarNoon(day, lat, lon) {
+  const start = new Date(day); start.setHours(0, 0, 0, 0);
+  let best = null, hoch = -99;
+  for (let m = 0; m <= 1440; m += 2) {
+    const t = new Date(start.getTime() + m * 60000);
+    const a = sunAltitude(t, lat, lon);
+    if (a > hoch) { hoch = a; best = t; }
+  }
+  return { zeit: best, hoehe: hoch };
+}
+
+/** Sammelt die nächsten Sonnen- und Mondereignisse ab jetzt. */
+function nextEvents(lat, lon) {
+  const jetzt = Date.now();
+  const liste = [];
+  for (let tag = 0; tag < 3 && liste.length < 14; tag++) {
+    const d = new Date(jetzt + tag * 864e5);
+    const s = sunEvents(d, lat, lon);
+    const mittag = solarNoon(d, lat, lon);
+    const m = moonTimes(d, lat, lon);
+    liste.push(
+      { key: 'aufgang', name: 'Sonnenaufgang', t: s.aufgang, art: 'sonne' },
+      { key: 'mittag', name: 'Höchststand', t: mittag.zeit, art: 'sonne',
+        zusatz: `${Math.round(mittag.hoehe)}° über dem Horizont` },
+      { key: 'goldabend', name: 'Goldene Stunde', t: s.goldenStartAbend, art: 'gold' },
+      { key: 'untergang', name: 'Sonnenuntergang', t: s.untergang, art: 'sonne' },
+      { key: 'blau', name: 'Blaue Stunde endet', t: s.blaueStundeEndeAbend, art: 'blau' },
+      { key: 'mondauf', name: 'Mondaufgang', t: m.auf, art: 'mond' },
+      { key: 'mondunter', name: 'Monduntergang', t: m.unter, art: 'mond' }
+    );
+  }
+  return liste
+    .filter(e => e.t && e.t.getTime() > jetzt)
+    .sort((a, b) => a.t - b.t);
+}
+
+const restZeit = (ziel) => {
+  const s = Math.max(0, Math.floor((ziel - Date.now()) / 1000));
+  const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60);
+  if (h >= 1) return `${h} Std. ${String(m).padStart(2, '0')} Min.`;
+  if (m >= 1) return `${m} Min. ${String(s % 60).padStart(2, '0')} Sek.`;
+  return `${s} Sek.`;
+};
+
+function renderCountdown() {
+  const box = $('#countdown');
+  if (!box || !place) return;
+  clearInterval(countdownTimer);
+
+  const alle = nextEvents(place.lat, place.lon);
+  if (!alle.length) return;
+
+  // Je Art nur den nächsten Termin, damit die Liste nicht zuläuft
+  const gesehen = new Set();
+  const zeigen = alle.filter(e => {
+    if (gesehen.has(e.key)) return false;
+    gesehen.add(e.key); return true;
+  }).slice(0, 6);
+
+  const [erstes, ...weitere] = zeigen;
+
+  box.innerHTML = `
+    <div class="cd-main">
+      <span class="cd-icon ${erstes.art}"></span>
+      <span class="cd-body">
+        <span class="cd-label">${erstes.name}</span>
+        <span class="cd-rest" data-t="${erstes.t.getTime()}">${restZeit(erstes.t)}</span>
+        <span class="cd-clock">um ${hhmm(erstes.t)} Uhr${erstes.zusatz ? ` · ${erstes.zusatz}` : ''}</span>
+      </span>
+    </div>
+    <div class="cd-list">
+      ${weitere.map(e => `
+        <div class="cd-row">
+          <span class="cd-dot ${e.art}"></span>
+          <span class="cd-name">${e.name}</span>
+          <span class="cd-time">${hhmm(e.t)}</span>
+          <span class="cd-in" data-t="${e.t.getTime()}">${restZeit(e.t)}</span>
+        </div>`).join('')}
+    </div>`;
+
+  countdownTimer = setInterval(() => {
+    let neuLaden = false;
+    $$('[data-t]', box).forEach(el => {
+      const ziel = +el.dataset.t;
+      if (ziel <= Date.now()) neuLaden = true;
+      el.textContent = restZeit(ziel);
+    });
+    if (neuLaden) renderCountdown();          // Ereignis vorbei → Liste erneuern
+  }, 1000);
+}
+
 // ══ Himmelsereignisse ══════════════════════════════════════
 /** Kuratierte Liste. Wenn ein Termin in die Vorhersage fällt, kommt die
     Bewölkung dazu — bei Himmelsbeobachtung ist das die entscheidende Frage. */
@@ -1221,6 +1356,7 @@ async function refresh() {
     renderScrub();
     renderModels(md);
     renderTiles(aq);
+    renderCountdown();
     renderSky();
     renderCams();
 
@@ -1228,7 +1364,7 @@ async function refresh() {
     // weiter den Stand vom Seitenaufruf.
     if (radarReady) {
       Radar.load()
-        .then(() => syncMap(+$('#scrubSlider').value || 0))
+        .then(() => syncMapAt(buildScrubPoints()[+$('#scrubSlider').value || 0]?.t))
         .catch(e => console.warn('Radar:', e));
     }
 
@@ -1357,7 +1493,7 @@ async function boot() {
     // Flächenvorhersage im Hintergrund nachladen — sie deckt die Zeit ab,
     // die das Radar nicht mehr schafft.
     Forecast.load(place.lat, place.lon)
-      .then(() => { if (data) syncMap(+$('#scrubSlider').value || 0); })
+      .then(() => { if (data) syncMapAt(buildScrubPoints()[+$('#scrubSlider').value || 0]?.t); })
       .catch(e => console.warn('Flächenvorhersage:', e));
   } catch (e) {
     console.warn('Radar:', e);
