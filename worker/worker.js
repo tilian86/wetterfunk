@@ -87,6 +87,39 @@ export default {
       });
     }
 
+    /* ── DWD-Radarbild (1 km) durchreichen ────────────────────
+       Der Kartendienst des DWD ist zeitweise sehr langsam oder antwortet mit
+       500. Über den Worker gepuffert wird daraus ein stabiler Abruf: gleiche
+       Bildausschnitte kommen fünf Minuten lang aus dem Zwischenspeicher. */
+    if (url.pathname === '/dwdradar') {
+      const bbox = url.searchParams.get('bbox') || '';
+      const px = Math.min(1024, Math.max(256, +url.searchParams.get('px') || 512));
+      if (!/^-?\d+(\.\d+)?(,-?\d+(\.\d+)?){3}$/.test(bbox)) {
+        return json({ error: 'bbox fehlt oder ist ungültig' }, 400, origin);
+      }
+
+      const ziel = 'https://maps.dwd.de/geoserver/dwd/wms?service=WMS&version=1.1.1' +
+        '&request=GetMap&layers=dwd%3ANiederschlagsradar&srs=EPSG%3A3857' +
+        `&format=image%2Fpng&transparent=true&styles=&bbox=${bbox}&width=${px}&height=${px}`;
+
+      try {
+        const res = await withTimeout(
+          fetch(ziel, { cf: { cacheTtl: 300, cacheEverything: true } }), 12000);
+        if (!res.ok || !/image\/png/i.test(res.headers.get('content-type') || '')) {
+          return json({ error: `DWD antwortet ${res.status}` }, 502, origin);
+        }
+        return new Response(res.body, {
+          headers: {
+            ...cors(origin),
+            'content-type': 'image/png',
+            'cache-control': 'public, max-age=300'
+          }
+        });
+      } catch {
+        return json({ error: 'DWD zu langsam' }, 504, origin);
+      }
+    }
+
     /* ── Amtlicher Regionalwetterbericht des DWD ──────────────
        Von Meteorologen geschriebene Texte, offene Daten. Der Server setzt
        keine CORS-Freigabe und liefert Latin-1, deshalb der Umweg hier. */
@@ -253,7 +286,13 @@ export default {
   }
 };
 
-const RUHE_MS = 3 * 3600 * 1000;   // Mindestabstand zwischen zwei Meldungen
+/* Eine feste Ruhezeit von drei Stunden wäre zu grob: Hört Regen auf und fängt
+   eine Stunde später wieder an, will man das wissen. Gemeldet wird deshalb
+   jede neue Regenphase — erkannt an ihrem Startzeitpunkt — und zusätzlich das
+   Ende der laufenden. Wiederholungen derselben Phase unterbleiben, solange
+   sich der Startzeitpunkt nicht wesentlich verschiebt. */
+const START_TOLERANZ = 25 * 60000;   // Verschiebt sich der Beginn stärker, ist es eine neue Lage
+const MIN_ABSTAND    = 20 * 60000;   // Nie öfter als alle 20 Minuten irgendetwas melden
 
 async function regenPruefen(env) {
   const liste = await env.WF_PUSH.list({ prefix: 'abo:' });
@@ -263,12 +302,15 @@ async function regenPruefen(env) {
     if (!eintrag) continue;
 
     try {
-      const treffer = await regenVoraus(eintrag.lat, eintrag.lon);
-      if (!treffer) continue;
-      if (Date.now() - (eintrag.zuletzt || 0) < RUHE_MS) continue;
+      const lage = await regenLage(eintrag.lat, eintrag.lon);
+      if (!lage) continue;
+
+      const meldung = entscheide(lage, eintrag);
+      if (!meldung) continue;
+      if (Date.now() - (eintrag.zuletzt || 0) < MIN_ABSTAND) continue;
 
       const status = await sendPush(eintrag.abo, JSON.stringify({
-        titel: treffer.titel, text: treffer.text, art: 'regen'
+        titel: meldung.titel, text: meldung.text, art: meldung.art
       }), env);
 
       // 404/410 heißt: Gerät hat das Abo verworfen
@@ -278,6 +320,7 @@ async function regenPruefen(env) {
       }
       if (status < 300) {
         eintrag.zuletzt = Date.now();
+        eintrag.gemeldet = meldung.merker;
         await env.WF_PUSH.put(eintragMeta.name, JSON.stringify(eintrag));
       }
     } catch (e) {
@@ -286,11 +329,50 @@ async function regenPruefen(env) {
   }
 }
 
-/** Beginnt in den nächsten zwei Stunden Regen? Nutzt die Viertelstundenwerte. */
-async function regenVoraus(lat, lon) {
+/** Aus der Lage und dem zuletzt Gemeldeten ableiten, ob etwas zu sagen ist. */
+function entscheide(lage, eintrag) {
+  const alt = eintrag.gemeldet || {};
+
+  // Fall 1: Es regnet gerade — melden, wann es aufhört
+  if (lage.laeuft) {
+    const schonGesagt = alt.art === 'ende'
+      && Math.abs((alt.ende || 0) - lage.laeuft.ende) < START_TOLERANZ;
+    if (schonGesagt) return null;
+    // Nur ansagen, wenn das Ende absehbar ist und nicht in zwei Minuten eintritt
+    const minuten = Math.round((lage.laeuft.ende - Date.now()) / 60000);
+    if (minuten < 10 || minuten > 180) return null;
+    return {
+      art: 'ende',
+      titel: `Regen hört gegen ${lage.laeuft.endeUhr} Uhr auf`,
+      text: `Noch etwa ${minuten} Minuten${lage.naechste
+        ? `. Danach ab ${lage.naechste.startUhr} Uhr wieder ${lage.naechste.staerke}.` : '.'}`,
+      merker: { art: 'ende', ende: lage.laeuft.ende }
+    };
+  }
+
+  // Fall 2: Es ist trocken und Regen zieht auf
+  if (!lage.naechste) return null;
+  const p = lage.naechste;
+  const schonGesagt = alt.art === 'start' && Math.abs((alt.start || 0) - p.start) < START_TOLERANZ;
+  if (schonGesagt) return null;
+
+  const minuten = Math.round((p.start - Date.now()) / 60000);
+  return {
+    art: 'start',
+    titel: minuten <= 20 ? `Gleich ${p.staerke}` : `In ${minuten} Minuten ${p.staerke}`,
+    text: `Von ${p.startUhr} bis ${p.endeUhr} Uhr, rund ${p.summe.toFixed(1)} mm.` +
+          (p.danachPause ? ` Danach Pause bis ${p.danachPause}.` : ''),
+    merker: { art: 'start', start: p.start }
+  };
+}
+
+/* Die Regenlage der nächsten Stunden in einzelne Phasen zerlegt: wann jede
+   beginnt, wann sie endet, wie stark und wie viel. Grundlage sind die
+   Viertelstundenwerte — feiner geht es bei Open-Meteo nicht. */
+async function regenLage(lat, lon) {
   const p = new URLSearchParams({
     latitude: String(lat), longitude: String(lon), timezone: 'auto',
-    minutely_15: 'precipitation', forecast_days: '1'
+    minutely_15: 'precipitation', forecast_days: '2'
   });
   const res = await fetch(`https://api.open-meteo.com/v1/forecast?${p}`);
   if (!res.ok) return null;
@@ -305,42 +387,44 @@ async function regenVoraus(lat, lon) {
      daneben. Deshalb als UTC lesen und den Versatz abziehen. */
   const versatz = (d.utc_offset_seconds ?? 0) * 1000;
   const alsZeit = (t) => Date.parse(t + 'Z') - versatz;
+  const uhr = (i) => zeiten[i].slice(11, 16);          // steht schon in Ortszeit da
 
-  // Fenster: von jetzt bis in zwei Stunden
-  const ab = zeiten.findIndex(t => alsZeit(t) >= jetzt);
+  const ab = zeiten.findIndex(t => alsZeit(t) + 9e5 > jetzt);
   if (ab < 0) return null;
-  const bis = Math.min(zeiten.length, ab + 8);
+  const horizont = Math.min(zeiten.length, ab + 24);   // sechs Stunden voraus
 
-  // Regnet es schon? Dann ist die Meldung keine Vorwarnung mehr.
-  if ((werte[ab] ?? 0) >= 0.1) return null;
-
-  let start = -1;
-  for (let i = ab; i < bis; i++) {
-    if ((werte[i] ?? 0) >= 0.1) { start = i; break; }
+  const NASS = 0.1;
+  const phasen = [];
+  let i = ab;
+  while (i < horizont) {
+    if ((werte[i] ?? 0) < NASS) { i++; continue; }
+    let j = i, summe = 0, spitze = 0;
+    while (j < zeiten.length && (werte[j] ?? 0) >= NASS) {
+      summe += werte[j]; spitze = Math.max(spitze, werte[j]); j++;
+    }
+    phasen.push({
+      start: alsZeit(zeiten[i]),
+      ende: j < zeiten.length ? alsZeit(zeiten[j]) : alsZeit(zeiten[j - 1]) + 9e5,
+      startUhr: uhr(i),
+      endeUhr: uhr(Math.min(j, zeiten.length - 1)),
+      summe, spitze,
+      staerke: spitze >= 2.5 ? 'kräftiger Regen' : spitze >= 0.8 ? 'Regen' : 'leichter Regen'
+    });
+    i = j + 1;
   }
-  if (start < 0) return null;
+  if (!phasen.length) return { laeuft: null, naechste: null };
 
-  // Wie lange und wie kräftig?
-  let ende = start, summe = 0, spitze = 0;
-  while (ende < zeiten.length && (werte[ende] ?? 0) >= 0.1) {
-    summe += werte[ende]; spitze = Math.max(spitze, werte[ende]); ende++;
-  }
+  // Regnet es jetzt schon, ist die erste Phase die laufende
+  const esRegnet = (werte[ab] ?? 0) >= NASS && phasen[0].start <= jetzt + 9e5;
+  const laeuft = esRegnet ? phasen[0] : null;
+  const rest = esRegnet ? phasen.slice(1) : phasen;
+  const naechste = rest[0] || null;
 
-  const minuten = Math.round((alsZeit(zeiten[start]) - jetzt) / 60000);
-  const dauer = (ende - start) * 15;
-  const hhmm = zeiten[start].slice(11, 16);   // steht schon in Ortszeit da
+  // Nur ankündigen, was in den nächsten zwei Stunden anfängt
+  if (naechste && naechste.start - jetzt > 2 * 36e5 && !laeuft) return { laeuft: null, naechste: null };
 
-  const staerke = spitze >= 2.5 ? 'kräftiger Regen'
-                : spitze >= 0.8 ? 'Regen'
-                : 'leichter Regen';
-  const dauerWort = dauer >= 120 ? 'über zwei Stunden'
-                  : dauer >= 60 ? `etwa ${Math.round(dauer / 60)} Std.`
-                  : `etwa ${dauer} Minuten`;
-
-  return {
-    titel: minuten <= 20 ? `Gleich ${staerke}` : `In ${minuten} Minuten ${staerke}`,
-    text: `Ab ${hhmm} Uhr, ${dauerWort}, rund ${summe.toFixed(1)} mm.`
-  };
+  if (naechste && rest[1]) naechste.danachPause = rest[1].startUhr;
+  return { laeuft, naechste };
 }
 
 /** KV-Schlüssel aus der Abo-Adresse — die ist je Gerät eindeutig. */

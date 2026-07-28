@@ -52,33 +52,137 @@ const Radar = (() => {
       addHereMarker();
       ready = true;
       if (frames.length) mountLayers();
+      ladeDwdBild();
     });
 
     map.addControl(new maplibregl.NavigationControl({ showCompass: false }), 'top-right');
     map.on('moveend', checkEchoes);
     map.on('moveend', () => els.onMoveEnd?.(map.getCenter(), map.getZoom()));
+    // Das DWD-Detailbild gilt nur für den gezeigten Ausschnitt — nach dem
+    // Verschieben neu holen, aber erst wenn die Bewegung zur Ruhe kommt.
+    map.on('moveend', () => { clearTimeout(dwdTimer); dwdTimer = setTimeout(ladeDwdBild, 350); });
     map.getContainer().style.touchAction = 'none';
 
     wireControls();
     return map;
   }
 
-  /** Das deutsche Radarkomposit des DWD: 1 km Auflösung, beliebig zoombar.
-      Deckt nur Deutschland ab und kennt keine Zeitschritte — deshalb liegt es
-      als scharfe Ebene über dem aktuellsten Bild, während die Animation
-      weiterhin von RainViewer kommt. */
+  /* Das deutsche Radarkomposit des DWD: 1 km Auflösung, beliebig zoombar —
+     deutlich schärfer als RainViewer, das kostenlos bei Zoom 7 endet.
+     Haken: Der DWD malt regenfreie Flächen weiß aus, umrandet die
+     Radarreichweite pink und legt einen grauen Datenrahmen darum. Als Kachel
+     eingebunden verdeckt das die halbe Karte. Deshalb holen wir ein einzelnes
+     Bild für den Ausschnitt, streichen diese Farben im Canvas heraus und
+     hängen erst dann das Ergebnis in die Karte. */
+  /* Über den eigenen Worker: Der DWD-Dienst braucht oft mehrere Sekunden und
+     fällt zeitweise ganz aus. Gepuffert kommt dasselbe Bild sofort zurück. */
+  const DWD_PX = 768;
+  let dwdCanvas = null, dwdCtx = null, dwdLauf = 0, dwdSichtbar = false, dwdTimer = null;
+
+  /** Deutschland grob — außerhalb lohnt der Abruf nicht. */
+  const inDeutschland = (b) =>
+    b.getEast() > 5.5 && b.getWest() < 15.5 && b.getNorth() > 47 && b.getSouth() < 55.5;
+
   function addDwdLayer() {
-    if (map.getSource('dwd')) return;
-    const wms = 'https://maps.dwd.de/geoserver/dwd/wms?service=WMS&version=1.1.1' +
-      '&request=GetMap&layers=dwd:Radar_rv_product_1x1km_ger' +
-      '&bbox={bbox-epsg-3857}&width=512&height=512&srs=EPSG:3857' +
-      '&format=image/png&transparent=true&styles=';
-    map.addSource('dwd', { type: 'raster', tiles: [wms], tileSize: 512 });
-    map.addLayer({
-      id: 'dwd-layer', type: 'raster', source: 'dwd',
-      paint: {
-        'raster-opacity': 0, 'raster-opacity-transition': { duration: 220 },
-        'raster-saturation': 0.6, 'raster-contrast': 0.3
+    if (dwdCanvas) return;
+    dwdCanvas = document.createElement('canvas');
+    dwdCanvas.width = dwdCanvas.height = DWD_PX;
+    dwdCtx = dwdCanvas.getContext('2d', { willReadFrequently: true });
+  }
+
+  /** Weiß, Grau und das pinke Reichweitenband durchsichtig machen. */
+  function dwdFiltern(bild) {
+    dwdCtx.clearRect(0, 0, DWD_PX, DWD_PX);
+    dwdCtx.drawImage(bild, 0, 0, DWD_PX, DWD_PX);
+    const img = dwdCtx.getImageData(0, 0, DWD_PX, DWD_PX);
+    const px = img.data;
+    let farbig = 0;
+
+    for (let i = 0; i < px.length; i += 4) {
+      const r = px[i], g = px[i + 1], b = px[i + 2];
+      if (px[i + 3] === 0) continue;
+
+      const max = Math.max(r, g, b), min = Math.min(r, g, b);
+      const grau = max - min < 26;                       // weiß bis dunkelgrau
+      const pink = r > 200 && b > 200 && g < 120;        // Reichweitenrand
+      if (grau || pink) { px[i + 3] = 0; continue; }
+      farbig++;
+    }
+    dwdCtx.putImageData(img, 0, 0);
+    return farbig;
+  }
+
+  /** Bild für den aktuellen Ausschnitt holen, filtern, einhängen. */
+  async function ladeDwdBild() {
+    if (!ready || !map) return;
+    const b = map.getBounds();
+    if (!inDeutschland(b) || map.getZoom() < 5.5) { setzeDwdSichtbar(false); return; }
+
+    addDwdLayer();
+    const lauf = ++dwdLauf;
+
+    // Bounding Box in Web-Mercator-Metern
+    const sw = maplibregl.MercatorCoordinate.fromLngLat(b.getSouthWest());
+    const ne = maplibregl.MercatorCoordinate.fromLngLat(b.getNorthEast());
+    const M = 20037508.342789244;
+    const zuM = (m) => [(m.x * 2 - 1) * M, (1 - m.y * 2) * M];
+    const [x0, y0] = zuM(sw), [x1, y1] = zuM(ne);
+
+    // Auf 2 km runden — sonst ergibt jede Mausbewegung eine neue Adresse
+    // und der Zwischenspeicher im Worker greift nie.
+    const r = (v) => (Math.round(v / 2000) * 2000).toFixed(0);
+    const bbox = `${r(x0)},${r(y0)},${r(x1)},${r(y1)}`;
+    const proxy = (localStorage.getItem('wf.proxy') || '').replace(/^"|"$/g, '')
+      || 'https://wetterfunk.florian-s-thiel.workers.dev';
+    const url = `${proxy.replace(/\/+$/, '')}/dwdradar?bbox=${bbox}&px=${DWD_PX}`;
+
+    // Ecken passend zur gerundeten Anfrage, sonst läge das Bild leicht versetzt
+    const zuGrad = (mx, my) => {
+      const lon = (mx / M) * 180;
+      const lat = (Math.atan(Math.exp((my / M) * Math.PI)) * 360 / Math.PI) - 90;
+      return [lon, lat];
+    };
+    const [gw, gs] = zuGrad(+r(x0), +r(y0));
+    const [ge, gn] = zuGrad(+r(x1), +r(y1));
+
+    try {
+      const bild = await new Promise((ok, fehler) => {
+        const i = new Image();
+        i.crossOrigin = 'anonymous';
+        i.onload = () => ok(i);
+        i.onerror = () => fehler(new Error('DWD-Bild'));
+        i.src = url;
+      });
+      if (lauf !== dwdLauf) return;              // inzwischen weitergeschoben
+
+      dwdFiltern(bild);
+      const daten = dwdCanvas.toDataURL('image/png');
+      const ecken = [[gw, gn], [ge, gn], [ge, gs], [gw, gs]];
+
+      if (!map.getSource('dwd')) {
+        map.addSource('dwd', { type: 'image', url: daten, coordinates: ecken });
+        map.addLayer({ id: 'dwd-layer', type: 'raster', source: 'dwd',
+          paint: { 'raster-opacity': 0, 'raster-opacity-transition': { duration: 200 } } },
+          'here-halo');
+      } else {
+        map.getSource('dwd').updateImage({ url: daten, coordinates: ecken });
+      }
+      updateSharp();
+    } catch (e) {
+      console.warn('DWD-Detailbild:', e.message);
+      setzeDwdSichtbar(false);
+    }
+  }
+
+  function setzeDwdSichtbar(an) {
+    dwdSichtbar = an;
+    if (map?.getLayer('dwd-layer')) map.setPaintProperty('dwd-layer', 'raster-opacity', an ? 0.9 : 0);
+    if (els.sharp) els.sharp.hidden = !an;
+    // Wenn das scharfe Bild liegt, das grobe darunter ausblenden
+    frames.forEach((_, n) => {
+      if (map?.getLayer(layerId(n))) {
+        map.setPaintProperty(layerId(n), 'raster-opacity',
+          !fcVisible && n === idx ? (an ? 0 : 0.8) : 0);
       }
     });
   }
@@ -86,18 +190,11 @@ const Radar = (() => {
   /** Scharfes DWD-Bild nur zeigen, wenn der aktuellste Messwert gemeint ist
       und gerade nichts abgespielt wird — sonst passt es nicht zur Animation. */
   function updateSharp() {
-    if (!ready || !map.getLayer('dwd-layer')) return;
+    if (!ready) return;
     const letzteMessung = frames.findIndex(f => f.kind === 'now');
     const istAktuell = idx === (letzteMessung > 0 ? letzteMessung - 1 : frames.length - 1);
-    const an = istAktuell && !playing && !fcVisible;
-    map.setPaintProperty('dwd-layer', 'raster-opacity', an ? 0.85 : 0);
-    frames.forEach((_, n) => {
-      if (map.getLayer(layerId(n))) {
-        map.setPaintProperty(layerId(n), 'raster-opacity',
-          !fcVisible && n === idx ? (an ? 0 : 0.8) : 0);
-      }
-    });
-    if (els.sharp) els.sharp.hidden = !an;
+    const moeglich = !!map.getSource('dwd') && inDeutschland(map.getBounds()) && map.getZoom() >= 5.5;
+    setzeDwdSichtbar(istAktuell && !playing && !fcVisible && moeglich);
   }
 
   /** Temperaturzahlen an den Rasterpunkten — damit man auf der Karte sofort

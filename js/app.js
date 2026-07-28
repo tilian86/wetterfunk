@@ -668,7 +668,6 @@ function renderDaily() {
       </span>
       <span class="d-temps"><b>${round(max)}°</b> / ${round(min)}°</span>
       ${dayStrip(day)}
-      ${i === 0 ? '<span class="d-hours"><i>0</i><i>6 Uhr</i><i>12</i><i>18</i><i>24</i></span>' : ''}
       ${w ? `<span class="d-detail">${worte} · ${hhmm(w.von)}–${hhmm(w.bis)} · ${dez(mm)} mm</span>` : ''}
     </div>`;
   }).join('');
@@ -844,6 +843,9 @@ function renderScrub() {
         <b>${round(temp)}°</b>
         <i>${WX.text(code, tag_)}</i>
       </span>
+      <span class="sr-plain">${windWorte(wind)}${
+        Math.abs((h.apparent_temperature[hi] ?? temp) - temp) >= 1.5
+          ? ` · fühlt sich wie ${round(h.apparent_temperature[hi])}° an` : ''}</span>
       <span class="sr-grid">
         <span><em>Gefühlt</em>${round(h.apparent_temperature[hi])}°</span>
         <span><em>Regen</em>${prob}%${mm >= 0.05
@@ -1206,6 +1208,128 @@ function moonPhase(date = new Date()) {
   return { anteil, beleuchtet, name, alter: anteil * synodisch };
 }
 
+/* Mondphasen nach Meeus (Astronomical Algorithms, Kap. 49).
+   Die einfache Rechnung mit fester Umlaufdauer liegt je nach Monat über eine
+   Stunde daneben — der Mond läuft auf einer Ellipse und wird von der Sonne
+   gestört. Mit den Korrekturgliedern stimmt es auf gut eine Minute. */
+const gr = (x) => x * Math.PI / 180;
+
+/** Julianisches Datum → Zeitstempel. */
+const ausJD = (jd) => new Date((jd - 2440587.5) * 86400000);
+
+/** k zählt die Lunationen ab dem Neumond vom 6. Januar 2000. */
+function phaseZeit(k, art) {
+  // art: 0 = Neumond, 0.25 = erstes Viertel, 0.5 = Vollmond, 0.75 = letztes Viertel
+  k += art;
+  const T = k / 1236.85, T2 = T * T, T3 = T2 * T, T4 = T3 * T;
+
+  let jde = 2451550.09766 + 29.530588861 * k
+          + 0.00015437 * T2 - 0.000000150 * T3 + 0.00000000073 * T4;
+
+  const E  = 1 - 0.002516 * T - 0.0000074 * T2;
+  const M  = gr(2.5534 + 29.10535670 * k - 0.0000014 * T2 - 0.00000011 * T3);
+  const Ms = gr(201.5643 + 385.81693528 * k + 0.0107582 * T2 + 0.00001238 * T3 - 0.000000058 * T4);
+  const F  = gr(160.7108 + 390.67050284 * k - 0.0016118 * T2 - 0.00000227 * T3 + 0.000000011 * T4);
+  const O  = gr(124.7746 - 1.56375588 * k + 0.0020672 * T2 + 0.00000215 * T3);
+  const s = Math.sin, c = Math.cos;
+
+  const teilN = (a) =>                         // Neumond und Vollmond, nur erster Term abweichend
+      a * s(Ms)
+    + 0.17241 * E * s(M)
+    + 0.01608 * s(2 * Ms)
+    + 0.01039 * s(2 * F)
+    + 0.00739 * E * s(Ms - M)
+    - 0.00514 * E * s(Ms + M)
+    + 0.00208 * E * E * s(2 * M)
+    - 0.00111 * s(Ms - 2 * F)
+    - 0.00057 * s(Ms + 2 * F)
+    + 0.00056 * E * s(2 * Ms + M)
+    - 0.00042 * s(3 * Ms)
+    + 0.00042 * E * s(M + 2 * F)
+    + 0.00038 * E * s(M - 2 * F)
+    - 0.00024 * E * s(2 * Ms - M)
+    - 0.00017 * s(O)
+    - 0.00007 * s(Ms + 2 * M)
+    + 0.00004 * s(2 * Ms - 2 * F)
+    + 0.00004 * s(3 * M)
+    + 0.00003 * s(Ms + M - 2 * F)
+    + 0.00003 * s(2 * Ms + 2 * F)
+    - 0.00003 * s(Ms + M + 2 * F)
+    + 0.00003 * s(Ms - M + 2 * F)
+    - 0.00002 * s(Ms - M - 2 * F)
+    - 0.00002 * s(3 * Ms + M)
+    + 0.00002 * s(4 * Ms);
+
+  if (art === 0)        jde += teilN(-0.40720);
+  else if (art === 0.5) jde += teilN(-0.40614);
+  else {
+    jde += -0.62801 * s(Ms)
+        + 0.17172 * E * s(M)
+        - 0.01183 * E * s(Ms + M)
+        + 0.00862 * s(2 * Ms)
+        + 0.00804 * s(2 * F)
+        + 0.00454 * E * s(Ms - M)
+        + 0.00204 * E * E * s(2 * M)
+        - 0.00180 * s(Ms - 2 * F)
+        - 0.00070 * s(Ms + 2 * F)
+        - 0.00040 * s(3 * Ms)
+        - 0.00034 * E * s(2 * Ms - M)
+        + 0.00032 * E * s(M + 2 * F)
+        + 0.00032 * E * s(M - 2 * F)
+        - 0.00028 * E * E * s(Ms + 2 * M)
+        + 0.00027 * E * s(2 * Ms + M)
+        - 0.00017 * s(O);
+    const W = 0.00306 - 0.00038 * E * c(M) + 0.00026 * c(Ms)
+            - 0.00002 * c(Ms - M) + 0.00002 * c(Ms + M) + 0.00002 * c(2 * F);
+    jde += (art === 0.25 ? W : -W);
+  }
+  return ausJD(jde);
+}
+
+/** Nächster Zeitpunkt dieser Phase ab jetzt. */
+function naechstePhase(art, ab = new Date()) {
+  // Lunation grob schätzen, dann ein paar Schritte vor und zurück prüfen
+  const jahre = (ab.getTime() - Date.UTC(2000, 0, 6)) / (365.25 * 86400000);
+  const k0 = Math.floor(jahre * 12.3685) - 2;
+  for (let k = k0; k < k0 + 5; k++) {
+    const t = phaseZeit(k, art);
+    if (t.getTime() > ab.getTime()) return t;
+  }
+  return phaseZeit(k0 + 5, art);
+}
+
+const PHASEN = [
+  { art: 0,    name: 'Neumond',         zeichen: '🌑' },
+  { art: 0.25, name: 'Erstes Viertel',  zeichen: '🌓' },
+  { art: 0.5,  name: 'Vollmond',        zeichen: '🌕' },
+  { art: 0.75, name: 'Letztes Viertel', zeichen: '🌗' }
+];
+
+/** Alle vier Phasen nach Termin sortiert. */
+const kommendePhasen = (ab = new Date()) =>
+  PHASEN.map(p => ({ ...p, t: naechstePhase(p.art, ab) })).sort((a, b) => a.t - b.t);
+
+/** Kurzer Hinweis für die Kachel: welche Phase steht als Nächstes an? */
+function naechsteMondMarke() {
+  const n = kommendePhasen()[0];
+  const stunden = (n.t - Date.now()) / 36e5;
+  const wann = stunden < 24
+    ? `heute ${hhmm(n.t)} Uhr`
+    : stunden < 48 ? `morgen ${hhmm(n.t)} Uhr`
+    : `${weekday(n.t)} ${hhmm(n.t)} Uhr`;
+  return `${n.zeichen} ${n.name} ${wann}`;
+}
+
+/** Entfernung des Mondes in km — schwankt zwischen rund 356.000 und 407.000.
+    Nah heißt größer und heller am Himmel ("Supermond"). */
+function moonDistance(date = new Date()) {
+  const rad = Math.PI / 180;
+  const d = (date - Date.UTC(2000, 0, 1, 12)) / 86400000;
+  const M = (134.963 + 13.064993 * d) * rad;          // mittlere Anomalie
+  const D = (297.850 + 12.190749 * d) * rad;          // Elongation
+  return 385000.56 - 20905 * Math.cos(M) - 3699 * Math.cos(2 * D - M) - 2956 * Math.cos(2 * D);
+}
+
 /** Mondposition (Näherung) — genügt für Auf- und Untergang auf wenige Minuten. */
 function moonAltitude(date, lat, lon) {
   const rad = Math.PI / 180;
@@ -1330,11 +1454,52 @@ function openExplain(key) {
   if (!e) return;
   $('#explainTitle').textContent = e.titel;
   $('#explainText').textContent = e.text;
+  if (key === 'mond') mondDetails();
   const l = $('#explainLink');
   if (e.link) {
     l.href = e.link.url; l.textContent = `${e.link.text} öffnen →`; l.hidden = false;
   } else l.hidden = true;
   openSheet('#explainSheet');
+}
+
+/** Termine und Kennzahlen zum Mond unter die Erklärung hängen. */
+function mondDetails() {
+  const mp = moonPhase();
+  const mt = moonTimes(new Date(), place.lat, place.lon);
+  const km = moonDistance();
+  const naechste = kommendePhasen();
+
+  // 356.500 km ist die engste, 406.700 km die weiteste mögliche Entfernung
+  const naehe = (406700 - km) / (406700 - 356500);
+  const groesse = km < 362000 ? 'ungewöhnlich nah — er wirkt größer und heller ("Supermond")'
+                : km > 400000 ? 'weit entfernt — er wirkt etwas kleiner als sonst'
+                : 'im mittleren Abstand';
+
+  const box = document.createElement('div');
+  box.innerHTML = `
+    <dl class="ds-facts" style="margin-top:14px">
+      <dt>Gerade</dt><dd>${mp.name}, ${Math.round(mp.beleuchtet * 100)} % beleuchtet</dd>
+      ${mt.auf ? `<dt>Mondaufgang</dt><dd>${hhmm(mt.auf)} Uhr</dd>` : ''}
+      ${mt.unter ? `<dt>Monduntergang</dt><dd>${hhmm(mt.unter)} Uhr</dd>` : ''}
+      <dt>Entfernung</dt><dd>${Math.round(km).toLocaleString('de-DE')} km<i>${groesse}</i></dd>
+    </dl>
+    <p class="ds-untertitel">Die nächsten Phasen</p>
+    <div class="ds-spans">
+      ${naechste.map(p => {
+        const tage = Math.round((p.t - Date.now()) / 864e5);
+        return `<div class="ds-span">
+          <b>${p.zeichen} ${p.name}</b>
+          <span>${p.t.toLocaleDateString('de-DE', { weekday: 'short', day: 'numeric', month: 'short' })},
+            ${hhmm(p.t)} Uhr${tage <= 1 ? '' : ` · in ${tage} Tagen`}</span>
+        </div>`;
+      }).join('')}
+    </div>
+    <p class="ds-note">Die Uhrzeiten sind auf etwa eine Minute genau — der Mond läuft
+      auf einer Ellipse und wird von der Sonne gestört, deshalb reicht eine feste
+      Umlaufdauer nicht aus. Zwischen zwei Vollmonden liegen im Mittel 29 Tage,
+      12 Stunden und 44 Minuten.</p>`;
+
+  $('#explainText').appendChild(box);
 }
 
 /** Antippen auf Kacheln erst nach dem Rendern verdrahten. */
@@ -1356,7 +1521,8 @@ function dayHours(dayISO) {
     if (k < 0) continue;
     out.push({ u, temp: h.temperature_2m[k], mm: h.precipitation[k] ?? 0,
                wolken: h.cloud_cover[k] ?? 0, wind: h.wind_speed_10m[k],
-               boe: h.wind_gusts_10m[k], tags: h.is_day[k] === 1, uv: h.uv_index[k] });
+               boe: h.wind_gusts_10m[k], tags: h.is_day[k] === 1, uv: h.uv_index[k],
+               gefuehlt: h.apparent_temperature?.[k], feuchte: h.relative_humidity_2m?.[k] });
   }
   return out;
 }
@@ -1378,6 +1544,33 @@ function daySpans(stunden) {
 
 const SPAN_WORT = { sonnig: '☀️ sonnig', heiter: '🌤 heiter', wolkig: '⛅ wolkig',
                     bedeckt: '☁️ bedeckt', regen: '🌧 Regen', nacht: '🌙 Nacht' };
+
+/** Was 11 km/h bedeuten, weiß kaum jemand — die Beaufort-Skala in Worten. */
+function windWorte(kmh) {
+  if (kmh == null) return '';
+  if (kmh < 2)  return 'windstill, Rauch steigt gerade auf';
+  if (kmh < 6)  return 'kaum spürbar';
+  if (kmh < 12) return 'leichter Zug, Blätter rascheln';
+  if (kmh < 20) return 'spürbare Brise, Zweige bewegen sich';
+  if (kmh < 29) return 'frischer Wind, Papier fliegt weg';
+  if (kmh < 39) return 'kräftig, kleine Bäume schwanken';
+  if (kmh < 50) return 'starker Wind, Regenschirme kaum zu halten';
+  if (kmh < 62) return 'stürmisch, Gehen wird mühsam';
+  if (kmh < 75) return 'Sturm, Äste brechen';
+  if (kmh < 89) return 'schwerer Sturm, Dachziegel lösen sich';
+  if (kmh < 103) return 'orkanartig, Bäume entwurzeln';
+  return 'Orkan, schwere Schäden';
+}
+
+/** Warum sich die Temperatur anders anfühlt, als das Thermometer sagt. */
+function gefuehltWarum(temp, gefuehlt, wind, feuchte) {
+  const d = gefuehlt - temp;
+  if (Math.abs(d) < 1) return 'wie gemessen';
+  if (d > 0) return feuchte >= 65 ? `${dez(d)}° wärmer — die feuchte Luft staut die Wärme`
+                                  : `${dez(d)}° wärmer — Sonne und wenig Wind`;
+  return wind >= 15 ? `${dez(-d)}° kühler — der Wind zieht Wärme weg`
+                    : `${dez(-d)}° kühler`;
+}
 
 /** Antippen einer Zahl auf der Karte: was bedeutet der Wert, und wann
     genau regnet es an dieser Stelle? */
@@ -1431,6 +1624,7 @@ function openDaySheet(i) {
   const mm = d.precipitation_sum[i] ?? 0;
   const warm = stunden.reduce((a, b) => (b.temp > a.temp ? b : a), stunden[0] || { u: 12, temp: 0 });
   const kalt = stunden.reduce((a, b) => (b.temp < a.temp ? b : a), stunden[0] || { u: 5, temp: 0 });
+  const wind = d.wind_speed_10m_max?.[i], boe = d.wind_gusts_10m_max?.[i];
   const uvMax = d.uv_index_max?.[i];
   const heute = new Date(dayISO).toDateString() === new Date().toDateString();
 
@@ -1444,18 +1638,23 @@ function openDaySheet(i) {
       </div>`).join('')}
     </div>
     <dl class="ds-facts">
-      <dt>Wärmster Moment</dt><dd>${round(warm.temp)}° gegen ${String(warm.u).padStart(2, '0')} Uhr</dd>
-      <dt>Kältester Moment</dt><dd>${round(kalt.temp)}° gegen ${String(kalt.u).padStart(2, '0')} Uhr</dd>
+      <dt>Wärmster Moment</dt><dd>${round(warm.temp)}° gegen ${String(warm.u).padStart(2, '0')} Uhr${
+        warm.gefuehlt != null ? ` <i>fühlt sich an wie ${round(warm.gefuehlt)}°</i>` : ''}</dd>
+      <dt>Kältester Moment</dt><dd>${round(kalt.temp)}° gegen ${String(kalt.u).padStart(2, '0')} Uhr${
+        kalt.gefuehlt != null ? ` <i>fühlt sich an wie ${round(kalt.gefuehlt)}°</i>` : ''}</dd>
       <dt>Sonne</dt><dd>${sun} Stunden${sun >= 8 ? ' — viel' : sun <= 2 ? ' — wenig' : ''}</dd>
       <dt>Regen</dt><dd>${mm < 0.2 ? 'keiner erwartet' : `${dez(mm)} mm — ${rainWords(mm)}`}</dd>
-      <dt>Wind</dt><dd>bis ${round(d.wind_speed_10m_max?.[i])} km/h, Böen bis ${round(d.wind_gusts_10m_max?.[i])} km/h${
-        d.wind_gusts_10m_max?.[i] >= 60 ? ' — auf lose Gegenstände achten' : ''}</dd>
+      <dt>Wind</dt><dd>bis ${round(wind)} km/h, Böen bis ${round(boe)} km/h
+        <i>${windWorte(wind)}${boe >= 60 ? ' · in Böen auf lose Gegenstände achten' : ''}</i></dd>
       <dt>Sonnenaufgang</dt><dd>${hhmm(d.sunrise[i])}</dd>
       <dt>Sonnenuntergang</dt><dd>${hhmm(d.sunset[i])}</dd>
       ${uvMax != null ? `<dt>UV-Höchstwert</dt><dd>${uvMax.toFixed(1)}${uvMax >= 6 ? ' — Sonnenschutz sinnvoll' : uvMax >= 3 ? ' — mäßig' : ' — unkritisch'}</dd>` : ''}
     </dl>
     <p class="ds-note">1 mm Regen heißt: Auf einen Quadratmeter fällt ein Liter Wasser.
-      Verteilt über mehrere Stunden ist das kaum spürbar, in zehn Minuten ein kräftiger Schauer.</p>`;
+      Verteilt über mehrere Stunden ist das kaum spürbar, in zehn Minuten ein kräftiger Schauer.
+      ${warm.gefuehlt != null
+        ? `Die gefühlte Temperatur weicht am Nachmittag ab: ${gefuehltWarum(warm.temp, warm.gefuehlt, warm.wind, warm.feuchte)}.`
+        : ''}</p>`;
 
   const l = $('#explainLink');
   if (l) l.hidden = true;
@@ -1479,7 +1678,8 @@ function renderTiles(air) {
       </svg>
       <span class="t-windval"><b>${round(c.wind_speed_10m)}</b><i>km/h</i></span>
     </div>
-    <span class="t-sub">aus ${dirName(deg)} · Böen ${round(c.wind_gusts_10m)} km/h</span>
+    <span class="t-sub">aus ${dirName(deg)} · Böen ${round(c.wind_gusts_10m)} km/h<br>
+      <b class="t-plain">${windWorte(c.wind_speed_10m)}</b></span>
   </div>`);
 
   // UV
@@ -1552,7 +1752,8 @@ function renderTiles(air) {
       </span>
       <span class="moon-val"><b>${bel}%</b><i>beleuchtet</i></span>
     </div>
-    <span class="t-sub">${mp.name}${mt.auf ? ` · ↑ ${hhmm(mt.auf)}` : ''}${mt.unter ? ` ↓ ${hhmm(mt.unter)}` : ''}</span>
+    <span class="t-sub">${mp.name}${mt.auf ? ` · ↑ ${hhmm(mt.auf)}` : ''}${mt.unter ? ` ↓ ${hhmm(mt.unter)}` : ''}<br>
+      <b class="t-plain">${naechsteMondMarke()}</b></span>
   </div>`);
 
   // Luftdruck

@@ -111,12 +111,32 @@ body[data-mood="night"]   .sky-grad { background: linear-gradient(178deg,#1b2647
   -webkit-backdrop-filter: blur(14px) saturate(140%);
 }
 
+/* Name und Zeichen der App — links, vor dem Ort */
+.brand { display: flex; align-items: center; gap: 7px; flex: none; }
+.brand-mark {
+  width: 21px; height: 21px; flex: none;
+  fill: none; stroke: var(--accent); stroke-width: 1.9;
+  stroke-linecap: round;
+}
+.brand-mark circle { fill: var(--accent); stroke: none; }
+.brand-text { display: grid; line-height: 1.1; }
+.brand-text b { font-size: 12.5px; font-weight: 700; letter-spacing: -.01em; color: var(--ink); }
+.brand-text i {
+  font-style: normal; font-size: 9px; color: var(--ink-faint);
+  letter-spacing: .01em; white-space: nowrap;
+}
+
 .place-btn {
-  flex: 1; min-width: 0;
+  flex: 1; min-width: 0; justify-content: flex-end;
   display: flex; align-items: center; gap: 6px;
   background: none; border: 0; color: var(--ink);
   font: 600 17px/1.2 var(--font); letter-spacing: -.02em;
   padding: 7px 4px; cursor: pointer;
+}
+
+/* Erst auf sehr schmalen Geräten weicht die Namenszeile */
+@media (max-width: 330px) {
+  .brand-text i { display: none; }
 }
 .place-btn span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .place-btn .pin { width: 17px; height: 17px; flex: none; opacity: .85; }
@@ -547,7 +567,9 @@ select#bfModel {
 /* Regler mit Markierungen darunter.
    width:100% ist zwingend — im Wrapper greift kein flex mehr, und ohne
    Angabe fällt der Regler auf die Standardbreite von rund 130px zurück. */
-.slider-wrap { position: relative; flex: 1; display: block; min-width: 0; }
+/* flex:none ist wichtig — im Vollbild ist die Karte eine Flex-Spalte, und
+   ein wachsender Regler riss dort eine Lücke von mehreren hundert Pixeln. */
+.slider-wrap { position: relative; flex: none; display: block; min-width: 0; }
 .slider-wrap.wide { width: 100%; margin: 4px 0 2px; }
 .slider-wrap input[type="range"] { width: 100%; display: block; }
 .slider-ticks { position: absolute; left: 0; right: 0; top: 100%; height: 13px; pointer-events: none; }
@@ -668,6 +690,12 @@ select#bfModel {
 }
 .sr-grid span { display: flex; flex-direction: column; }
 .sr-grid em { font-style: normal; font-size: 10px; color: var(--ink-faint); }
+/* Klartext statt Zahlen — was die Werte im Alltag bedeuten */
+.sr-plain {
+  grid-column: 2; font-size: 11.5px; color: var(--ink-faint);
+  margin: -2px 0 3px;
+}
+.t-plain { font-weight: 500; color: var(--ink-dim); }
 
 .scrub-strip {
   display: flex; align-items: flex-end; gap: 1px;
@@ -760,15 +788,25 @@ select#bfModel {
   background: rgba(0,0,0,.4);
   box-shadow: 1px 0 0 rgba(255,255,255,.16);
 }
-/* Die Stundenskala steht nur einmal über der Liste */
-.d-hours {
-  grid-column: 3 / -1;
-  display: flex; justify-content: space-between;
-  font-size: 8.5px; color: var(--ink-faint); opacity: .75; margin-top: 2px;
+/* Stundenskala als Kopf über der Liste — gleiche Spaltenaufteilung wie
+   die Tageszeilen, damit die Zahlen über den Strichen stehen. */
+.daily-scale {
+  display: grid; grid-template-columns: 44px 30px 1fr auto;
+  gap: 3px 8px; align-items: baseline;
+  padding-bottom: 5px; margin-bottom: 2px;
+  border-bottom: 1px solid var(--card-line);
 }
-.d-hours i { font-style: normal; }
-.d-hours i:first-child { margin-left: -2px; }
-.d-hours i:last-child { margin-right: -4px; }
+.ds-lead {
+  grid-column: 1 / 3; font-size: 9.5px; letter-spacing: .04em;
+  text-transform: uppercase; color: var(--ink-faint); opacity: .8;
+}
+.ds-marks {
+  grid-column: 3 / -1; display: flex; justify-content: space-between;
+  font-size: 9px; color: var(--ink-faint);
+}
+.ds-marks i { font-style: normal; }
+.ds-marks i:first-child { margin-left: -2px; }
+.ds-marks i:last-child { margin-right: -8px; }
 
 /* Regendetails in eine eigene Zeile — nebeneinander lief der Text sonst
    über die Temperaturspalte. */
@@ -1491,6 +1529,16 @@ body.loading .hero-temp, body.loading .hero-desc { opacity: .45; }
 }
 .ds-facts dt { color: var(--ink-faint); }
 .ds-facts dd { margin: 0; color: var(--ink); }
+/* Erklärung in Alltagssprache unter dem Wert */
+.ds-facts dd i {
+  display: block; font-style: normal; font-size: 11.5px;
+  color: var(--ink-faint); margin-top: 1px;
+}
+.ds-untertitel {
+  font-size: 10px; font-weight: 700; letter-spacing: .07em;
+  text-transform: uppercase; color: var(--ink-faint);
+  margin: 16px 0 7px;
+}
 .ds-note {
   font-size: 12px; line-height: 1.55; color: var(--ink-faint);
   padding: 10px 12px; border-radius: var(--r-sm);
@@ -1550,6 +1598,13 @@ body.map-full > *:not(.card-radar):not(.sky):not(.topbar):not(.toast) { visibili
   padding: calc(var(--sat) + 56px) var(--pad) calc(var(--sab) + 12px);
   background: #0b1220; visibility: visible;
 }
-.card-radar.is-full .radar-wrap { flex: 1; height: auto; }
+/* Im Vollbild zählt die Karte — alles Erklärende tritt zurück,
+   nur Filter, Karte und der Zeitregler bleiben. */
+.card-radar.is-full .radar-wrap { flex: 1 1 auto; height: auto; min-height: 0; }
 .card-radar.is-full .radar-hint,
-.card-radar.is-full .slider-scale { display: none; }
+.card-radar.is-full .slider-scale,
+.card-radar.is-full .scrub-strip,
+.card-radar.is-full .scrub-read,
+.card-radar.is-full .card-head { display: none; }
+.card-radar.is-full .layer-pick { margin-bottom: 8px; }
+.card-radar.is-full .zeit-ctrl { margin-top: 10px; }

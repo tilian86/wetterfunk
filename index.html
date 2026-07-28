@@ -13,10 +13,10 @@
 <meta name="theme-color" content="#0b1220">
 <link rel="apple-touch-icon" href="icons/icon-180.png">
 <link rel="icon" href="icons/icon-192.png">
-<link rel="manifest" href="manifest.webmanifest?v=26">
+<link rel="manifest" href="manifest.webmanifest?v=32">
 
-<link rel="stylesheet" href="vendor/maplibre-gl.css?v=26">
-<link rel="stylesheet" href="css/style.css?v=26">
+<link rel="stylesheet" href="vendor/maplibre-gl.css?v=32">
+<link rel="stylesheet" href="css/style.css?v=32">
 </head>
 <body>
 
@@ -26,6 +26,15 @@
 </div>
 
 <header class="topbar">
+  <span class="brand" aria-label="Wetterfunk von Florian S. Thiel">
+    <!-- Funkwelle: zwei Bögen über einem Punkt -->
+    <svg class="brand-mark" viewBox="0 0 24 24" aria-hidden="true">
+      <circle cx="12" cy="17.5" r="2.2"/>
+      <path d="M7.4 13.4a6.5 6.5 0 0 1 9.2 0"/>
+      <path d="M4.2 10a11 11 0 0 1 15.6 0"/>
+    </svg>
+    <span class="brand-text"><b>Wetterfunk</b><i>von Florian S. Thiel</i></span>
+  </span>
   <button class="place-btn" id="placeBtn" aria-haspopup="dialog">
     <svg class="pin" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 22s7-6.1 7-11a7 7 0 1 0-14 0c0 4.9 7 11 7 11z"/><circle cx="12" cy="11" r="2.6"/></svg>
     <span id="placeName">Standort wird geladen…</span>
@@ -81,6 +90,12 @@
   <!-- ══ 10 TAGE ══ -->
   <section class="card">
     <div class="card-head"><h2>10 Tage</h2><span class="card-sub" id="dailyRange"></span></div>
+    <!-- Feste Skala über der Liste: die Striche in den Streifen brauchen
+         eine Beschriftung, die auch beim Scrollen sichtbar bleibt. -->
+    <div class="daily-scale">
+      <span class="ds-lead">Tagesverlauf</span>
+      <span class="ds-marks"><i>0</i><i>6</i><i>12</i><i>18</i><i>24 Uhr</i></span>
+    </div>
     <div class="daily" id="daily"></div>
     <p class="daily-legend">
       Der Streifen zeigt den Tag von 0 bis 24 Uhr:
@@ -146,8 +161,9 @@
       <span class="card-sub" id="pushState"></span>
     </div>
     <p class="push-desc" id="pushDesc">
-      Eine Meldung aufs Gerät, sobald in den nächsten zwei Stunden Regen aufzieht —
-      mit Startzeit, Dauer und Menge. Höchstens alle drei Stunden eine.
+      Eine Meldung aufs Gerät, sobald Regen aufzieht — mit Beginn, Ende und Menge.
+      Regnet es schon, kommt die Meldung, wann es aufhört. Hört der Regen auf und
+      fängt später wieder an, wird jede Phase einzeln gemeldet.
     </p>
     <div class="push-row">
       <button class="push-btn" id="pushToggle">Einschalten</button>
@@ -380,12 +396,12 @@
 
 <div class="toast" id="toast" hidden></div>
 
-<script src="vendor/maplibre-gl.js?v=26"></script>
-<script src="js/icons.js?v=26"></script>
-<script src="js/radar.js?v=26"></script>
-<script src="js/forecast.js?v=26"></script>
-<script src="js/briefing.js?v=26"></script>
-<script src="js/news.js?v=26"></script>
-<script src="js/app.js?v=26"></script>
+<script src="vendor/maplibre-gl.js?v=32"></script>
+<script src="js/icons.js?v=32"></script>
+<script src="js/radar.js?v=32"></script>
+<script src="js/forecast.js?v=32"></script>
+<script src="js/briefing.js?v=32"></script>
+<script src="js/news.js?v=32"></script>
+<script src="js/app.js?v=32"></script>
 </body>
 </html>
