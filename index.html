@@ -13,10 +13,10 @@
 <meta name="theme-color" content="#0b1220">
 <link rel="apple-touch-icon" href="icons/icon-180.png">
 <link rel="icon" href="icons/icon-192.png">
-<link rel="manifest" href="manifest.webmanifest?v=10">
+<link rel="manifest" href="manifest.webmanifest?v=11">
 
-<link rel="stylesheet" href="vendor/maplibre-gl.css?v=10">
-<link rel="stylesheet" href="css/style.css?v=10">
+<link rel="stylesheet" href="vendor/maplibre-gl.css?v=11">
+<link rel="stylesheet" href="css/style.css?v=11">
 </head>
 <body>
 
@@ -48,6 +48,9 @@
       <span class="hi-lo"><b id="heroMax">–°</b> <i id="heroMin">–°</i></span>
     </div>
   </section>
+
+  <!-- ══ TAGESFORTSCHRITT ══ -->
+  <div class="day-progress" id="dayProgress"></div>
 
   <!-- ══ KLARTEXT ══ -->
   <p class="verdict" id="verdict"></p>
@@ -252,6 +255,17 @@
   </div>
 </div>
 
+<!-- ══ ERKLÄRUNG ══ -->
+<div class="sheet-back" id="explainSheet" hidden>
+  <div class="sheet" role="dialog" aria-labelledby="explainTitle">
+    <div class="sheet-grip"></div>
+    <h3 id="explainTitle"></h3>
+    <p class="explain-text" id="explainText"></p>
+    <a class="explain-link" id="explainLink" target="_blank" rel="noopener noreferrer" hidden></a>
+    <button class="sheet-close" id="explainClose">Schließen</button>
+  </div>
+</div>
+
 <!-- ══ MODELL-DIALOG ══ -->
 <div class="sheet-back" id="modelSheet" hidden>
   <div class="sheet" role="dialog" aria-label="Wettermodell wählen">
@@ -311,12 +325,12 @@
 
 <div class="toast" id="toast" hidden></div>
 
-<script src="vendor/maplibre-gl.js?v=10"></script>
-<script src="js/icons.js?v=10"></script>
-<script src="js/radar.js?v=10"></script>
-<script src="js/forecast.js?v=10"></script>
-<script src="js/briefing.js?v=10"></script>
-<script src="js/news.js?v=10"></script>
-<script src="js/app.js?v=10"></script>
+<script src="vendor/maplibre-gl.js?v=11"></script>
+<script src="js/icons.js?v=11"></script>
+<script src="js/radar.js?v=11"></script>
+<script src="js/forecast.js?v=11"></script>
+<script src="js/briefing.js?v=11"></script>
+<script src="js/news.js?v=11"></script>
+<script src="js/app.js?v=11"></script>
 </body>
 </html>

@@ -201,6 +201,45 @@ function renderHero() {
   setMood(WX.mood(c.weather_code, c.is_day), c.is_day);
 }
 
+/** Zeigt oben, wie weit Tag oder Nacht fortgeschritten sind — als Anhalt
+    für den eigenen Rhythmus, nicht als Wetterangabe. */
+function renderDayProgress() {
+  const el = $('#dayProgress');
+  if (!el || !data?.daily) return;
+  const d = data.daily;
+  const jetzt = Date.now();
+
+  const sr = new Date(d.sunrise[0]).getTime();
+  const ss = new Date(d.sunset[0]).getTime();
+  const srMorgen = d.sunrise[1] ? new Date(d.sunrise[1]).getTime() : sr + 864e5;
+  const ssGestern = ss - 864e5;
+
+  let phase, anteil, bis, seit;
+  if (jetzt >= sr && jetzt < ss) {
+    phase = 'Tag'; anteil = (jetzt - sr) / (ss - sr); bis = ss; seit = sr;
+  } else if (jetzt >= ss) {
+    phase = 'Nacht'; anteil = (jetzt - ss) / (srMorgen - ss); bis = srMorgen; seit = ss;
+  } else {
+    phase = 'Nacht'; anteil = (jetzt - ssGestern) / (sr - ssGestern); bis = sr; seit = ssGestern;
+  }
+  anteil = Math.max(0, Math.min(1, anteil));
+
+  const restMin = Math.max(0, Math.round((bis - jetzt) / 60000));
+  const rest = restMin >= 60
+    ? `${Math.floor(restMin / 60)} Std. ${String(restMin % 60).padStart(2, '0')} Min.`
+    : `${restMin} Min.`;
+
+  el.dataset.phase = phase === 'Tag' ? 'tag' : 'nacht';
+  el.innerHTML = `
+    <span class="dp-head">
+      <span class="dp-label">${phase === 'Tag' ? '☀ Tag' : '☾ Nacht'} zu
+        <b>${Math.round(anteil * 100)} %</b> vorbei</span>
+      <span class="dp-rest">noch ${rest} bis ${phase === 'Tag' ? 'Sonnenuntergang' : 'Sonnenaufgang'}</span>
+    </span>
+    <span class="dp-bar"><i style="width:${(anteil * 100).toFixed(1)}%"></i></span>
+    <span class="dp-ends"><span>${hhmm(seit)}</span><span>${hhmm(bis)}</span></span>`;
+}
+
 /** Hintergrundstimmung + Statusleistenfarbe. */
 function setMood(mood, isDay) {
   document.body.dataset.mood = mood;
@@ -520,21 +559,20 @@ function renderDaily() {
     const prob = d.precipitation_probability_max[i] ?? 0;
     const mm = d.precipitation_sum[i] ?? 0;
     const sun = Math.round((d.sunshine_duration?.[i] ?? 0) / 3600);
+    const w = mm >= 0.2 ? rainWindow(i) : null;
+    const worte = mm >= 0.2 ? rainWords(mm) : null;
+
     return `<div class="drow${isToday ? ' is-today' : ''}">
       <span class="d-day">${isToday ? 'Heute' : weekday(day)}</span>
       <span class="d-icon" title="${WX.text(daySymbol(i), 1)}">${WX.icon(daySymbol(i), 1)}</span>
       <span class="d-rain">
         <span class="d-sunval">☀ ${sun} Std.</span>
-        ${prob >= 10 ? `<span class="d-rainval">💧 ${prob}%${
-          mm >= 0.2 ? ` · ${rainWords(mm)}` : ''}</span>` : ''}
-        ${(() => {
-          const w = mm >= 0.2 ? rainWindow(i) : null;
-          return w ? `<span class="d-when">${hhmm(w.von)}–${hhmm(w.bis)} · ${mm.toFixed(1)} mm</span>` : '';
-        })()}
+        ${prob >= 10 ? `<span class="d-rainval">💧 ${prob}%</span>` : ''}
       </span>
       <span class="d-min">${round(min)}°</span>
       <span class="d-track"><i class="d-fill" style="left:${left}%;width:${width}%"></i></span>
       <span class="d-max">${round(max)}°</span>
+      ${w ? `<span class="d-detail">${worte} · ${hhmm(w.von)}–${hhmm(w.bis)} · ${mm.toFixed(1)} mm</span>` : ''}
     </div>`;
   }).join('');
 }
@@ -1034,13 +1072,93 @@ const ARC = (() => {
   return { rx, ry, y, x0, x1, cx, len: half };
 })();
 
-function tile(label, value, sub, extra = '', tone = '') {
-  return `<div class="tile${tone ? ' t-' + tone : ''}">
-    <span class="t-label">${label}</span>
+/** Erklärungen in Alltagssprache — jede Kachel lässt sich antippen.
+    Wo es eine gute weiterführende Seite gibt, ist sie verlinkt. */
+const EXPLAIN = {
+  uv: { titel: 'UV-Index',
+    text: 'Misst, wie stark die Sonnenstrahlung auf der Haut wirkt. Bis 2 ist unbedenklich, '
+        + 'ab 3 sollte man an Sonnenschutz denken, ab 6 sind Schatten und Kopfbedeckung ratsam, '
+        + 'ab 8 wird ungeschützte Haut in kurzer Zeit rot. Der Wert steigt mit der Sonnenhöhe — '
+        + 'mittags ist er am höchsten, auch wenn es sich nicht am heißesten anfühlt.',
+    link: { url: 'https://www.bfs.de/DE/themen/opt/uv/uv-index/uv-index_node.html',
+            text: 'Bundesamt für Strahlenschutz' } },
+  luft: { titel: 'Luftqualität',
+    text: 'Der europäische Luftqualitätsindex fasst Feinstaub, Stickstoffdioxid und Ozon zu '
+        + 'einer Zahl zusammen. Unter 20 ist die Luft sehr gut, bis 40 gut, bis 60 mittelmäßig. '
+        + 'Ab 80 sollten empfindliche Menschen längere Anstrengung im Freien meiden, ab 100 gilt '
+        + 'das für alle. Kleinere Zahlen sind also besser.',
+    link: { url: 'https://www.umweltbundesamt.de/daten/luft/luftdaten', text: 'Umweltbundesamt' } },
+  pollen: { titel: 'Pollen',
+    text: 'Angegeben ist die Zahl der Pollenkörner je Kubikmeter Luft. Unter 10 merken das nur '
+        + 'sehr empfindliche Menschen, ab 30 reagieren die meisten Allergiker, ab 80 wird es für '
+        + 'Betroffene deutlich unangenehm. Nach Regen sinkt die Belastung, an warmen, windigen '
+        + 'Tagen steigt sie.',
+    link: { url: 'https://www.dwd.de/DE/leistungen/gefahrenindizespollen/gefahrenindexpollen.html',
+            text: 'Pollenflug-Vorhersage des DWD' } },
+  wind: { titel: 'Wind und Böen',
+    text: 'Die erste Zahl ist der Durchschnittswind, die zweite die stärkste zu erwartende Bö. '
+        + 'Ab etwa 40 km/h in Böen rauscht es hörbar in den Bäumen, ab 60 km/h wird Radfahren '
+        + 'unangenehm, ab 80 km/h können Äste brechen. Die Richtung sagt, woher der Wind kommt.',
+    link: { url: 'https://www.dwd.de/DE/service/lexikon/lexikon_node.html', text: 'Wetterlexikon des DWD' } },
+  druck: { titel: 'Luftdruck',
+    text: 'Der Normalwert auf Meereshöhe liegt bei 1013 hPa. Steigender Druck bedeutet meist '
+        + 'ruhigeres, freundlicheres Wetter, fallender Druck kündigt oft Wolken, Wind und Regen an. '
+        + 'Wichtiger als der Wert selbst ist also seine Richtung.' },
+  feuchte: { titel: 'Luftfeuchte und Taupunkt',
+    text: 'Die Luftfeuchte sagt, wie voll die Luft mit Wasserdampf ist. Der Taupunkt ist die '
+        + 'Temperatur, bei der sich dieser Dampf niederschlägt — als Nebel, Tau oder beschlagene '
+        + 'Scheiben. Über 16 °C Taupunkt empfinden die meisten die Luft als schwül, über 20 °C als drückend.' },
+  sicht: { titel: 'Sichtweite',
+    text: 'Wie weit man bei klarer Luft sehen kann. Über 10 km ist gute Fernsicht. '
+        + 'Unter 1 km spricht man von Nebel, unter 150 m wird es für den Verkehr gefährlich.' },
+  wolken: { titel: 'Bewölkung',
+    text: 'Anteil des Himmels, der von Wolken bedeckt ist. Bis 20 % nennt man das wolkenlos, '
+        + 'bis 50 % heiter, bis 80 % bewölkt, darüber bedeckt. Für Sternenbeobachtung sollte '
+        + 'der Wert unter 30 % liegen.' },
+  sonne: { titel: 'Sonnenverlauf',
+    text: 'Der Bogen zeigt den Weg der Sonne über den Himmel und wo sie gerade steht. '
+        + 'Die Sonnenscheindauer ist die Zeit ohne verdeckende Wolken — sie ist meist kürzer '
+        + 'als die Tageslänge.' },
+  licht: { titel: 'Goldene und blaue Stunde',
+    text: 'Die goldene Stunde ist die Zeit kurz nach Sonnenaufgang und kurz vor Sonnenuntergang, '
+        + 'wenn das Licht flach einfällt und warm-golden wirkt — die beliebteste Zeit zum '
+        + 'Fotografieren. Die blaue Stunde folgt danach: Die Sonne ist schon unter dem Horizont, '
+        + 'der Himmel leuchtet aber noch tiefblau. Danach beginnt die Dämmerung, ab 18 Grad '
+        + 'Sonnentiefe die astronomische Nacht — erst dann sind lichtschwache Sterne sichtbar.' },
+  mond: { titel: 'Mondphase',
+    text: 'Der Anteil der beleuchteten Mondscheibe. Bei Vollmond ist die Nacht so hell, dass '
+        + 'schwache Sterne und Sternschnuppen untergehen; bei Neumond ist der Himmel am dunkelsten. '
+        + 'Für Himmelsbeobachtung ist Neumond deshalb die beste Zeit.' }
+};
+
+function tile(label, value, sub, extra = '', tone = '', key = '') {
+  return `<div class="tile${tone ? ' t-' + tone : ''}${key ? ' has-info' : ''}"${
+      key ? ` data-info="${key}" role="button" tabindex="0"` : ''}>
+    <span class="t-label">${label}${key ? '<i class="t-q">?</i>' : ''}</span>
     <span class="t-value">${value}</span>
     ${extra}
     <span class="t-sub">${sub || ''}</span>
   </div>`;
+}
+
+function openExplain(key) {
+  const e = EXPLAIN[key];
+  if (!e) return;
+  $('#explainTitle').textContent = e.titel;
+  $('#explainText').textContent = e.text;
+  const l = $('#explainLink');
+  if (e.link) {
+    l.href = e.link.url; l.textContent = `${e.link.text} öffnen →`; l.hidden = false;
+  } else l.hidden = true;
+  openSheet('#explainSheet');
+}
+
+/** Antippen auf Kacheln erst nach dem Rendern verdrahten. */
+function wireExplain() {
+  $$('.tile.has-info').forEach(t => {
+    t.onclick = () => openExplain(t.dataset.info);
+    t.onkeydown = (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openExplain(t.dataset.info); } };
+  });
 }
 
 function renderTiles(air) {
@@ -1050,8 +1168,8 @@ function renderTiles(air) {
 
   // Wind mit Kompassnadel
   const deg = c.wind_direction_10m;
-  out.push(`<div class="tile">
-    <span class="t-label">Wind</span>
+  out.push(`<div class="tile has-info" data-info="wind" role="button" tabindex="0">
+    <span class="t-label">Wind<i class="t-q">?</i></span>
     <div class="t-wind">
       <svg class="compass" viewBox="0 0 60 60" style="--deg:${deg}deg">
         <circle class="c-ring" cx="30" cy="30" r="24"/>
@@ -1067,12 +1185,12 @@ function renderTiles(air) {
   const uvNow = h.uv_index[i] ?? 0;
   const [, uvTxt, uvTone] = levelOf(UV_LEVELS, uvNow);
   out.push(tile('UV-Index', round(uvNow), `${uvTxt} · heute max. ${round(d.uv_index_max[0])}`,
-    `<span class="t-meter"><i style="width:${clamp(uvNow / 11 * 100, 4, 100)}%"></i></span>`, uvTone));
+    `<span class="t-meter"><i style="width:${clamp(uvNow / 11 * 100, 4, 100)}%"></i></span>`, uvTone, 'uv'));
 
   // Luftfeuchte + Taupunkt
   out.push(tile('Luftfeuchte', `${round(c.relative_humidity_2m)}%`,
     `Taupunkt ${round(h.dew_point_2m[i])}°`,
-    `<span class="t-meter"><i style="width:${clamp(c.relative_humidity_2m, 4, 100)}%"></i></span>`));
+    `<span class="t-meter"><i style="width:${clamp(c.relative_humidity_2m, 4, 100)}%"></i></span>`, '', 'feuchte'));
 
   // Sonne
   const sr = new Date(d.sunrise[0]), ss = new Date(d.sunset[0]);
@@ -1081,8 +1199,8 @@ function renderTiles(air) {
   const sunH = Math.floor((d.sunshine_duration?.[0] ?? 0) / 3600);
   const minutenTag = Math.round((ss - sr) / 60000);
   const dayLen = `${Math.floor(minutenTag / 60)} Std. ${minutenTag % 60} Min.`;
-  out.push(`<div class="tile t-wide">
-    <span class="t-label">Sonne</span>
+  out.push(`<div class="tile t-wide has-info" data-info="sonne" role="button" tabindex="0">
+    <span class="t-label">Sonne<i class="t-q">?</i></span>
     <div class="sun-arc">
       <svg viewBox="0 0 200 74">
         <path class="arc-bg" d="M${ARC.x0} ${ARC.y} A ${ARC.rx} ${ARC.ry} 0 0 1 ${ARC.x1} ${ARC.y}"/>
@@ -1105,8 +1223,8 @@ function renderTiles(air) {
   const phase = jetztAlt > 6 ? 'Tag' : jetztAlt > -0.833 ? 'Goldene Stunde'
     : jetztAlt > -6 ? 'Blaue Stunde' : jetztAlt > -18 ? 'Dämmerung' : 'Nacht';
 
-  out.push(`<div class="tile t-wide">
-    <span class="t-label">Licht &amp; Dämmerung</span>
+  out.push(`<div class="tile t-wide has-info" data-info="licht" role="button" tabindex="0">
+    <span class="t-label">Licht &amp; Dämmerung<i class="t-q">?</i></span>
     <span class="t-value">${phase} <em>${jetztAlt.toFixed(0)}° Sonnenhöhe</em></span>
     <div class="light-rows">
       <div class="lrow"><span class="ld gold"></span><span>Goldene Stunde früh</span><b>${z(ev.aufgang)}–${z(ev.goldenEndeMorgen)}</b></div>
@@ -1123,8 +1241,8 @@ function renderTiles(air) {
   // Schattenkante: bei zunehmendem Mond von links, bei abnehmendem von rechts
   const zunehmend = mp.anteil < 0.5;
   const versatz = (1 - Math.abs(mp.beleuchtet * 2 - 1)) * 100;
-  out.push(`<div class="tile">
-    <span class="t-label">Mond</span>
+  out.push(`<div class="tile has-info" data-info="mond" role="button" tabindex="0">
+    <span class="t-label">Mond<i class="t-q">?</i></span>
     <div class="moon-row">
       <span class="moon-disc">
         <span class="moon-shadow" style="
@@ -1137,26 +1255,26 @@ function renderTiles(air) {
   </div>`);
 
   // Luftdruck
-  out.push(tile('Luftdruck', round(c.pressure_msl), 'hPa auf Meereshöhe'));
+  out.push(tile('Luftdruck', round(c.pressure_msl), 'hPa auf Meereshöhe', '', '', 'druck'));
 
   // Sicht
   const vis = h.visibility?.[i];
   if (vis != null) {
     out.push(tile('Sicht', vis >= 10000 ? '>10' : (vis / 1000).toFixed(1),
-      vis >= 10000 ? 'km · klare Sicht' : 'km'));
+      vis >= 10000 ? 'km · klare Sicht' : 'km', '', '', 'sicht'));
   }
 
   // Bewölkung
   out.push(tile('Bewölkung', `${round(c.cloud_cover)}%`,
     c.cloud_cover < 20 ? 'nahezu wolkenlos' : c.cloud_cover > 85 ? 'geschlossene Decke' : 'aufgelockert',
-    `<span class="t-meter"><i style="width:${clamp(c.cloud_cover, 4, 100)}%"></i></span>`));
+    `<span class="t-meter"><i style="width:${clamp(c.cloud_cover, 4, 100)}%"></i></span>`, '', 'wolken'));
 
   // Luftqualität
   if (air?.current?.european_aqi != null) {
     const aqi = air.current.european_aqi;
     const [, aqiTxt, aqiTone] = levelOf(AQI_LEVELS, aqi);
     out.push(tile('Luftqualität', round(aqi), `${aqiTxt} · Feinstaub ${air.current.pm2_5?.toFixed(1)} µg/m³`,
-      `<span class="t-meter"><i style="width:${clamp(aqi, 4, 100)}%"></i></span>`, aqiTone));
+      `<span class="t-meter"><i style="width:${clamp(aqi, 4, 100)}%"></i></span>`, aqiTone, 'luft'));
   }
 
   // Pollen – nur wenn tatsächlich welche fliegen
@@ -1170,8 +1288,8 @@ function renderTiles(air) {
     if (active.length) {
       const top = active[0];
       const [, pTxt, pTone] = levelOf(POLLEN_LEVELS, top.v);
-      out.push(`<div class="tile t-wide t-${pTone}">
-        <span class="t-label">Pollen</span>
+      out.push(`<div class="tile t-wide t-${pTone} has-info" data-info="pollen" role="button" tabindex="0">
+        <span class="t-label">Pollen<i class="t-q">?</i></span>
         <span class="t-value">${top.n} <em>${pTxt}</em></span>
         <div class="pollen-rows">${active.slice(0, 4).map(p => {
           const [, txt] = levelOf(POLLEN_LEVELS, p.v);
@@ -1184,6 +1302,7 @@ function renderTiles(air) {
   }
 
   $('#tiles').innerHTML = out.join('');
+  wireExplain();
 }
 
 // ══ Countdown zu Sonne und Mond ════════════════════════════
@@ -1463,6 +1582,9 @@ async function refresh() {
   busy = true;
   document.body.classList.add('loading');
   $('#refreshBtn').classList.add('spin');
+  const stamp = $('#footStamp');
+  if (stamp) stamp.textContent = 'Daten werden geholt…';
+  toast('Daten werden geholt…', 1500);
 
   try {
     const [fc, aq, md, warn] = await Promise.all([
@@ -1475,6 +1597,7 @@ async function refresh() {
     store.set(LS.cache, { at: Date.now(), place, data: fc });
 
     renderHero();
+    renderDayProgress();
     renderVerdict();
     renderWarnings(warn);
     renderHourly();
@@ -1497,8 +1620,9 @@ async function refresh() {
     }
 
     $('#footStamp').textContent =
-      `Zuletzt aktualisiert: ${new Date().toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' })} · ` +
-      `Vorhersage: automatisch bestes Modell (in Deutschland DWD ICON-D2, 2 km)`;
+      `Zuletzt aktualisiert: ${new Date().toLocaleTimeString('de-DE')} · ` +
+      `Quelle: ${sourceOf(sourceId()).name}`;
+    toast('Aktualisiert.', 1400);
     document.body.classList.remove('loading', 'error');
   } catch (err) {
     console.error(err);
@@ -1533,6 +1657,8 @@ function wire() {
   // Datenquelle
   $('#modelPick').addEventListener('click', () => { renderSourceList(); openSheet('#modelSheet'); });
   $('#modelClose').addEventListener('click', () => closeSheet('#modelSheet'));
+  $('#explainClose').addEventListener('click', () => closeSheet('#explainSheet'));
+  $('#explainSheet').addEventListener('click', e => { if (e.target.id === 'explainSheet') closeSheet('#explainSheet'); });
   $('#modelSheet').addEventListener('click', e => { if (e.target.id === 'modelSheet') closeSheet('#modelSheet'); });
 
   let searchTimer;

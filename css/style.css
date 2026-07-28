@@ -634,8 +634,14 @@ select#bfModel {
 
 .drow {
   display: grid; align-items: center;
-  grid-template-columns: 40px 30px 74px 30px 1fr 32px;
-  gap: 6px; padding: 5px 0;
+  grid-template-columns: 40px 30px minmax(52px, auto) 30px minmax(40px, 1fr) 32px;
+  gap: 5px 6px; padding: 6px 0;
+}
+/* Regendetails in eine eigene Zeile — nebeneinander lief der Text sonst
+   über die Temperaturspalte. */
+.d-detail {
+  grid-column: 3 / -1; font-size: 10.5px; color: var(--ink-faint);
+  margin-top: -2px;
 }
 .drow + .drow { border-top: 1px solid rgba(255,255,255,.055); }
 .drow.is-today .d-day { color: var(--ink); font-weight: 700; }
@@ -644,8 +650,8 @@ select#bfModel {
 .d-icon { height: 30px; }
 .d-icon .wx { width: 30px; height: 30px; }
 .d-rain { display: grid; gap: 1px; line-height: 1.2; }
-.d-sunval  { font-size: 10.5px; color: #ffd07a; opacity: .9; white-space: nowrap; }
-.d-rainval { font-size: 10.5px; color: var(--accent); white-space: nowrap; }
+.d-sunval  { font-size: 10px; color: #ffd07a; opacity: .9; white-space: nowrap; }
+.d-rainval { font-size: 10px; color: var(--accent); white-space: nowrap; }
 .d-min { font-size: 14.5px; color: var(--ink-faint); text-align: right; }
 .d-max { font-size: 14.5px; font-weight: 500; text-align: right; }
 
@@ -1255,9 +1261,43 @@ body.loading .hero-temp, body.loading .hero-desc { opacity: .45; }
 .lchip:active { transform: scale(.96); }
 
 /* Regenzeitfenster in der Tagesreihe */
-.d-when { font-size: 9.5px; color: var(--ink-faint); white-space: nowrap; }
 
 /* Stundenleiste am Rechner greifbar machen */
 @media (hover: hover) and (pointer: fine) {
   .hourly-scroll { cursor: grab; }
 }
+
+/* ── Tagesfortschritt ─────────────────────────────────────── */
+.day-progress {
+  margin: 14px 0 2px; padding: 12px 15px;
+  background: var(--card); border: 1px solid var(--card-line);
+  border-radius: var(--r-md); display: grid; gap: 7px;
+}
+.day-progress:empty { display: none; }
+.dp-head { display: flex; justify-content: space-between; align-items: baseline;
+           gap: 12px; flex-wrap: wrap; }
+.dp-label { font-size: 13.5px; color: var(--ink-dim); }
+.dp-label b { color: var(--ink); font-weight: 600; }
+.dp-rest  { font-size: 11.5px; color: var(--ink-faint); }
+.dp-bar { height: 5px; border-radius: 3px; background: rgba(255,255,255,.1); overflow: hidden; }
+.dp-bar i { display: block; height: 100%; border-radius: 3px; transition: width 1s ease; }
+.day-progress[data-phase="tag"]   .dp-bar i { background: linear-gradient(90deg,#ffd07a,#ffb340); }
+.day-progress[data-phase="nacht"] .dp-bar i { background: linear-gradient(90deg,#5b8dd9,#8f6fd0); }
+.dp-ends { display: flex; justify-content: space-between; font-size: 10px; color: var(--ink-faint); }
+
+/* ── Erklärungen ──────────────────────────────────────────── */
+.tile.has-info { cursor: pointer; }
+.tile.has-info:active { background: rgba(255,255,255,.1); }
+.t-q {
+  display: inline-grid; place-items: center; width: 13px; height: 13px;
+  margin-left: 5px; border-radius: 50%; font-style: normal; font-size: 9px;
+  background: rgba(255,255,255,.12); color: var(--ink-dim); vertical-align: 1px;
+}
+.explain-text { font-size: 14.5px; line-height: 1.6; color: var(--ink-dim); margin-bottom: 16px; }
+.explain-link {
+  display: block; padding: 12px 14px; margin-bottom: 12px;
+  background: rgba(108,198,255,.13); border: 1px solid rgba(108,198,255,.32);
+  border-radius: var(--r-md); color: var(--accent);
+  font: 600 14px var(--font); text-decoration: none; text-align: center;
+}
+.explain-link[hidden] { display: none; }

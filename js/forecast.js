@@ -8,10 +8,12 @@ const Forecast = (() => {
 'use strict';
 
 const API = 'https://api.open-meteo.com/v1/forecast';
-const N = 9;                 // Rasterpunkte je Richtung
-const SPAN_LAT = 3.4;        // abgedeckte Fläche in Grad
-const SPAN_LON = 4.6;
-const CELL = 96;             // Zeichenfläche; wird von der Karte weichgezeichnet
+// 13×13 Punkte über eine engere Fläche: rund 20 km Rasterabstand statt 40.
+// Kostet einmalig etwa 900 KB, dafür ist die Vorhersagekarte doppelt so fein.
+const N = 13;                // Rasterpunkte je Richtung
+const SPAN_LAT = 2.3;        // abgedeckte Fläche in Grad
+const SPAN_LON = 3.1;
+const CELL = 128;            // Zeichenfläche; wird von der Karte weichgezeichnet
 
 let grid = null;             // { lat0, lon0, dLat, dLon, times, precip, cloud }
 let canvas = null, ctx = null;
