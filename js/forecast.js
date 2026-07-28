@@ -31,7 +31,8 @@ async function load(lat, lon) {
 
   const p = new URLSearchParams({
     latitude: lats.join(','), longitude: lons.join(','),
-    hourly: 'precipitation,cloud_cover', forecast_days: '5', timezone: 'auto'
+    hourly: 'precipitation,cloud_cover,temperature_2m,wind_gusts_10m,cape',
+    forecast_days: '5', timezone: 'auto'
   });
 
   const res = await fetch(`${API}?${p}`);
@@ -41,9 +42,13 @@ async function load(lat, lon) {
 
   grid = {
     lat0, lon0, dLat, dLon,
+    mitte: [lat, lon],
     times: data[0].hourly.time,
     precip: data.map(d => d.hourly.precipitation),
-    cloud: data.map(d => d.hourly.cloud_cover)
+    cloud:  data.map(d => d.hourly.cloud_cover),
+    temp:   data.map(d => d.hourly.temperature_2m),
+    gusts:  data.map(d => d.hourly.wind_gusts_10m),
+    cape:   data.map(d => d.hourly.cape)
   };
 
   if (!canvas) {
@@ -95,8 +100,24 @@ function rainColor(mm) {
   return              [205,  70, 200, 210];
 }
 
-/** Ein Bild für die gewählte Stunde zeichnen. Zeile 0 liegt im Norden. */
-function frame(h) {
+/** Temperatur als Farbe: blau kalt, rot heiß. */
+function tempColor(t) {
+  const stufen = [
+    [-15, [ 90, 110, 210]], [-5, [ 70, 160, 230]], [ 3, [ 90, 205, 215]],
+    [ 10, [ 95, 200, 140]], [ 18, [220, 210,  90]], [ 25, [240, 160,  70]],
+    [ 32, [235,  95,  70]], [ 40, [200,  60, 140]]
+  ];
+  let a = stufen[0], b = stufen[stufen.length - 1];
+  for (let i = 0; i < stufen.length - 1; i++) {
+    if (t >= stufen[i][0] && t <= stufen[i + 1][0]) { a = stufen[i]; b = stufen[i + 1]; break; }
+  }
+  const f = Math.max(0, Math.min(1, (t - a[0]) / Math.max(0.001, b[0] - a[0])));
+  return [0, 1, 2].map(k => Math.round(a[1][k] + (b[1][k] - a[1][k]) * f));
+}
+
+/** Ein Bild für die gewählte Stunde zeichnen. Zeile 0 liegt im Norden.
+    `ebenen` ist eine Menge aus 'regen', 'wolken', 'temperatur', 'boeen', 'gewitter'. */
+function frame(h, ebenen = new Set(['regen', 'wolken'])) {
   if (!grid || h < 0 || h >= grid.times.length) return null;
 
   const img = ctx.createImageData(CELL, CELL);
@@ -107,23 +128,50 @@ function frame(h) {
     for (let x = 0; x < CELL; x++) {
       const fx = x / (CELL - 1);
       const o = (y * CELL + x) * 4;
+      let r = 0, g = 0, b = 0, a = 0;
 
-      const mm = sample(grid.precip, h, fy, fx);
-      const rain = rainColor(mm);
-      if (rain) {
-        px[o] = rain[0]; px[o + 1] = rain[1]; px[o + 2] = rain[2]; px[o + 3] = rain[3];
-        continue;
+      const mischen = (c, alpha) => {
+        const n = alpha + a * (1 - alpha);
+        if (n <= 0) return;
+        r = (c[0] * alpha + r * a * (1 - alpha)) / n;
+        g = (c[1] * alpha + g * a * (1 - alpha)) / n;
+        b = (c[2] * alpha + b * a * (1 - alpha)) / n;
+        a = n;
+      };
+
+      // Von hinten nach vorn: Temperatur, Wolken, Böen, Gewitter, Regen
+      if (ebenen.has('temperatur')) {
+        mischen(tempColor(sample(grid.temp, h, fy, fx)), 0.5);
       }
-      // Kein Regen: Bewölkung als heller Schleier, damit man die Lage sieht
-      const cc = sample(grid.cloud, h, fy, fx);
-      if (cc > 18) {
-        const a = Math.min(140, (cc - 18) * 1.7);
-        px[o] = 240; px[o + 1] = 245; px[o + 2] = 252; px[o + 3] = a;
+      if (ebenen.has('wolken')) {
+        const cc = sample(grid.cloud, h, fy, fx);
+        if (cc > 18) mischen([240, 245, 252], Math.min(0.55, (cc - 18) / 150));
       }
+      if (ebenen.has('boeen')) {
+        const w = sample(grid.gusts, h, fy, fx);
+        if (w > 35) mischen([190, 120, 240], Math.min(0.6, (w - 35) / 70));
+      }
+      if (ebenen.has('gewitter')) {
+        const cape = sample(grid.cape, h, fy, fx);
+        if (cape > 300) mischen([255, 90, 90], Math.min(0.65, (cape - 300) / 1800));
+      }
+      if (ebenen.has('regen')) {
+        const c = rainColor(sample(grid.precip, h, fy, fx));
+        if (c) mischen([c[0], c[1], c[2]], c[3] / 255);
+      }
+
+      px[o] = r; px[o + 1] = g; px[o + 2] = b; px[o + 3] = Math.round(a * 255);
     }
   }
   ctx.putImageData(img, 0, 0);
   return canvas;
+}
+
+/** Ist ein Punkt noch vom geladenen Raster abgedeckt? */
+function covers(lat, lon) {
+  if (!grid) return false;
+  return lat >= grid.lat0 && lat <= grid.lat0 + SPAN_LAT
+      && lon >= grid.lon0 && lon <= grid.lon0 + SPAN_LON;
 }
 
 /** Index der Stunde, die dem Zeitpunkt am nächsten liegt. */
@@ -138,5 +186,6 @@ function indexFor(date) {
   return best;
 }
 
-return { load, frame, corners, ready, hours, indexFor, get canvas() { return canvas; } };
+return { load, frame, corners, ready, hours, indexFor, covers,
+         get canvas() { return canvas; } };
 })();

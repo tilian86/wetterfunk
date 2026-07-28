@@ -56,6 +56,7 @@ const Radar = (() => {
 
     map.addControl(new maplibregl.NavigationControl({ showCompass: false }), 'top-right');
     map.on('moveend', checkEchoes);
+    map.on('moveend', () => els.onMoveEnd?.(map.getCenter(), map.getZoom()));
     map.getContainer().style.touchAction = 'none';
 
     wireControls();
@@ -308,9 +309,9 @@ const Radar = (() => {
   // ── Flächenvorhersage über die Karte legen ───────────────
   /** Ab 30 Minuten reicht das Radar nicht mehr. Dann blenden wir die
       selbst gezeichnete Rastervorhersage ein — gröber, aber über fünf Tage. */
-  function showForecast(hourIndex) {
+  function showForecast(hourIndex, ebenen) {
     if (!ready || !map || !Forecast.ready()) return false;
-    const bild = Forecast.frame(hourIndex);
+    const bild = Forecast.frame(hourIndex, ebenen);
     if (!bild) return false;
 
     if (!map.getSource('fc')) {

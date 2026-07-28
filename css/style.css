@@ -1236,3 +1236,28 @@ body.loading .hero-temp, body.loading .hero-desc { opacity: .45; }
 .scrub-strip i.fine { background: rgba(79,212,138,.28); }
 .scrub-strip i.fine.on { background: var(--accent); }
 #scrubWhen em { font-style: normal; opacity: .65; font-size: 11px; }
+
+/* ── Kartenebenen wählen ──────────────────────────────────── */
+.layer-pick { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 12px; }
+.lchip {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 7px 12px; border-radius: 30px;
+  background: rgba(255,255,255,.06); border: 1px solid var(--card-line);
+  color: var(--ink-faint); font: 500 12px var(--font); cursor: pointer;
+  transition: background .15s, color .15s, border-color .15s;
+}
+.lchip i {
+  width: 9px; height: 9px; border-radius: 50%; flex: none;
+  background: var(--c); opacity: .45;
+}
+.lchip.on { background: rgba(255,255,255,.12); border-color: var(--c); color: var(--ink); }
+.lchip.on i { opacity: 1; box-shadow: 0 0 8px var(--c); }
+.lchip:active { transform: scale(.96); }
+
+/* Regenzeitfenster in der Tagesreihe */
+.d-when { font-size: 9.5px; color: var(--ink-faint); white-space: nowrap; }
+
+/* Stundenleiste am Rechner greifbar machen */
+@media (hover: hover) and (pointer: fine) {
+  .hourly-scroll { cursor: grab; }
+}

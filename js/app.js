@@ -37,7 +37,8 @@ const LS = {
   active: 'wf.active',
   cams:   'wf.cams',
   cache:  'wf.cache',
-  source: 'wf.source'
+  source: 'wf.source',
+  layers: 'wf.layers'
 };
 
 // ══ State ══════════════════════════════════════════════════
@@ -389,6 +390,40 @@ function renderHourly() {
       ${mm >= 0.1 ? `<span class="h-mm">${mm.toFixed(1)}</span>` : '<span class="h-mm"></span>'}
     </div>`;
   }).join('');
+
+  wireHourlyScroll();
+}
+
+/** Am Rechner gibt es kein Wischen: Mausrad und Trackpad-Gesten auf die
+    Stundenleiste umlenken, damit sie sich waagerecht bewegen lässt. */
+function wireHourlyScroll() {
+  const box = $('#hourly');
+  if (!box || box.dataset.wired) return;
+  box.dataset.wired = '1';
+
+  box.addEventListener('wheel', (e) => {
+    // Waagerechte Gesten macht der Browser selbst; nur senkrechte umlenken
+    if (Math.abs(e.deltaY) <= Math.abs(e.deltaX)) return;
+    const vorher = box.scrollLeft;
+    box.scrollLeft += e.deltaY;
+    if (box.scrollLeft !== vorher) e.preventDefault();   // Seite nicht mitscrollen
+  }, { passive: false });
+
+  // Ziehen mit gedrückter Maustaste
+  let zieht = false, startX = 0, startL = 0;
+  box.addEventListener('pointerdown', (e) => {
+    if (e.pointerType !== 'mouse') return;
+    zieht = true; startX = e.clientX; startL = box.scrollLeft;
+    box.setPointerCapture(e.pointerId);
+    box.style.cursor = 'grabbing';
+  });
+  box.addEventListener('pointermove', (e) => {
+    if (!zieht) return;
+    box.scrollLeft = startL - (e.clientX - startX);
+  });
+  const los = () => { zieht = false; box.style.cursor = ''; };
+  box.addEventListener('pointerup', los);
+  box.addEventListener('pointercancel', los);
 }
 
 const sunUpSvg = () => `<svg viewBox="0 0 24 24" class="wx-sunmini"><circle cx="12" cy="14" r="4"/><path d="M12 4v3M5 14H2M22 14h-3M6.5 8.5 4.4 6.4M17.5 8.5l2.1-2.1M2 19h20"/><path d="m9 6 3-3 3 3" class="arrow"/></svg>`;
@@ -434,6 +469,41 @@ function daySymbol(dayIndex) {
   return 3;
 }
 
+/** Regenmenge in Worte fassen — eine Zahl in Millimetern sagt den meisten nichts. */
+function rainWords(mm) {
+  if (mm < 0.2) return null;
+  if (mm < 1)  return 'ein paar Tropfen';
+  if (mm < 3)  return 'leichter Regen';
+  if (mm < 8)  return 'mäßiger Regen';
+  if (mm < 20) return 'kräftiger Regen';
+  return 'sehr kräftig';
+}
+
+/** Wann am Tag fällt der Regen? Liefert die zusammenhängende Hauptphase. */
+function rainWindow(dayIndex) {
+  const d = data.daily, h = data.hourly;
+  const tag = d.time[dayIndex];
+  const stunden = [];
+  for (let i = 0; i < h.time.length; i++) {
+    if (h.time[i].startsWith(tag)) stunden.push(i);
+  }
+  const nass = stunden.filter(i => (h.precipitation[i] ?? 0) >= 0.1);
+  if (!nass.length) return null;
+
+  // Größten zusammenhängenden Block suchen
+  let bestVon = nass[0], bestBis = nass[0], von = nass[0], bis = nass[0];
+  for (let k = 1; k < nass.length; k++) {
+    if (nass[k] === bis + 1) bis = nass[k];
+    else { if (bis - von > bestBis - bestVon) { bestVon = von; bestBis = bis; } von = bis = nass[k]; }
+  }
+  if (bis - von > bestBis - bestVon) { bestVon = von; bestBis = bis; }
+
+  const a = new Date(h.time[bestVon]);
+  const b = new Date(h.time[bestBis] );
+  b.setHours(b.getHours() + 1);
+  return { von: a, bis: b, anteil: nass.length / Math.max(1, stunden.length) };
+}
+
 function renderDaily() {
   const d = data.daily;
   const lo = Math.min(...d.temperature_2m_min), hi = Math.max(...d.temperature_2m_max);
@@ -455,7 +525,12 @@ function renderDaily() {
       <span class="d-icon" title="${WX.text(daySymbol(i), 1)}">${WX.icon(daySymbol(i), 1)}</span>
       <span class="d-rain">
         <span class="d-sunval">☀ ${sun} Std.</span>
-        ${prob >= 10 ? `<span class="d-rainval">💧 ${prob}%${mm >= 0.5 ? ` · ${mm.toFixed(mm < 10 ? 1 : 0)} mm` : ''}</span>` : ''}
+        ${prob >= 10 ? `<span class="d-rainval">💧 ${prob}%${
+          mm >= 0.2 ? ` · ${rainWords(mm)}` : ''}</span>` : ''}
+        ${(() => {
+          const w = mm >= 0.2 ? rainWindow(i) : null;
+          return w ? `<span class="d-when">${hhmm(w.von)}–${hhmm(w.bis)} · ${mm.toFixed(1)} mm</span>` : '';
+        })()}
       </span>
       <span class="d-min">${round(min)}°</span>
       <span class="d-track"><i class="d-fill" style="left:${left}%;width:${width}%"></i></span>
@@ -609,6 +684,41 @@ function renderScrub() {
   syncMapAt(punkte[0].t);
 }
 
+// ══ Kartenebenen ═══════════════════════════════════════════
+const LAYERS = [
+  { id: 'regen',      name: 'Niederschlag', farbe: '#5ac8fa' },
+  { id: 'wolken',     name: 'Wolken',       farbe: '#e6ecf5' },
+  { id: 'temperatur', name: 'Temperatur',   farbe: '#ff9f6a' },
+  { id: 'boeen',      name: 'Sturmböen',    farbe: '#be78f0' },
+  { id: 'gewitter',   name: 'Gewitter',     farbe: '#ff5a5a' }
+];
+
+const activeLayers = () => new Set(store.get(LS.layers, ['regen', 'wolken']));
+
+function renderLayerPicker() {
+  const box = $('#layerPick');
+  if (!box) return;
+  const an = activeLayers();
+  box.innerHTML = LAYERS.map(l =>
+    `<button class="lchip${an.has(l.id) ? ' on' : ''}" data-layer="${l.id}"
+       style="--c:${l.farbe}"><i></i>${l.name}</button>`).join('');
+
+  $$('.lchip', box).forEach(b => b.addEventListener('click', () => {
+    const jetzt = activeLayers();
+    const id = b.dataset.layer;
+    jetzt.has(id) ? jetzt.delete(id) : jetzt.add(id);
+    if (!jetzt.size) jetzt.add('regen');            // mindestens eine Ebene
+    store.set(LS.layers, [...jetzt]);
+    renderLayerPicker();
+    syncMapAt(currentScrubTime());
+  }));
+}
+
+const currentScrubTime = () => {
+  const p = buildScrubPoints();
+  return p[Math.min(+($('#scrubSlider')?.value || 0), p.length - 1)]?.t;
+};
+
 /** Karte an den Zeitstrahl koppeln: bis 30 Minuten zeigt das echte Radar,
     danach die selbst gezeichnete Flächenvorhersage. */
 function syncMapAt(ziel) {
@@ -621,12 +731,29 @@ function syncMapAt(ziel) {
     if (label) { label.textContent = 'Radarmessung'; label.dataset.mode = 'radar'; }
   } else {
     const hi = Forecast.indexFor(ziel);
-    const ok = hi >= 0 && Radar.showForecast(hi);
+    const ok = hi >= 0 && Radar.showForecast(hi, activeLayers());
     if (label) {
-      label.textContent = ok ? 'Vorhersage · gröber' : 'Vorhersage nicht geladen';
+      const namen = LAYERS.filter(l => activeLayers().has(l.id)).map(l => l.name).join(' + ');
+      label.textContent = ok ? `${namen} · Vorhersage` : 'Vorhersage nicht geladen';
       label.dataset.mode = ok ? 'forecast' : 'none';
     }
   }
+}
+
+/** Wird die Karte weit weggeschoben, deckt das Raster den Ausschnitt nicht
+    mehr ab. Dann für die neue Mitte nachladen — auch auf dem Globus. */
+let nachladeTimer = null;
+function onMapMoved(mitte, zoom) {
+  if (zoom < 3) return;                     // auf der Kugel lohnt es nicht
+  if (Forecast.covers(mitte.lat, mitte.lng)) return;
+  clearTimeout(nachladeTimer);
+  nachladeTimer = setTimeout(() => {
+    const marke = $('#mapMode');
+    if (marke) marke.textContent = 'lädt für diese Region…';
+    Forecast.load(mitte.lat, mitte.lng)
+      .then(() => syncMapAt(currentScrubTime()))
+      .catch(() => {});
+  }, 700);
 }
 
 // ══ Rendering: Modellvergleich ═════════════════════════════
@@ -1356,6 +1483,7 @@ async function refresh() {
     renderScrub();
     renderModels(md);
     renderTiles(aq);
+    renderLayerPicker();
     renderCountdown();
     renderSky();
     renderCams();
@@ -1482,7 +1610,7 @@ async function boot() {
     Radar.init(place.lat, place.lon, {
       slider: $('#radarSlider'), play: $('#playBtn'), time: $('#radarTime'),
       legend: $('#radarLegend'), locate: $('#radarLocate'), empty: $('#radarEmpty'),
-      globe: $('#radarGlobe'), ticks: $('#radarTicks'),
+      globe: $('#radarGlobe'), ticks: $('#radarTicks'), onMoveEnd: onMapMoved,
       sharp: $('#mapSharp'),
       onLocate: () => Radar.setCenter(place.lat, place.lon)
     });
