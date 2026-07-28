@@ -453,9 +453,10 @@ function renderDaily() {
     return `<div class="drow${isToday ? ' is-today' : ''}">
       <span class="d-day">${isToday ? 'Heute' : weekday(day)}</span>
       <span class="d-icon" title="${WX.text(daySymbol(i), 1)}">${WX.icon(daySymbol(i), 1)}</span>
-      <span class="d-rain">${prob >= 20
-        ? `<b>${prob}%</b>${mm >= 0.5 ? `<i>${mm.toFixed(mm < 10 ? 1 : 0)} mm</i>` : ''}`
-        : `<span class="d-sun">${sun} Std.<i>Sonne</i></span>`}</span>
+      <span class="d-rain">
+        <span class="d-sunval">☀ ${sun} Std.</span>
+        ${prob >= 10 ? `<span class="d-rainval">💧 ${prob}%${mm >= 0.5 ? ` · ${mm.toFixed(mm < 10 ? 1 : 0)} mm` : ''}</span>` : ''}
+      </span>
       <span class="d-min">${round(min)}°</span>
       <span class="d-track"><i class="d-fill" style="left:${left}%;width:${width}%"></i></span>
       <span class="d-max">${round(max)}°</span>
@@ -658,6 +659,8 @@ function renderModels(md) {
     `<span class="mleg"><i style="background:${s.color}"></i><b>${s.name}</b><em>${s.note}</em></span>`
   ).join('');
 
+  wireChartReadout(chart, series, H, i0, N, px);
+
   // Bewertung: mittlere Streuung heute vs. ab Tag 3
   const avg = (a) => a.reduce((x, y) => x + y, 0) / (a.length || 1);
   const near = avg(spread.slice(0, 24));
@@ -695,6 +698,59 @@ function renderModels(md) {
       ? `Ab <b>${weekday(when)}</b> laufen sie deutlich auseinander (bis ${Math.round(Math.max(...spread))} °C Unterschied).`
       : `Über den ganzen Zeitraum bleiben sie dicht beieinander (max. ${Math.round(Math.max(...spread))} °C Unterschied).`) +
     ` Ø Abweichung heute ${near.toFixed(1)} °C, in 3–5 Tagen ${far.toFixed(1)} °C.`;
+}
+
+/** Am Diagramm entlangfahren: zeigt für die berührte Stunde alle Modellwerte. */
+function wireChartReadout(chart, series, H, i0, N, px) {
+  const svg = chart.querySelector('svg');
+  if (!svg) return;
+
+  let box = chart.querySelector('.mread');
+  if (!box) {
+    box = document.createElement('div');
+    box.className = 'mread';
+    chart.appendChild(box);
+  }
+  let linie = svg.querySelector('.mcursor');
+  if (!linie) {
+    linie = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+    linie.setAttribute('class', 'mcursor');
+    linie.setAttribute('y1', '10'); linie.setAttribute('y2', '150');
+    svg.appendChild(linie);
+  }
+
+  const zeigen = (clientX) => {
+    const r = svg.getBoundingClientRect();
+    const anteil = Math.max(0, Math.min(1, (clientX - r.left) / r.width));
+    // Auf den Zeichenbereich abbilden (links und rechts ist Rand)
+    const k = Math.round(anteil * (N - 1));
+    const t = new Date(H.time[i0 + k]);
+
+    linie.setAttribute('x1', px(k).toFixed(1));
+    linie.setAttribute('x2', px(k).toFixed(1));
+    linie.style.opacity = '1';
+
+    const werte = series
+      .map(s => ({ name: s.name, color: s.color, v: s.vals[k] }))
+      .filter(s => s.v !== null && s.v !== undefined);
+    if (!werte.length) return;
+
+    const spanne = Math.max(...werte.map(w => w.v)) - Math.min(...werte.map(w => w.v));
+    box.innerHTML = `
+      <span class="mr-time">${weekday(t)}, ${hhmm(t)} Uhr</span>
+      <span class="mr-vals">${werte.map(w =>
+        `<span><i style="background:${w.color}"></i>${w.v.toFixed(1)}°</span>`).join('')}</span>
+      <span class="mr-spread">${spanne < 1 ? 'einig' : `${spanne.toFixed(1)}° auseinander`}</span>`;
+    box.classList.add('on');
+  };
+
+  const verstecken = () => { box.classList.remove('on'); linie.style.opacity = '0'; };
+
+  chart.onpointermove = (e) => zeigen(e.clientX);
+  chart.onpointerdown = (e) => { chart.setPointerCapture?.(e.pointerId); zeigen(e.clientX); };
+  chart.onpointerleave = verstecken;
+  chart.onpointercancel = verstecken;
+  chart.style.touchAction = 'pan-y';
 }
 
 // ══ Rendering: Detail-Kacheln ══════════════════════════════
@@ -743,6 +799,55 @@ function sunEvents(day, lat, lon) {
     vorher = jetzt;
   }
   return out;
+}
+
+// ══ Mond ═══════════════════════════════════════════════════
+const MOON_NAMES = ['Neumond', 'Zunehmende Sichel', 'Erstes Viertel', 'Zunehmender Mond',
+                    'Vollmond', 'Abnehmender Mond', 'Letztes Viertel', 'Abnehmende Sichel'];
+
+/** Mondphase: Anteil 0…1 im Zyklus, Beleuchtung und Name. */
+function moonPhase(date = new Date()) {
+  const synodisch = 29.530588853;
+  const bekannterNeumond = Date.UTC(2000, 0, 6, 18, 14);        // 6.1.2000, 18:14 UT
+  const tage = (date.getTime() - bekannterNeumond) / 86400000;
+  let anteil = (tage % synodisch) / synodisch;
+  if (anteil < 0) anteil += 1;
+  const beleuchtet = (1 - Math.cos(2 * Math.PI * anteil)) / 2;
+  const name = MOON_NAMES[Math.floor(anteil * 8 + 0.5) % 8];
+  return { anteil, beleuchtet, name, alter: anteil * synodisch };
+}
+
+/** Mondposition (Näherung) — genügt für Auf- und Untergang auf wenige Minuten. */
+function moonAltitude(date, lat, lon) {
+  const rad = Math.PI / 180;
+  const d = (date - Date.UTC(2000, 0, 1, 12)) / 86400000;
+  const L = (218.316 + 13.176396 * d) * rad;      // mittlere Länge
+  const M = (134.963 + 13.064993 * d) * rad;      // mittlere Anomalie
+  const F = (93.272 + 13.229350 * d) * rad;       // Argument der Breite
+  const lam = L + 6.289 * rad * Math.sin(M);
+  const bet = 5.128 * rad * Math.sin(F);
+  const e = 23.4397 * rad;
+  const dec = Math.asin(Math.sin(bet) * Math.cos(e) + Math.cos(bet) * Math.sin(e) * Math.sin(lam));
+  const ra = Math.atan2(Math.sin(lam) * Math.cos(e) - Math.tan(bet) * Math.sin(e), Math.cos(lam));
+  const gmst = (18.697374558 + 24.06570982441908 * d) % 24;
+  const H = ((gmst * 15 + lon) % 360) * rad - ra;
+  const la = lat * rad;
+  return Math.asin(Math.sin(la) * Math.sin(dec) + Math.cos(la) * Math.cos(dec) * Math.cos(H)) / rad;
+}
+
+/** Auf- und Untergang des Mondes für den laufenden Tag. */
+function moonTimes(day, lat, lon) {
+  const start = new Date(day); start.setHours(0, 0, 0, 0);
+  let auf = null, unter = null;
+  let vorher = moonAltitude(new Date(start.getTime()), lat, lon);
+  for (let m = 5; m <= 1440; m += 5) {
+    const t = new Date(start.getTime() + m * 60000);
+    const jetzt = moonAltitude(t, lat, lon);
+    if (!auf && vorher < 0 && jetzt >= 0) auf = t;
+    if (!unter && vorher > 0 && jetzt <= 0) unter = t;
+    vorher = jetzt;
+  }
+  return { auf, unter };
 }
 
 const DIRS = ['N', 'NNO', 'NO', 'ONO', 'O', 'OSO', 'SO', 'SSO', 'S', 'SSW', 'SW', 'WSW', 'W', 'WNW', 'NW', 'NNW'];
@@ -844,9 +949,28 @@ function renderTiles(air) {
     </div>
   </div>`);
 
+  // Mond
+  const mp = moonPhase();
+  const mt = moonTimes(new Date(), place.lat, place.lon);
+  const bel = Math.round(mp.beleuchtet * 100);
+  // Schattenkante: bei zunehmendem Mond von links, bei abnehmendem von rechts
+  const zunehmend = mp.anteil < 0.5;
+  const versatz = (1 - Math.abs(mp.beleuchtet * 2 - 1)) * 100;
+  out.push(`<div class="tile">
+    <span class="t-label">Mond</span>
+    <div class="moon-row">
+      <span class="moon-disc">
+        <span class="moon-shadow" style="
+          transform: translateX(${(zunehmend ? -1 : 1) * (100 - versatz) * 0.42}%);
+          opacity:${bel > 96 ? 0 : 1}"></span>
+      </span>
+      <span class="moon-val"><b>${bel}%</b><i>beleuchtet</i></span>
+    </div>
+    <span class="t-sub">${mp.name}${mt.auf ? ` · ↑ ${hhmm(mt.auf)}` : ''}${mt.unter ? ` ↓ ${hhmm(mt.unter)}` : ''}</span>
+  </div>`);
+
   // Luftdruck
-  const pTrend = h.time && data.hourly.temperature_2m ? '' : '';
-  out.push(tile('Luftdruck', round(c.pressure_msl), 'hPa auf Meereshöhe', pTrend));
+  out.push(tile('Luftdruck', round(c.pressure_msl), 'hPa auf Meereshöhe'));
 
   // Sicht
   const vis = h.visibility?.[i];
@@ -964,8 +1088,8 @@ function renderSky() {
 const CAM_PRESETS = [
   { name: 'Tübingen · Neckarfront', page: 'https://www.tuebingen-info.de/de/webcam',
     hint: 'Blick von der Touristinformation auf Neckarbrücke und Stiftskirche' },
-  { name: 'Rottenburg · Marktplatz', page: 'https://www.rottenburg.de/webcam.11.htm',
-    hint: 'Marktplatz und Eugen-Bolz-Platz' },
+  { name: 'Region · Kachelmann', page: 'https://kachelmannwetter.com/de/webcams/tuebingen',
+    hint: 'Kameras im Umkreis, mit Zeitraffer' },
   { name: 'Reutlingen', page: 'https://www.reutlingen.de/webcam',
     hint: 'Stadtmitte' },
   { name: 'Region · Übersicht', page: 'https://www.wetteronline.de/webcam/tuebingen',
@@ -1241,7 +1365,33 @@ async function boot() {
     $('#map').innerHTML = '<p class="empty">Radardaten gerade nicht erreichbar.</p>';
   }
 
+  startClock();
   registerWorker();
+}
+
+/** Sekundengenaue Uhr, einmal gegen die Serverzeit abgeglichen — die Gerätezeit
+    kann abweichen, und bei Radarbildern zählt die Minute. */
+function startClock() {
+  const el = $('#footClock');
+  if (!el) return;
+  let versatz = 0;
+
+  fetch('./manifest.webmanifest', { method: 'HEAD', cache: 'no-store' })
+    .then(res => {
+      const serverzeit = res.headers.get('date');
+      if (serverzeit) versatz = new Date(serverzeit).getTime() - Date.now();
+    })
+    .catch(() => {});
+
+  const tick = () => {
+    const t = new Date(Date.now() + versatz);
+    el.innerHTML = `<b>${t.toLocaleTimeString('de-DE')}</b> Uhr` +
+      (Math.abs(versatz) > 30000
+        ? ` · Gerät geht ${versatz > 0 ? 'nach' : 'vor'} (${Math.abs(Math.round(versatz / 1000))} s)`
+        : '');
+  };
+  tick();
+  setInterval(tick, 1000);
 }
 
 /** Der Service Worker liefert die Programmhülle. Kommt eine neue Fassung,

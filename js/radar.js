@@ -8,7 +8,8 @@ const Radar = (() => {
 
   const API   = 'https://api.rainviewer.com/public/weather-maps.json';
   const STYLE = 'https://tiles.openfreemap.org/styles/liberty';
-  const COLOR = 4;          // Farbschema "The Weather Channel"
+  const COLOR = 8;          // kräftiges Schema — leichte und starke Zellen klar
+                            // unterscheidbar, wichtiger als dezente Optik
   const OPTS  = '1_1';      // geglättet, mit Schnee
   const TILE  = 256;
 
@@ -74,7 +75,10 @@ const Radar = (() => {
     map.addSource('dwd', { type: 'raster', tiles: [wms], tileSize: 512 });
     map.addLayer({
       id: 'dwd-layer', type: 'raster', source: 'dwd',
-      paint: { 'raster-opacity': 0, 'raster-opacity-transition': { duration: 220 } }
+      paint: {
+        'raster-opacity': 0, 'raster-opacity-transition': { duration: 220 },
+        'raster-saturation': 0.6, 'raster-contrast': 0.3
+      }
     });
   }
 
@@ -169,7 +173,13 @@ const Radar = (() => {
       });
       map.addLayer({
         id: layerId(i), type: 'raster', source: sourceId(i),
-        paint: { 'raster-opacity': 0, 'raster-opacity-transition': { duration: 0 } }
+        paint: {
+          'raster-opacity': 0, 'raster-opacity-transition': { duration: 0 },
+          // Schwacher Regen kommt sonst fast farblos an — so bleibt der
+          // Unterschied zwischen leicht und stark erkennbar.
+          'raster-saturation': 0.75,
+          'raster-contrast': 0.35
+        }
       }, 'here-halo');
     });
     show(idx);

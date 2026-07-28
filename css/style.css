@@ -634,8 +634,8 @@ select#bfModel {
 
 .drow {
   display: grid; align-items: center;
-  grid-template-columns: 44px 34px 52px 34px 1fr 34px;
-  gap: 7px; padding: 5px 0;
+  grid-template-columns: 40px 30px 74px 30px 1fr 32px;
+  gap: 6px; padding: 5px 0;
 }
 .drow + .drow { border-top: 1px solid rgba(255,255,255,.055); }
 .drow.is-today .d-day { color: var(--ink); font-weight: 700; }
@@ -643,9 +643,9 @@ select#bfModel {
 .d-day { font-size: 14.5px; font-weight: 500; color: var(--ink-dim); }
 .d-icon { height: 30px; }
 .d-icon .wx { width: 30px; height: 30px; }
-.d-rain { display: grid; line-height: 1.15; }
-.d-rain b { font-size: 12px; font-weight: 600; color: var(--accent); }
-.d-rain i { font-style: normal; font-size: 10px; color: var(--ink-faint); }
+.d-rain { display: grid; gap: 1px; line-height: 1.2; }
+.d-sunval  { font-size: 10.5px; color: #ffd07a; opacity: .9; white-space: nowrap; }
+.d-rainval { font-size: 10.5px; color: var(--accent); white-space: nowrap; }
 .d-min { font-size: 14.5px; color: var(--ink-faint); text-align: right; }
 .d-max { font-size: 14.5px; font-weight: 500; text-align: right; }
 
@@ -1084,3 +1084,54 @@ body.loading .hero-temp, body.loading .hero-desc { opacity: .45; }
 .sky-view.ok  { color: var(--good); border-color: rgba(79,212,138,.35); }
 .sky-view.mid { color: var(--warn); border-color: rgba(255,179,64,.35); }
 .sky-view.bad { color: var(--bad);  border-color: rgba(255,107,94,.32); }
+
+/* ── Regler-Skala und Hinweise ────────────────────────────── */
+.slider-scale {
+  display: flex; justify-content: space-between;
+  font-size: 9.5px; color: var(--ink-faint); margin-top: 14px;
+  padding: 0 2px;
+}
+.scrub-hint { font-size: 10.5px; color: var(--ink-faint); margin-top: 12px; line-height: 1.45; }
+
+/* ── Werte am Modelldiagramm ──────────────────────────────── */
+.model-chart { position: relative; }
+.mcursor { stroke: rgba(255,255,255,.5); stroke-width: 1; stroke-dasharray: 3 3; opacity: 0; }
+
+.mread {
+  position: absolute; left: 50%; top: 4px; transform: translateX(-50%);
+  display: none; align-items: center; gap: 10px; flex-wrap: wrap; justify-content: center;
+  padding: 7px 12px; border-radius: 30px;
+  background: rgba(12, 20, 32, .93); border: 1px solid var(--card-line);
+  backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px);
+  font-size: 11px; pointer-events: none; white-space: nowrap;
+  box-shadow: 0 4px 16px rgba(0,0,0,.4);
+}
+.mread.on { display: flex; }
+.mr-time { font-weight: 700; color: var(--ink); }
+.mr-vals { display: flex; gap: 8px; }
+.mr-vals span { display: inline-flex; align-items: center; gap: 4px; color: var(--ink-dim); }
+.mr-vals i { width: 8px; height: 8px; border-radius: 50%; flex: none; }
+.mr-spread { color: var(--ink-faint); }
+
+/* ── Mond ─────────────────────────────────────────────────── */
+.moon-row { display: flex; align-items: center; gap: 12px; margin: 2px 0 4px; }
+.moon-disc {
+  position: relative; width: 44px; height: 44px; flex: none;
+  border-radius: 50%; overflow: hidden;
+  background: radial-gradient(circle at 36% 32%, #fdfbf3, #d9dee8 62%, #aeb6c4);
+  box-shadow: 0 0 14px rgba(230,238,255,.28);
+}
+.moon-shadow {
+  position: absolute; inset: -2px; border-radius: 50%;
+  background: #131c2b; transition: transform .6s ease, opacity .4s ease;
+}
+.moon-val { display: flex; flex-direction: column; }
+.moon-val b { font-size: 25px; font-weight: 300; letter-spacing: -.02em; }
+.moon-val i { font-style: normal; font-size: 11px; color: var(--ink-faint); }
+
+/* ── Uhr in der Fußzeile ──────────────────────────────────── */
+.foot-clock {
+  font-variant-numeric: tabular-nums; letter-spacing: .04em;
+  color: var(--ink-dim);
+}
+.foot-clock b { color: var(--ink); font-weight: 600; }
