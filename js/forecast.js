@@ -55,7 +55,13 @@ async function load(lat, lon, zoom = 7) {
   } catch {}
 
   if (!data) {
-    const res = await fetch(url);
+    let res = await fetch(url);
+    // Steckt der eigene Anschluss im Abruflimit, über den Worker gehen
+    if (res.status === 429) {
+      const proxy = (localStorage.getItem('wf.proxy') || '').replace(/^"|"$/g, '')
+        || 'https://wetterfunk.florian-s-thiel.workers.dev';
+      res = await fetch(`${proxy.replace(/\/+$/, '')}/wetter?url=${encodeURIComponent(url)}`);
+    }
     if (!res.ok) throw new Error(`Raster ${res.status}`);
     data = await res.json();
     try { sessionStorage.setItem(key, JSON.stringify({ t: Date.now(), d: data })); } catch {}

@@ -109,6 +109,29 @@ export default {
       }
     }
 
+    /* ── Wetterdaten über den Worker holen ────────────────────
+       Open-Meteo begrenzt die Abrufe pro IP. Sitzen mehrere Geräte hinter
+       demselben Anschluss oder wurde viel getestet, greift das Limit für
+       alle. Dieser Umweg zählt auf die Adresse von Cloudflare und wird nur
+       genutzt, wenn der direkte Weg blockt. */
+    if (url.pathname === '/wetter') {
+      const ziel = url.searchParams.get('url');
+      let t;
+      try { t = new URL(ziel); } catch { return json({ error: 'Ungültige Adresse' }, 400, origin); }
+      if (t.protocol !== 'https:' || !/(^|\.)open-meteo\.com$/.test(t.hostname)) {
+        return json({ error: 'Nur Open-Meteo erlaubt' }, 403, origin);
+      }
+
+      const res = await fetch(t.toString(), { cf: { cacheTtl: 300, cacheEverything: true } });
+      return new Response(await res.text(), {
+        status: res.status,
+        headers: {
+          ...cors(origin), 'content-type': 'application/json',
+          'cache-control': 'public, max-age=300'
+        }
+      });
+    }
+
     // ── Regenwarnungen: an- und abmelden ─────────────────────
     if (url.pathname === '/push/key') {
       return json({ key: env.VAPID_PUBLIC }, 200, origin);

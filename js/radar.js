@@ -120,7 +120,8 @@ const Radar = (() => {
           type: 'Feature',
           geometry: { type: 'Point', coordinates: [p.lon, p.lat] },
           properties: {
-            t: nass ? `${mm < 1 ? mm.toFixed(1) : Math.round(mm)} mm` : `${Math.round(p.wert)}°`,
+            t: nass ? `${(mm < 1 ? mm.toFixed(1) : String(Math.round(mm))).replace('.', ',')} mm`
+                    : `${Math.round(p.wert)}°`,
             nass: nass ? 1 : 0,
             mm, grad: Math.round(p.wert), stunde: h
           }

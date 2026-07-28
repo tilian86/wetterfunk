@@ -115,18 +115,30 @@ async function fetchCached(url, minuten = CACHE_MIN) {
   try { alt = JSON.parse(sessionStorage.getItem(key) || 'null'); } catch {}
   if (alt && Date.now() - alt.t < minuten * 60000) return alt.d;
 
-  try {
-    const d = await fetchJSON(url);
+  const merken = (d) => {
     try { sessionStorage.setItem(key, JSON.stringify({ t: Date.now(), d })); } catch {}
     return d;
+  };
+
+  try {
+    return merken(await fetchJSON(url, undefined, 1));
   } catch (e) {
+    /* Das Abruflimit gilt pro Anschluss. Steckt der eigene fest, hilft der
+       Umweg über den eigenen Worker — der zählt auf eine andere Adresse. */
+    if (/429/.test(e.message)) {
+      try {
+        const d = await fetchJSON(`${pushProxy()}/wetter?url=${encodeURIComponent(url)}`);
+        umweg = true;
+        return merken(d);
+      } catch {}
+    }
     // Lieber etwas ältere Daten zeigen als gar keine
     if (alt) { veraltet = true; return alt.d; }
     throw e;
   }
 }
 
-let veraltet = false;
+let veraltet = false, umweg = false;
 
 function loadForecast(lat, lon) {
   const src = sourceId();
@@ -1797,10 +1809,10 @@ async function refresh() {
     $('#footStamp').textContent =
       `Zuletzt aktualisiert: ${new Date().toLocaleTimeString('de-DE')} · ` +
       `Quelle: ${sourceOf(sourceId()).name}` +
-      (veraltet ? ' · aus dem Zwischenspeicher' : '');
+      (veraltet ? ' · aus dem Zwischenspeicher' : umweg ? ' · über den Umweg geholt' : '');
     toast(veraltet ? 'Der Wetterdienst antwortet gerade nicht — Daten aus dem Zwischenspeicher.'
                    : 'Aktualisiert.', veraltet ? 4000 : 1400);
-    veraltet = false;
+    veraltet = false; umweg = false;
     document.body.classList.remove('loading', 'error');
   } catch (err) {
     console.error(err);
