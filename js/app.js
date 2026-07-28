@@ -140,7 +140,7 @@ async function fetchCached(url, minuten = CACHE_MIN) {
   }
 }
 
-let veraltet = false, umweg = false;
+let veraltet = false, umweg = false, standAlt = null;
 
 function loadForecast(lat, lon) {
   const src = sourceId();
@@ -1544,13 +1544,13 @@ function sonnenDetails() {
   box.innerHTML = `
     <dl class="ds-facts" style="margin-top:14px">
       <dt>Gerade</dt><dd>${winkel > -0.833
-        ? `${winkel.toFixed(1)}° über dem Horizont<i>${winkelWort(winkel)}</i>`
-        : `${winkel.toFixed(1)}° — unter dem Horizont`}</dd>
+        ? `${dez(winkel)}° über dem Horizont<i>${winkelWort(winkel)}</i>`
+        : `${dez(winkel)}° — unter dem Horizont`}</dd>
       ${schatten ? `<dt>Dein Schatten</dt><dd>${schatten} m bei 1,80 m Körpergröße</dd>` : ''}
       ${winkel > 0 ? `<dt>Strahlungskraft</dt><dd>${kraft} % der Kraft, die bei senkrechtem
         Stand ankäme<i>${kraft > 80 ? 'fast voll — Sonnenschutz sinnvoll'
         : kraft > 50 ? 'kräftig' : kraft > 20 ? 'mäßig' : 'schwach'}</i></dd>` : ''}
-      <dt>Heute höchstens</dt><dd>${hoch.toFixed(1)}° um ${hhmm(mittag)} Uhr</dd>
+      <dt>Heute höchstens</dt><dd>${dez(hoch)}° um ${hhmm(mittag)} Uhr</dd>
       <dt>Im Jahreslauf</dt><dd>${sommer}° zur Sonnenwende im Juni,
         nur ${winter}° im Dezember</dd>
     </dl>
@@ -2308,14 +2308,32 @@ async function refresh() {
   renderPush();
 
   try {
-    const [fc, aq, md, warn] = await Promise.all([
-      loadForecast(place.lat, place.lon),
-      loadAir(place.lat, place.lon),
-      loadModels(place.lat, place.lon),
-      loadWarnings()
-    ]);
+    let [fc, aq, md, warn] = [null, null, null, null];
+    try {
+      [fc, aq, md, warn] = await Promise.all([
+        loadForecast(place.lat, place.lon),
+        loadAir(place.lat, place.lon),
+        loadModels(place.lat, place.lon),
+        loadWarnings()
+      ]);
+    } catch (e) {
+      /* Lieber die letzten bekannten Zahlen zeigen als eine leere App. Beim
+         Abruflimit oder ohne Netz stand sonst gar nichts da, obwohl die
+         Vorhersage von vorhin noch im Speicher liegt. */
+      const alt = store.get(LS.cache, null);
+      const passt = alt?.data && Math.abs((alt.place?.lat ?? 99) - place.lat) < 0.2
+                              && Math.abs((alt.place?.lon ?? 99) - place.lon) < 0.2;
+      if (!passt) throw e;
+      fc = alt.data;
+      veraltet = true;
+      standAlt = alt.at;
+      warn = await loadWarnings().catch(() => null);
+      console.warn('Frische Daten nicht erreichbar, zeige Stand von',
+        new Date(alt.at).toLocaleTimeString('de-DE'));
+    }
+
     data = fc; air = aq; modelData = md;
-    store.set(LS.cache, { at: Date.now(), place, data: fc });
+    if (!veraltet) store.set(LS.cache, { at: Date.now(), place, data: fc });
 
     renderHero();
     renderDayProgress();
@@ -2340,14 +2358,16 @@ async function refresh() {
         .catch(e => console.warn('Radar:', e));
     }
 
+    // Bei alten Daten den echten Stand zeigen, nicht die Uhrzeit des Versuchs
+    const standZeitpunkt = veraltet && standAlt ? standAlt : Date.now();
     $('#footStamp').textContent =
-      `Zuletzt aktualisiert: ${new Date().toLocaleTimeString('de-DE')} · ` +
+      `Zuletzt aktualisiert: ${new Date(standZeitpunkt).toLocaleTimeString('de-DE')} · ` +
       `Quelle: ${sourceOf(sourceId()).name}` +
       (veraltet ? ' · aus dem Zwischenspeicher' : umweg ? ' · über den Umweg geholt' : '');
-    setzeStand(Date.now());
-    toast(veraltet ? 'Der Wetterdienst antwortet gerade nicht — Daten aus dem Zwischenspeicher.'
-                   : 'Aktualisiert.', veraltet ? 4000 : 1400);
-    veraltet = false; umweg = false;
+    setzeStand(standZeitpunkt);
+    toast(veraltet ? 'Der Wetterdienst antwortet gerade nicht — angezeigt werden die zuletzt geholten Daten.'
+                   : 'Aktualisiert.', veraltet ? 4500 : 1400);
+    veraltet = false; umweg = false; standAlt = null;
     document.body.classList.remove('loading', 'error');
   } catch (err) {
     console.error(err);
