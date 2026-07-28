@@ -1515,11 +1515,52 @@ function openExplain(key) {
   $('#explainTitle').textContent = e.titel;
   $('#explainText').textContent = e.text;
   if (key === 'mond') mondDetails();
+  if (key === 'sonne') sonnenDetails();
   const l = $('#explainLink');
   if (e.link) {
     l.href = e.link.url; l.textContent = `${e.link.text} öffnen →`; l.hidden = false;
   } else l.hidden = true;
   openSheet('#explainSheet');
+}
+
+/** Was der Einstrahlwinkel bedeutet — Schatten, Kraft, Jahreszeit. */
+function sonnenDetails() {
+  const jetzt = new Date();
+  const winkel = sunAltitude(jetzt, place.lat, place.lon);
+  const { zeit: mittag, hoehe: hoch } = solarNoon(jetzt, place.lat, place.lon);
+
+  // Schattenlänge eines 1,80-m-Menschen: Körpergröße geteilt durch Tangens
+  const schatten = winkel > 1
+    ? (1.8 / Math.tan(winkel * Math.PI / 180)).toFixed(1).replace('.', ',')
+    : null;
+  // Die Strahlung fällt mit dem Sinus des Winkels — bei 30° nur die Hälfte
+  const kraft = winkel > 0 ? Math.round(Math.sin(winkel * Math.PI / 180) * 100) : 0;
+
+  // Höchststände zu den Wendepunkten: 90 − Breite ± 23,44°
+  const sommer = (90 - Math.abs(place.lat) + 23.44).toFixed(0);
+  const winter = (90 - Math.abs(place.lat) - 23.44).toFixed(0);
+
+  const box = document.createElement('div');
+  box.innerHTML = `
+    <dl class="ds-facts" style="margin-top:14px">
+      <dt>Gerade</dt><dd>${winkel > -0.833
+        ? `${winkel.toFixed(1)}° über dem Horizont<i>${winkelWort(winkel)}</i>`
+        : `${winkel.toFixed(1)}° — unter dem Horizont`}</dd>
+      ${schatten ? `<dt>Dein Schatten</dt><dd>${schatten} m bei 1,80 m Körpergröße</dd>` : ''}
+      ${winkel > 0 ? `<dt>Strahlungskraft</dt><dd>${kraft} % der Kraft, die bei senkrechtem
+        Stand ankäme<i>${kraft > 80 ? 'fast voll — Sonnenschutz sinnvoll'
+        : kraft > 50 ? 'kräftig' : kraft > 20 ? 'mäßig' : 'schwach'}</i></dd>` : ''}
+      <dt>Heute höchstens</dt><dd>${hoch.toFixed(1)}° um ${hhmm(mittag)} Uhr</dd>
+      <dt>Im Jahreslauf</dt><dd>${sommer}° zur Sonnenwende im Juni,
+        nur ${winter}° im Dezember</dd>
+    </dl>
+    <p class="ds-note">Der Winkel entscheidet über fast alles: Steht die Sonne tief, verteilt
+      sich dieselbe Energie auf eine größere Fläche und der Weg durch die Luftschichten ist
+      länger — deshalb ist Morgenlicht warm und mild, Mittagslicht hart und heiß.
+      Bei ${winkel > 0 ? winkel.toFixed(0) : 0}° kommt gerade ${kraft} % der
+      Strahlung an, die bei senkrechtem Einfall ankäme.</p>`;
+
+  $('#explainText').appendChild(box);
 }
 
 /** Termine und Kennzahlen zum Mond unter die Erklärung hängen. */
@@ -1760,9 +1801,12 @@ function renderTiles(air) {
   const sunH = Math.floor((d.sunshine_duration?.[0] ?? 0) / 3600);
   const minutenTag = Math.round((ss - sr) / 60000);
   const dayLen = `${Math.floor(minutenTag / 60)} Std. ${minutenTag % 60} Min.`;
-  // Höchststand: wichtig für Schatten, UV und Fotografie
-  const mittag = solarNoon(new Date(), place.lat, place.lon);
-  const hoechststand = sunAltitude(mittag, place.lat, place.lon);
+  // Höchststand: wichtig für Schatten, UV und Fotografie.
+  // solarNoon liefert { zeit, hoehe } — nicht das Datum selbst.
+  const mittagInfo = solarNoon(new Date(), place.lat, place.lon);
+  const mittag = mittagInfo.zeit;
+  const hoechststand = mittagInfo.hoehe;
+  const jetztWinkel = sunAltitude(new Date(), place.lat, place.lon);
   out.push(`<div class="tile t-wide has-info" data-info="sonne" role="button" tabindex="0">
     <span class="t-label">Sonne<i class="t-q">?</i></span>
     <div class="sun-arc">
@@ -1784,6 +1828,9 @@ function renderTiles(air) {
         <span>↓ ${hhmm(ss)}</span>
       </div>
     </div>
+    <span class="t-jetztwinkel">${jetztWinkel > -0.833
+      ? `Jetzt <b>${jetztWinkel.toFixed(0)}°</b> über dem Horizont — ${winkelWort(jetztWinkel)}`
+      : `Sonne unter dem Horizont (<b>${jetztWinkel.toFixed(0)}°</b>)`}</span>
     <span class="t-sub">${sunH} Std. Sonnenschein erwartet · Tag ${dayLen}</span>
   </div>`);
 
@@ -2498,6 +2545,21 @@ async function installAnstossen() {
   installEreignis = null;
   if (outcome === 'accepted') $('#installCard').hidden = true;
   else toast('Kannst du jederzeit später machen.');
+}
+
+/* Was der Sonnenstand im Alltag bedeutet. Die Schattenlänge folgt dem
+   Kotangens: bei 45° genau die Körpergröße, bei 27° das Doppelte,
+   bei 18° das Dreifache. Die Stufen sind danach gesetzt, damit Wort und
+   Zahl in der Erklärung nicht auseinanderlaufen. */
+function winkelWort(grad) {
+  if (grad < 6)  return 'sehr flach, Schatten zehnfach und länger';
+  if (grad < 11) return 'flach, Schatten etwa fünfmal so lang wie du';
+  if (grad < 18) return 'tief, Schatten drei- bis viermal so lang wie du';
+  if (grad < 27) return 'schräg, Schatten gut doppelt so lang wie du';
+  if (grad < 40) return 'mittelhoch, Schatten anderthalbmal so lang wie du';
+  if (grad < 52) return 'hoch, Schatten etwa so lang wie du';
+  if (grad < 65) return 'steil, Schatten kürzer als du';
+  return 'sehr steil, kaum Schatten';
 }
 
 /** Wettercode zu Zeichen — für das Teilen-Bild, wo kein SVG passt. */

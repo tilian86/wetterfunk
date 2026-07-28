@@ -1068,6 +1068,11 @@ select#bfModel {
 .arc-noon { stroke: rgba(255,224,138,.35); stroke-width: 1; stroke-dasharray: 2.5 2.5; }
 .arc-noon-dot { fill: #ffe08a; opacity: .8; }
 .arc-mittag { color: #ffd98a; display: flex; align-items: baseline; gap: 4px; }
+/* Aktueller Einstrahlwinkel unter dem Bogen */
+.t-jetztwinkel {
+  display: block; margin-top: 9px; font-size: 12px; color: var(--ink-dim);
+}
+.t-jetztwinkel b { color: #ffd98a; font-weight: 600; }
 .arc-mittag i { font-style: normal; font-size: 9px; opacity: .75; }
 
 /* Hinweis, wann man für den Sonnenuntergang losgehen sollte */
