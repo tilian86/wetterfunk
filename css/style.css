@@ -1157,6 +1157,14 @@ select#bfModel {
 }
 .fa-text { font-size: 12.5px; color: var(--ink-dim); }
 .fa-text b { color: var(--ink); font-weight: 600; }
+.foot-links { display: flex; justify-content: center; gap: 10px; margin-top: 10px; }
+.foot-link {
+  background: none; border: 0; padding: 4px 2px;
+  color: var(--ink-dim); font: 500 11.5px var(--font);
+  text-decoration: underline; text-underline-offset: 3px; cursor: pointer;
+}
+.foot-link:active { opacity: .6; }
+
 .foot-privacy { margin-top: 5px; }
 .foot-stamp { margin-top: 7px; opacity: .72; }
 
@@ -1407,6 +1415,42 @@ body.loading .hero-temp, body.loading .hero-desc { opacity: .45; }
   .scrub-hint  { grid-column: 1 / -1; }
 
   .model-chart .mchart { height: 220px; }
+
+  /* Der Tagesfortschritt und die Uhr gehören zusammen und dürfen
+     nebeneinander stehen, statt zwei Zeilen zu verbrauchen. */
+  .day-progress { grid-column: 1 / -1; }
+  .topclock { grid-column: 1 / -1; }
+}
+
+/* Sehr breite Schirme: drei Spalten. Zweispaltig blieb rechts viel Luft,
+   und die Seite wurde unnötig lang. */
+@media (min-width: 1500px) {
+  body { max-width: 1720px; }
+  #app { grid-template-columns: repeat(3, 1fr); }
+
+  /* Über die volle Breite bleiben nur die Dinge, die Breite brauchen */
+  .hero, .verdict, .warnings, .card-radar, .tiles, .foot { grid-column: 1 / -1; }
+
+  .radar-wrap { height: 560px; }
+  .tiles { grid-template-columns: repeat(6, 1fr); }
+  .cams { grid-template-columns: repeat(2, 1fr); }
+
+  /* Karte und Zeitstrahl nebeneinander: die Karte links groß,
+     Regler und Ablesewerte rechts daneben */
+  .card-radar {
+    display: grid; grid-template-columns: 1fr minmax(300px, 380px);
+    gap: 0 24px; align-items: start;
+  }
+  .card-radar .card-head { grid-column: 1 / -1; }
+  .card-radar .layer-pick { grid-column: 1 / -1; }
+  .card-radar .radar-wrap { grid-column: 1; grid-row: 3 / span 7; }
+  .card-radar .zeit-ctrl,
+  .card-radar .slider-wrap,
+  .card-radar .scrub-strip,
+  .card-radar .slider-scale,
+  .card-radar .scrub-read,
+  .card-radar .radar-hint { grid-column: 2; }
+  .card-radar .zeit-ctrl { margin-top: 0; }
 }
 
 @media (min-width: 1400px) {

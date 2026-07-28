@@ -13,10 +13,10 @@
 <meta name="theme-color" content="#0b1220">
 <link rel="apple-touch-icon" href="icons/icon-180.png">
 <link rel="icon" href="icons/icon-192.png">
-<link rel="manifest" href="manifest.webmanifest?v=50">
+<link rel="manifest" href="manifest.webmanifest?v=51">
 
-<link rel="stylesheet" href="vendor/maplibre-gl.css?v=50">
-<link rel="stylesheet" href="css/style.css?v=50">
+<link rel="stylesheet" href="vendor/maplibre-gl.css?v=51">
+<link rel="stylesheet" href="css/style.css?v=51">
 </head>
 <body>
 
@@ -51,6 +51,9 @@
   </button>
   <!-- Stand der Daten direkt am Aktualisieren-Knopf: Beim Wetter zählt,
        wie alt die Zahlen sind. -->
+  <button class="icon-btn" id="shareBtn" aria-label="Wetter teilen">
+    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v13"/><path d="M8.5 6.5 12 3l3.5 3.5"/><path d="M6 12v7.5h12V12"/></svg>
+  </button>
   <span class="refresh-wrap">
     <button class="icon-btn" id="refreshBtn" aria-label="Aktualisieren">
       <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 11a8 8 0 1 0-.6 4"/><path d="M20 4v7h-7"/></svg>
@@ -329,9 +332,15 @@
       <span class="fa-mark">FT</span>
       <span class="fa-text">Wetterfunk — gebaut von <b>Florian S. Thiel</b></span>
     </p>
-    <p>Daten: <b>Open-Meteo</b> (DWD ICON-D2, ECMWF, GFS) · Radar: <b>RainViewer</b> ·
-      Warnungen: <b>DWD</b> · Karte: <b>OpenFreeMap</b> / <b>OpenStreetMap</b></p>
+    <p>Daten: <b>Open-Meteo</b> (DWD ICON-D2, ECMWF, GFS) · Messwerte: <b>DWD</b> über
+      <b>Bright Sky</b> · Radar: <b>RainViewer</b> · Warnungen und Berichte: <b>DWD</b> ·
+      Karte: <b>OpenFreeMap</b> / <b>OpenStreetMap</b></p>
     <p class="foot-privacy">Keine Tracker, keine Cookies, keine Konten. Standort bleibt auf dem Gerät.</p>
+    <p class="foot-links">
+      <button class="foot-link" id="impressumBtn">Impressum</button>
+      <span aria-hidden="true">·</span>
+      <button class="foot-link" id="datenschutzBtn">Datenschutz</button>
+    </p>
     <p class="foot-clock" id="footClock"></p>
     <p class="foot-stamp" id="footStamp"></p>
   </footer>
@@ -458,12 +467,12 @@
 
 <div class="toast" id="toast" hidden></div>
 
-<script src="vendor/maplibre-gl.js?v=50"></script>
-<script src="js/icons.js?v=50"></script>
-<script src="js/radar.js?v=50"></script>
-<script src="js/forecast.js?v=50"></script>
-<script src="js/briefing.js?v=50"></script>
-<script src="js/news.js?v=50"></script>
-<script src="js/app.js?v=50"></script>
+<script src="vendor/maplibre-gl.js?v=51"></script>
+<script src="js/icons.js?v=51"></script>
+<script src="js/radar.js?v=51"></script>
+<script src="js/forecast.js?v=51"></script>
+<script src="js/briefing.js?v=51"></script>
+<script src="js/news.js?v=51"></script>
+<script src="js/app.js?v=51"></script>
 </body>
 </html>

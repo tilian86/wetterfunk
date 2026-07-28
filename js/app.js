@@ -2458,6 +2458,209 @@ async function installAnstossen() {
   else toast('Kannst du jederzeit später machen.');
 }
 
+/** Wettercode zu Zeichen — für das Teilen-Bild, wo kein SVG passt. */
+function wetterZeichen(code, tag = 1) {
+  if (code === 0) return tag ? '☀️' : '🌙';
+  if (code <= 2) return tag ? '🌤' : '🌙';
+  if (code === 3) return '☁️';
+  if (code <= 48) return '🌫';
+  if (code <= 57) return '🌦';
+  if (code <= 67) return '🌧';
+  if (code <= 77) return '🌨';
+  if (code <= 82) return '🌧';
+  if (code <= 86) return '🌨';
+  return '⛈';
+}
+
+/* ── Wetter teilen ──────────────────────────────────────────
+   Zeichnet eine Karte mit den wichtigsten Werten und teilt sie über das
+   Teilen-Menü des Geräts. Ohne Bild-Unterstützung geht der Text allein raus. */
+async function wetterBild() {
+  const c = data?.current, d = data?.daily;
+  if (!c) return null;
+
+  const B = 1080, H = 1080, s = 2;                 // quadratisch, gut für Nachrichten
+  const cv = document.createElement('canvas');
+  cv.width = B; cv.height = H;
+  const g = cv.getContext('2d');
+
+  // Hintergrund in der Stimmung der App
+  const mood = document.body.dataset.mood || 'clear';
+  const paare = {
+    clear: ['#3a8ee0', '#12325c'], partly: ['#4b83c4', '#16304d'],
+    cloudy: ['#5a6a7d', '#222d3b'], rain: ['#3c5570', '#16222f'],
+    storm: ['#3b3f5c', '#191d2c'], snow: ['#6b7d92', '#26313f'],
+    fog: ['#5b6470', '#242a33'], night: ['#1d3f75', '#0b1220']
+  };
+  const [oben, unten] = paare[mood] || paare.clear;
+  const verlauf = g.createLinearGradient(0, 0, 0, H);
+  verlauf.addColorStop(0, oben); verlauf.addColorStop(1, unten);
+  g.fillStyle = verlauf; g.fillRect(0, 0, B, H);
+
+  const schrift = (px, gew = '400') => `${gew} ${px}px -apple-system, "Segoe UI", Roboto, sans-serif`;
+  g.textAlign = 'center';
+
+  // Ort
+  g.fillStyle = 'rgba(255,255,255,.85)';
+  g.font = schrift(46, '600');
+  g.fillText(place.name, B / 2, 130);
+
+  // Wetterzeichen als Zeichen — ein SVG einzubetten wäre umständlicher
+  g.font = schrift(150);
+  g.fillText(wetterZeichen(c.weather_code, c.is_day), B / 2, 300);
+
+  // Temperatur
+  g.fillStyle = '#fff';
+  g.font = schrift(200, '200');
+  g.fillText(`${round(c.temperature_2m)}°`, B / 2, 480);
+
+  g.fillStyle = 'rgba(255,255,255,.9)';
+  g.font = schrift(52);
+  g.fillText(WX.text(c.weather_code, c.is_day), B / 2, 552);
+
+  g.fillStyle = 'rgba(255,255,255,.7)';
+  g.font = schrift(38);
+  g.fillText(`gefühlt ${round(c.apparent_temperature)}°  ·  ` +
+             `${round(d.temperature_2m_max[0])}° / ${round(d.temperature_2m_min[0])}°`, B / 2, 614);
+
+  // Klartext-Zeile, auf zwei Zeilen umgebrochen
+  const satz = $('#verdict')?.textContent?.trim() || '';
+  if (satz) {
+    g.font = schrift(36);
+    g.fillStyle = 'rgba(255,255,255,.82)';
+    const worte = satz.split(' ');
+    let zeile = '', y = 706;
+    for (const w of worte) {
+      const test = zeile ? `${zeile} ${w}` : w;
+      if (g.measureText(test).width > B - 140 && zeile) {
+        g.fillText(zeile, B / 2, y); y += 50; zeile = w;
+        if (y > 806) break;
+      } else zeile = test;
+    }
+    if (zeile && y <= 806) g.fillText(zeile, B / 2, y);
+  }
+
+  // Die nächsten Stunden als kleine Leiste
+  const h = data.hourly, i0 = nowIndex(h.time);
+  g.font = schrift(30);
+  for (let k = 0; k < 5; k++) {
+    const i = i0 + k * 2;
+    if (i >= h.time.length) break;
+    const x = 140 + k * 200;
+    g.fillStyle = 'rgba(255,255,255,.6)';
+    g.fillText(hhmm(h.time[i]), x, 900);
+    g.fillStyle = '#fff';
+    g.font = schrift(44, '500');
+    g.fillText(`${round(h.temperature_2m[i])}°`, x, 952);
+    g.font = schrift(30);
+  }
+
+  // Fuß
+  g.fillStyle = 'rgba(255,255,255,.55)';
+  g.font = schrift(28);
+  g.fillText('Wetterfunk · wetterfunk von Florian S. Thiel', B / 2, 1030);
+
+  return new Promise(ok => cv.toBlob(ok, 'image/png'));
+}
+
+async function wetterTeilen() {
+  const c = data?.current, d = data?.daily;
+  if (!c) { toast('Noch keine Daten zum Teilen.'); return; }
+
+  const text = `${place.name}: ${round(c.temperature_2m)}°, ${WX.text(c.weather_code, c.is_day)}. ` +
+    `Heute ${round(d.temperature_2m_min[0])}° bis ${round(d.temperature_2m_max[0])}°. ` +
+    ($('#verdict')?.textContent?.trim() || '');
+  const url = location.href.split('#')[0];
+
+  try {
+    const blob = await wetterBild();
+    const datei = blob ? new File([blob], `wetter-${place.name}.png`, { type: 'image/png' }) : null;
+
+    // Erst mit Bild versuchen — nicht jedes Gerät kann Dateien teilen
+    if (datei && navigator.canShare?.({ files: [datei] })) {
+      await navigator.share({ files: [datei], text, title: `Wetter in ${place.name}` });
+      return;
+    }
+    if (navigator.share) {
+      await navigator.share({ title: `Wetter in ${place.name}`, text, url });
+      return;
+    }
+    // Kein Teilen-Menü: Text in die Zwischenablage
+    await navigator.clipboard.writeText(`${text}\n${url}`);
+    toast('In die Zwischenablage kopiert.');
+  } catch (e) {
+    if (e?.name === 'AbortError') return;          // Nutzer hat abgebrochen
+    console.warn('Teilen:', e);
+    try {
+      await navigator.clipboard.writeText(`${text}\n${url}`);
+      toast('In die Zwischenablage kopiert.');
+    } catch { toast('Teilen hat nicht geklappt.'); }
+  }
+}
+
+/* ── Impressum und Datenschutz ──────────────────────────────
+   Die Seite ist öffentlich abrufbar, damit greift die Impressumspflicht
+   nach § 5 DDG. Der Datenschutzhinweis ist kurz, weil es kaum etwas zu
+   erklären gibt: Es werden keine Daten erhoben. */
+function openImpressum() {
+  $('#explainTitle').textContent = 'Impressum';
+  $('#explainText').innerHTML = `
+    <p style="margin:0 0 14px">Angaben gemäß § 5 Digitale-Dienste-Gesetz (DDG).</p>
+    <dl class="ds-facts">
+      <dt>Verantwortlich</dt><dd>Florian S. Thiel</dd>
+      <dt>Anschrift</dt><dd>Kingersheimer Straße 36<br>72070 Tübingen<br>Deutschland</dd>
+      <dt>Kontakt</dt><dd><a href="mailto:florian.s.thiel@gmail.com">florian.s.thiel@gmail.com</a></dd>
+    </dl>
+    <p class="ds-untertitel">Haftung für Inhalte</p>
+    <p class="eh-text">Wetterfunk zeigt Daten des Deutschen Wetterdienstes und weiterer
+      Anbieter. Für die Richtigkeit der Vorhersagen wird keine Gewähr übernommen.
+      Bei Unwetterlagen gelten ausschließlich die amtlichen Warnungen des DWD.</p>
+    <p class="ds-untertitel">Verlinkte Seiten</p>
+    <p class="eh-text">Für die Inhalte verlinkter Seiten (Webcams, Wetterdienste)
+      sind deren Betreiber verantwortlich.</p>`;
+  const l = $('#explainLink');
+  if (l) l.hidden = true;
+  openSheet('#explainSheet');
+}
+
+function openDatenschutz() {
+  $('#explainTitle').textContent = 'Datenschutz';
+  $('#explainText').innerHTML = `
+    <p class="ds-note" style="margin:0 0 15px">Wetterfunk erhebt keine personenbezogenen
+      Daten, setzt keine Cookies und bindet keine Zähl- oder Werbedienste ein.
+      Es gibt kein Konto und keine Anmeldung.</p>
+    <p class="ds-untertitel">Was auf deinem Gerät bleibt</p>
+    <p class="eh-text">Der gewählte Ort, deine Einstellungen und zwischengespeicherte
+      Wetterdaten liegen ausschließlich im Speicher deines Browsers. Sie werden nicht
+      übertragen und verschwinden, wenn du die Websitedaten löschst.</p>
+    <p class="ds-untertitel">Welche Dienste angefragt werden</p>
+    <p class="eh-text">Damit Wetterdaten erscheinen, ruft dein Gerät diese Anbieter
+      direkt auf. Dabei wird technisch bedingt deine IP-Adresse übermittelt —
+      wie bei jedem Aufruf einer Webseite:</p>
+    <dl class="ds-facts">
+      <dt>Open-Meteo</dt><dd>Vorhersagedaten (Schweiz/EU)</dd>
+      <dt>Bright Sky</dt><dd>Messwerte des DWD (Deutschland)</dd>
+      <dt>Deutscher Wetterdienst</dt><dd>Warnungen, Radarbild, Berichte</dd>
+      <dt>RainViewer</dt><dd>Radarbilder</dd>
+      <dt>OpenFreeMap</dt><dd>Kartenmaterial</dd>
+    </dl>
+    <p class="ds-untertitel">Standort</p>
+    <p class="eh-text">Der Standort wird nur abgefragt, wenn du auf den Standortknopf
+      tippst, und nur zur Bestimmung des Wetterortes verwendet. Er wird nicht gespeichert
+      und nicht weitergegeben.</p>
+    <p class="ds-untertitel">Meldungen aufs Gerät</p>
+    <p class="eh-text">Schaltest du Meldungen ein, werden die Abo-Adresse deines Geräts,
+      der gewählte Ort und der Landkreis auf einem Server (Cloudflare) gespeichert —
+      nur, um die Meldungen zuzustellen. Schaltest du sie aus, wird der Eintrag gelöscht.</p>
+    <p class="ds-untertitel">KI-Berichte</p>
+    <p class="eh-text">Lässt du einen Wetterbericht schreiben, gehen die angezeigten
+      Wetterdaten und der Ortsname an das Sprachmodell. Persönliche Angaben sind nicht
+      dabei.</p>`;
+  const l = $('#explainLink');
+  if (l) l.hidden = true;
+  openSheet('#explainSheet');
+}
+
 /* Wer den Sonnenuntergang sehen will, muss vorher da sein: Das schöne Licht
    beginnt mit der goldenen Stunde, und bis zu einem Aussichtspunkt braucht
    man Zeit. Punkt Sonnenuntergang anzukommen heißt, das Beste zu verpassen. */
@@ -3009,6 +3212,9 @@ function wire() {
   });
   $('#installBtn')?.addEventListener('click', installAnstossen);
   $('#radarLegend')?.addEventListener('click', openEbenenHilfe);
+  $('#shareBtn')?.addEventListener('click', wetterTeilen);
+  $('#impressumBtn')?.addEventListener('click', openImpressum);
+  $('#datenschutzBtn')?.addEventListener('click', openDatenschutz);
   renderInstall();
   $('#pushTest')?.addEventListener('click', pushProbe);
   renderPush();
