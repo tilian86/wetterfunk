@@ -7,7 +7,10 @@
 const Radar = (() => {
 
   const API   = 'https://api.rainviewer.com/public/weather-maps.json';
-  const STYLE = 'https://tiles.openfreemap.org/styles/liberty';
+  /* Dunkle Grundkarte: Auf der hellen Version verschwanden Regen- und
+     Wolkenflächen fast vollständig — dieselben Farben, die andere Radar-Apps
+     kräftig zeigen, wirken auf hellgrauem Grund nur wie ein blasser Schleier. */
+  const STYLE = 'https://tiles.openfreemap.org/styles/dark';
   const COLOR = 8;          // kräftiges Schema — leichte und starke Zellen klar
                             // unterscheidbar, wichtiger als dezente Optik
   const OPTS  = '1_1';      // geglättet, mit Schnee
@@ -50,6 +53,7 @@ const Radar = (() => {
       try { map.setProjection({ type: 'globe' }); } catch { /* ältere Fassung */ }
       addDwdLayer();
       addHereMarker();
+      beschriftungAufhellen();
       ready = true;
       if (frames.length) mountLayers();
       ladeDwdBild();
@@ -163,7 +167,7 @@ const Radar = (() => {
         map.addSource('dwd', { type: 'image', url: daten, coordinates: ecken });
         map.addLayer({ id: 'dwd-layer', type: 'raster', source: 'dwd',
           paint: { 'raster-opacity': 0, 'raster-opacity-transition': { duration: 200 } } },
-          'here-halo');
+          unterBeschriftung());
       } else {
         map.getSource('dwd').updateImage({ url: daten, coordinates: ecken });
       }
@@ -256,6 +260,32 @@ const Radar = (() => {
       els.labelsOn?.() ? 'visible' : 'none');
   }
 
+  /** Erste Beschriftungsebene des Kartenstils. Wetterflächen kommen darunter,
+      damit Städtenamen und Straßen lesbar bleiben — sonst verschwindet die
+      Orientierung unter einer geschlossenen Wolkendecke. */
+  function unterBeschriftung() {
+    const ebenen = map.getStyle()?.layers || [];
+    const erste = ebenen.find(l => l.type === 'symbol');
+    return erste ? erste.id : undefined;
+  }
+
+  /** Die Ortsnamen des dunklen Stils sind mittelgrau — über einer grauen
+      Wolkenfläche sind sie nicht mehr zu lesen. Heller Text mit dunklem
+      Rand bleibt auf jedem Untergrund erkennbar. */
+  function beschriftungAufhellen() {
+    const ebenen = map.getStyle()?.layers || [];
+    for (const l of ebenen) {
+      if (l.type !== 'symbol') continue;
+      if (!/place|water_name|state|country/i.test(l.id)) continue;
+      try {
+        map.setPaintProperty(l.id, 'text-color', '#f2f6fb');
+        map.setPaintProperty(l.id, 'text-halo-color', 'rgba(6,10,18,.92)');
+        map.setPaintProperty(l.id, 'text-halo-width', 1.9);
+        map.setPaintProperty(l.id, 'text-halo-blur', 0.3);
+      } catch { /* Ebene ohne Textfarbe */ }
+    }
+  }
+
   /** Standortpunkt als eigene Ebene, damit er auch auf der Kugel klebt. */
   function addHereMarker() {
     if (map.getSource('here')) return;
@@ -336,7 +366,7 @@ const Radar = (() => {
           'raster-saturation': 0.75,
           'raster-contrast': 0.35
         }
-      }, 'here-halo');
+      }, unterBeschriftung());
     });
     show(idx);
   }
@@ -500,7 +530,7 @@ const Radar = (() => {
     if (!map.getSource('fc')) {
       map.addSource('fc', { type: 'image', url, coordinates: ecken });
       map.addLayer({ id: 'fc-layer', type: 'raster', source: 'fc',
-        paint: { 'raster-opacity': 0.88, 'raster-resampling': 'linear' } }, 'here-halo');
+        paint: { 'raster-opacity': 0.95, 'raster-resampling': 'linear' } }, unterBeschriftung());
     } else {
       map.getSource('fc').updateImage({ url, coordinates: ecken });
     }

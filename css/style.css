@@ -528,9 +528,13 @@ select#bfModel {
   backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px);
   font-size: 10px; color: var(--ink-dim);
 }
+/* Stufen wie in rainColor() — harte Kanten statt Verlauf, damit die Legende
+   dieselben Farben zeigt, die auch auf der Karte stehen. */
 .lg-bar {
-  width: 62px; height: 5px; border-radius: 3px;
-  background: linear-gradient(90deg, #3ba7f0, #4fd48a, #ffd426, #ff8c3a, #ff4d4d, #d34dd3);
+  width: 76px; height: 7px; border-radius: 3px;
+  background: linear-gradient(90deg,
+    #5ac8fa 0 14%, #2da5f5 14% 28%, #28d7be 28% 42%, #5ae65a 42% 56%,
+    #fadc28 56% 70%, #ff9628 70% 84%, #f54637 84% 100%);
 }
 
 .radar-locate, .radar-globe {

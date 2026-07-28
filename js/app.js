@@ -925,7 +925,7 @@ function renderLayerPicker() {
     if (!jetzt.size) jetzt.add('regen');            // mindestens eine Ebene
     store.set(LS.layers, [...jetzt]);
     renderLayerPicker();
-    syncMapAt(currentScrubTime());
+    ebenenGeaendert();
   }));
 }
 
@@ -969,15 +969,33 @@ function syncMapAt(ziel) {
     mehr ab. Dann für die neue Mitte nachladen — auch auf dem Globus. */
 let nachladeTimer = null;
 function onMapMoved(mitte, zoom) {
-  if (Forecast.covers(mitte.lat, mitte.lng, zoom)) { Radar.updateLabels?.(); return; }
+  const ebenen = activeLayers();
+  if (Forecast.covers(mitte.lat, mitte.lng, zoom, ebenen)) { Radar.updateLabels?.(); return; }
   clearTimeout(nachladeTimer);
   nachladeTimer = setTimeout(() => {
     const marke = $('#mapMode');
     if (marke) marke.textContent = 'lädt für diese Region…';
-    Forecast.load(mitte.lat, mitte.lng, zoom)
+    Forecast.load(mitte.lat, mitte.lng, zoom, ebenen)
       .then(() => { syncMapAt(currentScrubTime()); Radar.updateLabels?.(); })
       .catch(() => { if (marke) marke.textContent = 'für diese Region keine Daten'; });
   }, 600);
+}
+
+/** Beim Ein- oder Ausschalten einer Ebene fehlen unter Umständen die Werte. */
+function ebenenGeaendert() {
+  const m = Radar.map;
+  if (!m) { syncMapAt(currentScrubTime()); return; }
+  const mitte = m.getCenter(), zoom = m.getZoom();
+  const ebenen = activeLayers();
+  if (Forecast.covers(mitte.lat, mitte.lng, zoom, ebenen)) {
+    syncMapAt(currentScrubTime());
+    return;
+  }
+  const marke = $('#mapMode');
+  if (marke) marke.textContent = 'lädt…';
+  Forecast.load(mitte.lat, mitte.lng, zoom, ebenen)
+    .then(() => syncMapAt(currentScrubTime()))
+    .catch(() => syncMapAt(currentScrubTime()));
 }
 
 // ══ Rendering: Modellvergleich ═════════════════════════════
@@ -2799,7 +2817,7 @@ async function boot() {
 
     // Flächenvorhersage im Hintergrund nachladen — sie deckt die Zeit ab,
     // die das Radar nicht mehr schafft.
-    Forecast.load(place.lat, place.lon)
+    Forecast.load(place.lat, place.lon, Radar.map?.getZoom(), activeLayers())
       .then(() => { if (data) syncMapAt(buildScrubPoints()[+$('#scrubSlider').value || 0]?.t); })
       .catch(e => console.warn('Flächenvorhersage:', e));
   } catch (e) {

@@ -11,20 +11,37 @@ const API = 'https://api.open-meteo.com/v1/forecast';
 // Immer 13×13 Punkte, aber die abgedeckte Fläche richtet sich nach dem Zoom:
 // nah am Ort eng und fein (~20 km), auf der Kugel weit und grob — sonst wäre
 // das Raster dort nur ein Fleck von wenigen Pixeln.
-const N = 13;
+/* 20×20 = 400 Punkte. Mehr geht nicht: Ab etwa 625 Koordinaten lehnt
+   Open-Meteo die Anfrage mit "URI Too Long" ab. Mit 13×13 war das Raster so
+   grob, dass ganze Landstriche eine einzige Farbe hatten. */
+const N = 20;
 const STUFEN = [
-  { abZoom: 5.5, lat: 2.3,  lon: 3.1,  name: 'fein'  },   // ~20 km
-  { abZoom: 3.5, lat: 7.0,  lon: 9.5,  name: 'mittel' },  // ~60 km
-  { abZoom: 0,   lat: 26.0, lon: 34.0, name: 'weit'   }   // ~230 km
+  { abZoom: 6.5, lat: 1.4,  lon: 1.9,  name: 'sehrfein' }, // ~8 km Punktabstand
+  { abZoom: 5.0, lat: 3.0,  lon: 4.2,  name: 'fein'  },    // ~17 km
+  { abZoom: 3.5, lat: 8.0,  lon: 11.0, name: 'mittel' },   // ~45 km
+  { abZoom: 0,   lat: 28.0, lon: 38.0, name: 'weit'   }    // ~160 km
 ];
 const stufeFuer = (zoom) => STUFEN.find(s => zoom >= s.abZoom) || STUFEN[STUFEN.length - 1];
-const CELL = 128;            // Zeichenfläche; wird von der Karte weichgezeichnet
+const CELL = 256;            // Zeichenfläche; wird von der Karte weichgezeichnet
 
 let grid = null;             // { lat0, lon0, dLat, dLon, times, precip, cloud }
 let canvas = null, ctx = null;
 
-/** Raster um den Ort herum laden. `zoom` bestimmt, wie weit es reicht. */
-async function load(lat, lon, zoom = 7) {
+/* Welches Messfeld gehört zu welcher Kartenebene. Regen und Temperatur
+   werden immer geholt: Sie stecken auch in den Zahlen auf der Karte. */
+const FELDER = {
+  regen:      'precipitation',
+  wolken:     'cloud_cover',
+  temperatur: 'temperature_2m',
+  boeen:      'wind_gusts_10m',
+  gewitter:   'cape'
+};
+const PFLICHT = ['precipitation', 'temperature_2m'];
+
+/** Raster um den Ort herum laden. `zoom` bestimmt, wie weit es reicht,
+    `ebenen` welche Messwerte gebraucht werden — 400 Punkte über fünf Tage
+    mit allen Feldern wären zwei Megabyte, das dauert im Mobilfunk zu lang. */
+async function load(lat, lon, zoom = 7, ebenen = null) {
   const stufe = stufeFuer(zoom);
   const SPAN_LAT = stufe.lat, SPAN_LON = stufe.lon;
   const lat0 = lat - SPAN_LAT / 2, lon0 = lon - SPAN_LON / 2;
@@ -38,13 +55,19 @@ async function load(lat, lon, zoom = 7) {
     }
   }
 
+  const gewuenscht = ebenen
+    ? [...new Set([...PFLICHT, ...[...ebenen].map(e => FELDER[e]).filter(Boolean)])]
+    : Object.values(FELDER);
+  // Reihenfolge festhalten, sonst wechselt der Cache-Schlüssel bei gleicher Auswahl
+  const felder = Object.values(FELDER).filter(f => gewuenscht.includes(f));
+
   const p = new URLSearchParams({
     latitude: lats.join(','), longitude: lons.join(','),
-    hourly: 'precipitation,cloud_cover,temperature_2m,wind_gusts_10m,cape',
+    hourly: felder.join(','),
     forecast_days: '5', timezone: 'auto'
   });
 
-  // 169 Punkte auf einmal — die teuerste Anfrage der App. Eine Viertelstunde
+  // 400 Punkte auf einmal — die teuerste Anfrage der App. Eine Viertelstunde
   // vorhalten, sonst läuft man beim Herumschieben ins Abruflimit.
   const url = `${API}?${p}`;
   const key = `wf.fc:${url}`;
@@ -68,16 +91,21 @@ async function load(lat, lon, zoom = 7) {
   }
   if (!Array.isArray(data) || !data.length) throw new Error('Kein Raster erhalten');
 
+  // Nicht angeforderte Felder fehlen in der Antwort — dann leere Reihen,
+  // damit sample() nicht über undefined stolpert.
+  const leer = () => data.map(() => []);
+  const holen = (feld) => (data[0].hourly[feld] ? data.map(d => d.hourly[feld]) : leer());
+
   grid = {
     lat0, lon0, dLat, dLon,
     spanLat: SPAN_LAT, spanLon: SPAN_LON, stufe: stufe.name,
-    mitte: [lat, lon],
+    mitte: [lat, lon], felder,
     times: data[0].hourly.time,
-    precip: data.map(d => d.hourly.precipitation),
-    cloud:  data.map(d => d.hourly.cloud_cover),
-    temp:   data.map(d => d.hourly.temperature_2m),
-    gusts:  data.map(d => d.hourly.wind_gusts_10m),
-    cape:   data.map(d => d.hourly.cape)
+    precip: holen('precipitation'),
+    cloud:  holen('cloud_cover'),
+    temp:   holen('temperature_2m'),
+    gusts:  holen('wind_gusts_10m'),
+    cape:   holen('cape')
   };
 
   if (!canvas) {
@@ -117,16 +145,20 @@ function sample(arr, h, fy, fx) {
   return (a * (1 - tx) + b * tx) * (1 - ty) + (c * (1 - tx) + d * tx) * ty;
 }
 
-/** Farbskala für Niederschlag in mm/h — an das Radar angelehnt. */
+/* Farbskala für Niederschlag in mm/h — an Radarbilder angelehnt, aber
+   deutlich kräftiger als zuvor. Die alten Werte waren so blass, dass auf der
+   Karte kaum zu erkennen war, wo und wie stark es regnet. */
 function rainColor(mm) {
-  if (mm < 0.08) return null;
-  if (mm < 0.3)  return [ 96, 176, 232,  95];
-  if (mm < 0.8)  return [ 60, 200, 170, 130];
-  if (mm < 1.8)  return [110, 210,  90, 150];
-  if (mm < 3.5)  return [255, 212,  38, 170];
-  if (mm < 7)    return [255, 150,  50, 185];
-  if (mm < 14)   return [240,  80,  60, 200];
-  return              [205,  70, 200, 210];
+  if (mm < 0.05) return null;
+  if (mm < 0.2)  return [ 90, 200, 250, 150];   // Nieseln
+  if (mm < 0.5)  return [ 45, 165, 245, 190];
+  if (mm < 1.0)  return [ 40, 215, 190, 215];
+  if (mm < 2.0)  return [ 90, 230,  90, 230];
+  if (mm < 4.0)  return [250, 220,  40, 240];
+  if (mm < 7.0)  return [255, 150,  40, 248];
+  if (mm < 12)   return [245,  70,  55, 252];
+  if (mm < 20)   return [215,  40, 130, 255];
+  return              [180,  60, 230, 255];     // extremer Starkregen
 }
 
 /** Temperatur als Farbe: blau kalt, rot heiß. */
@@ -170,19 +202,28 @@ function frame(h, ebenen = new Set(['regen', 'wolken'])) {
 
       // Von hinten nach vorn: Temperatur, Wolken, Böen, Gewitter, Regen
       if (ebenen.has('temperatur')) {
-        mischen(tempColor(sample(grid.temp, h, fy, fx)), 0.5);
+        mischen(tempColor(sample(grid.temp, h, fy, fx)), 0.55);
       }
       if (ebenen.has('wolken')) {
+        /* Wolken als helle Fläche waren auf der Karte unsichtbar. Jetzt eine
+           kühle Graustufe, die mit der Dichte deutlich zunimmt — so erkennt
+           man Wolkenfelder und Lücken auf einen Blick. */
         const cc = sample(grid.cloud, h, fy, fx);
-        if (cc > 18) mischen([240, 245, 252], Math.min(0.55, (cc - 18) / 150));
+        if (cc > 12) {
+          const t = Math.min(1, (cc - 12) / 78);          // 12 % … 90 %
+          const hell = 158 + t * 84;                       // dünn dunkler, dicht heller
+          // Gedeckelt: Bei durchgehender Bewölkung war die Karte darunter
+          // nicht mehr zu erkennen, damit fehlte jede Orientierung.
+          mischen([hell, hell + 8, hell + 22], 0.10 + t * 0.26);
+        }
       }
       if (ebenen.has('boeen')) {
         const w = sample(grid.gusts, h, fy, fx);
-        if (w > 35) mischen([190, 120, 240], Math.min(0.6, (w - 35) / 70));
+        if (w > 30) mischen([185, 105, 250], Math.min(0.72, (w - 30) / 55));
       }
       if (ebenen.has('gewitter')) {
         const cape = sample(grid.cape, h, fy, fx);
-        if (cape > 300) mischen([255, 90, 90], Math.min(0.65, (cape - 300) / 1800));
+        if (cape > 250) mischen([255, 70, 70], Math.min(0.75, (cape - 250) / 1400));
       }
       if (ebenen.has('regen')) {
         const c = rainColor(sample(grid.precip, h, fy, fx));
@@ -196,12 +237,14 @@ function frame(h, ebenen = new Set(['regen', 'wolken'])) {
   return canvas;
 }
 
-/** Ist ein Punkt noch vom geladenen Raster abgedeckt? */
-function covers(lat, lon, zoom) {
+/** Ist ein Punkt noch vom geladenen Raster abgedeckt — mit den nötigen Werten? */
+function covers(lat, lon, zoom, ebenen = null) {
   if (!grid) return false;
   // Auch die Auflösungsstufe muss passen — sonst bleibt auf der Kugel
   // ein Fleck stehen oder nah dran wird es unnötig grob.
   if (zoom !== undefined && stufeFuer(zoom).name !== grid.stufe) return false;
+  // Wurde eine Ebene neu eingeschaltet, fehlt ihr Messfeld noch
+  if (ebenen && [...ebenen].some(e => FELDER[e] && !grid.felder.includes(FELDER[e]))) return false;
   // Etwas Rand lassen, damit nicht bei jeder kleinen Bewegung neu geladen wird
   const randLat = grid.spanLat * 0.18, randLon = grid.spanLon * 0.18;
   return lat >= grid.lat0 + randLat && lat <= grid.lat0 + grid.spanLat - randLat
