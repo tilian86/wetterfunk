@@ -13,10 +13,10 @@
 <meta name="theme-color" content="#0b1220">
 <link rel="apple-touch-icon" href="icons/icon-180.png">
 <link rel="icon" href="icons/icon-192.png">
-<link rel="manifest" href="manifest.webmanifest?v=37">
+<link rel="manifest" href="manifest.webmanifest?v=38">
 
-<link rel="stylesheet" href="vendor/maplibre-gl.css?v=37">
-<link rel="stylesheet" href="css/style.css?v=37">
+<link rel="stylesheet" href="vendor/maplibre-gl.css?v=38">
+<link rel="stylesheet" href="css/style.css?v=38">
 </head>
 <body>
 
@@ -27,11 +27,20 @@
 
 <header class="topbar">
   <span class="brand" aria-label="Wetterfunk von Florian S. Thiel">
-    <!-- Funkwelle: zwei Bögen über einem Punkt -->
-    <svg class="brand-mark" viewBox="0 0 24 24" aria-hidden="true">
-      <circle cx="12" cy="17.5" r="2.2"/>
-      <path d="M7.4 13.4a6.5 6.5 0 0 1 9.2 0"/>
-      <path d="M4.2 10a11 11 0 0 1 15.6 0"/>
+    <!-- Dasselbe Zeichen wie das App-Symbol auf dem Homescreen: Sonne hinter
+         Wolke mit Regen. Die frühere Funkwelle sah aus wie ein WLAN-Zeichen. -->
+    <svg class="brand-mark" viewBox="0 0 32 32" aria-hidden="true">
+      <g class="bm-sun">
+        <circle cx="12" cy="10.5" r="4.6"/>
+        <g class="bm-rays">
+          <path d="M12 2.2v2.4M12 16.4v2.4M3.7 10.5h2.4M17.9 10.5h2.4"/>
+          <path d="M6.1 4.6l1.7 1.7M16.2 14.7l1.7 1.7M17.9 4.6l-1.7 1.7M7.8 14.7l-1.7 1.7"/>
+        </g>
+      </g>
+      <path class="bm-cloud" d="M11.6 24.6a4.6 4.6 0 0 1 .5-9.2 6.4 6.4 0 0 1 12 1.5 3.9 3.9 0 0 1-.6 7.7z"/>
+      <g class="bm-rain">
+        <path d="M13.4 26.6l-1.3 3.3M18.4 26.6l-1.3 3.3M23.4 26.6l-1.3 3.3"/>
+      </g>
     </svg>
     <span class="brand-text"><b>Wetterfunk</b><i>von Florian S. Thiel</i></span>
   </span>
@@ -154,24 +163,6 @@
       Der Abspielknopf lässt die Messung durchlaufen.</p>
   </section>
 
-  <!-- ══ REGENWARNUNG AUFS GERÄT ══ -->
-  <section class="card card-push" id="pushCard" hidden>
-    <div class="card-head">
-      <h2>Regenwarnung</h2>
-      <span class="card-sub" id="pushState"></span>
-    </div>
-    <p class="push-desc" id="pushDesc">
-      Eine Meldung aufs Gerät, sobald Regen aufzieht — mit Beginn, Ende und Menge.
-      Regnet es schon, kommt die Meldung, wann es aufhört. Hört der Regen auf und
-      fängt später wieder an, wird jede Phase einzeln gemeldet.
-    </p>
-    <div class="push-row">
-      <button class="push-btn" id="pushToggle">Einschalten</button>
-      <button class="link-btn" id="pushTest" hidden>Probemeldung</button>
-    </div>
-    <p class="push-hint" id="pushHint"></p>
-  </section>
-
   <!-- ══ MODELLVERGLEICH ══ -->
   <section class="card">
     <div class="card-head">
@@ -248,6 +239,24 @@
     <div class="cams" id="cams"></div>
   </section>
 
+  <!-- ══ REGENWARNUNG AUFS GERÄT ══ -->
+  <section class="card card-push" id="pushCard" hidden>
+    <div class="card-head">
+      <h2>Regenwarnung</h2>
+      <span class="card-sub" id="pushState"></span>
+    </div>
+    <p class="push-desc" id="pushDesc">
+      Eine Meldung aufs Gerät, sobald Regen aufzieht — mit Beginn, Ende und Menge.
+      Regnet es schon, kommt die Meldung, wann es aufhört. Hört der Regen auf und
+      fängt später wieder an, wird jede Phase einzeln gemeldet.
+    </p>
+    <div class="push-row">
+      <button class="push-btn" id="pushToggle">Einschalten</button>
+      <button class="link-btn" id="pushTest" hidden>Probemeldung</button>
+    </div>
+    <p class="push-hint" id="pushHint"></p>
+  </section>
+
   <!-- ══ NACHRICHTENLAGE ══ -->
   <section class="card card-news">
     <div class="card-head">
@@ -260,6 +269,20 @@
       <span id="newsGoLabel">Nachrichtenlage laden</span>
     </button>
     <div id="newsResult" class="news-result"></div>
+  </section>
+
+  <!-- ══ AUF DEN HOMESCHIRM LEGEN ══
+       Erscheint nur, solange die Seite im Browser läuft — als App installiert
+       wäre der Hinweis überflüssig. -->
+  <section class="card card-install" id="installCard" hidden>
+    <div class="card-head">
+      <h2>Als App speichern</h2>
+      <span class="card-sub">einmalig</span>
+    </div>
+    <p class="install-desc">Auf dem Homeschirm startet Wetterfunk ohne Browserleiste,
+      merkt sich deinen Ort und kann dir Regenwarnungen schicken.</p>
+    <div class="install-steps" id="installSteps"></div>
+    <button class="install-btn" id="installBtn" hidden>Jetzt hinzufügen</button>
   </section>
 
   <footer class="foot">
@@ -396,12 +419,12 @@
 
 <div class="toast" id="toast" hidden></div>
 
-<script src="vendor/maplibre-gl.js?v=37"></script>
-<script src="js/icons.js?v=37"></script>
-<script src="js/radar.js?v=37"></script>
-<script src="js/forecast.js?v=37"></script>
-<script src="js/briefing.js?v=37"></script>
-<script src="js/news.js?v=37"></script>
-<script src="js/app.js?v=37"></script>
+<script src="vendor/maplibre-gl.js?v=38"></script>
+<script src="js/icons.js?v=38"></script>
+<script src="js/radar.js?v=38"></script>
+<script src="js/forecast.js?v=38"></script>
+<script src="js/briefing.js?v=38"></script>
+<script src="js/news.js?v=38"></script>
+<script src="js/app.js?v=38"></script>
 </body>
 </html>

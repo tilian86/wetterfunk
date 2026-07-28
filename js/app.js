@@ -2341,6 +2341,61 @@ function baueGlobus() {
   });
 }
 
+/* ── Auf den Homeschirm legen ───────────────────────────────
+   Android bietet dafür ein eigenes Fenster an, das der Browser über
+   `beforeinstallprompt` anbietet. Safari kennt das nicht — dort bleibt nur
+   die Anleitung von Hand. */
+let installEreignis = null;
+
+window.addEventListener('beforeinstallprompt', (e) => {
+  e.preventDefault();
+  installEreignis = e;
+  renderInstall();
+});
+
+function renderInstall() {
+  const karte = $('#installCard');
+  if (!karte) return;
+  if (alsAppInstalliert()) { karte.hidden = true; return; }
+
+  const ua = navigator.userAgent;
+  const iOS = /iPhone|iPad|iPod/.test(ua) || (/Macintosh/.test(ua) && navigator.maxTouchPoints > 1);
+  const schritte = $('#installSteps');
+
+  if (iOS) {
+    schritte.innerHTML = `
+      <ol class="inst-list">
+        <li>Unten in Safari auf <b>Teilen</b> tippen
+          <svg class="inst-ico" viewBox="0 0 24 24"><path d="M12 3v13M8.5 6.5L12 3l3.5 3.5"/><path d="M6 12v7.5h12V12"/></svg></li>
+        <li>In der Liste nach unten wischen bis <b>Zum Home-Bildschirm</b></li>
+        <li><b>Hinzufügen</b> tippen — fertig</li>
+      </ol>
+      <p class="inst-note">Geht nur in Safari, nicht in Chrome oder Firefox auf dem iPhone.</p>`;
+    $('#installBtn').hidden = true;
+  } else if (installEreignis) {
+    schritte.innerHTML = `<p class="inst-note">Ein Tippen genügt — der Browser fragt nach.</p>`;
+    $('#installBtn').hidden = false;
+  } else {
+    schritte.innerHTML = `
+      <ol class="inst-list">
+        <li>Im Browsermenü <b>⋮</b> öffnen</li>
+        <li><b>App installieren</b> oder <b>Zum Startbildschirm zufügen</b> wählen</li>
+        <li>Bestätigen — fertig</li>
+      </ol>`;
+    $('#installBtn').hidden = true;
+  }
+  karte.hidden = false;
+}
+
+async function installAnstossen() {
+  if (!installEreignis) return;
+  installEreignis.prompt();
+  const { outcome } = await installEreignis.userChoice;
+  installEreignis = null;
+  if (outcome === 'accepted') $('#installCard').hidden = true;
+  else toast('Kannst du jederzeit später machen.');
+}
+
 /* ── Zeitzonen ──────────────────────────────────────────────
    Antippen der Uhr zeigt, wie spät es anderswo ist — und ob dort gerade
    Tag oder Nacht herrscht. */
@@ -2464,6 +2519,8 @@ async function renderPush() {
   $('#pushToggle').textContent = an ? 'Ausschalten' : 'Einschalten';
   $('#pushToggle').classList.toggle('on', an);
   $('#pushTest').hidden = !an;
+  // Läuft die Warnung, schrumpft die Karte — dann gibt es nichts mehr zu tun
+  karte.classList.toggle('is-on', an);
 
   const hinweis = $('#pushHint');
   if (an) {
@@ -2712,6 +2769,8 @@ function wire() {
     el.addEventListener('click', openZonen);
   });
   $('#pushToggle')?.addEventListener('click', pushUmschalten);
+  $('#installBtn')?.addEventListener('click', installAnstossen);
+  renderInstall();
   $('#pushTest')?.addEventListener('click', pushProbe);
   renderPush();
   $('#refreshBtn').addEventListener('click', refresh);

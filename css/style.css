@@ -113,12 +113,11 @@ body[data-mood="night"]   .sky-grad { background: linear-gradient(178deg,#1b2647
 
 /* Name und Zeichen der App — links, vor dem Ort */
 .brand { display: flex; align-items: center; gap: 7px; flex: none; }
-.brand-mark {
-  width: 21px; height: 21px; flex: none;
-  fill: none; stroke: var(--accent); stroke-width: 1.9;
-  stroke-linecap: round;
-}
-.brand-mark circle { fill: var(--accent); stroke: none; }
+.brand-mark { width: 24px; height: 24px; flex: none; }
+.bm-sun circle { fill: #ffd45e; stroke: none; }
+.bm-rays path { stroke: #ffd45e; stroke-width: 2.1; stroke-linecap: round; fill: none; }
+.bm-cloud { fill: #eef3fb; stroke: none; }
+.bm-rain path { stroke: #6cc6ff; stroke-width: 2.2; stroke-linecap: round; fill: none; }
 .brand-text { display: grid; line-height: 1.1; }
 .brand-text b { font-size: 12.5px; font-weight: 700; letter-spacing: -.01em; color: var(--ink); }
 .brand-text i {
@@ -335,6 +334,19 @@ svg { fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round
 
 /* ── Regenwarnung aufs Gerät ──────────────────────────────── */
 .push-desc { font-size: 13px; line-height: 1.55; color: var(--ink-dim); margin: 0 0 13px; }
+
+/* Ist sie eingeschaltet, gibt es nichts mehr einzurichten — dann reicht
+   eine Zeile mit Ausschalter statt einer ganzen Karte. */
+.card-push.is-on { padding: 12px 14px; }
+.card-push.is-on .push-desc { display: none; }
+.card-push.is-on .card-head { margin-bottom: 9px; }
+.card-push.is-on .card-head h2 { font-size: 13px; }
+.card-push.is-on .push-btn {
+  padding: 7px 13px; font-size: 12.5px;
+  background: rgba(255,255,255,.07); color: var(--ink-faint);
+}
+.card-push.is-on .push-hint { font-size: 10.5px; }
+.card-push.is-on .card-sub { color: #7ee0a0; }
 .push-row { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
 .push-btn {
   padding: 11px 18px; border-radius: var(--r-md);
@@ -349,6 +361,28 @@ svg { fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round
 }
 .push-hint:empty { display: none; }
 .push-hint b { color: var(--ink-dim); }
+
+/* ── Auf den Homeschirm legen ─────────────────────────────── */
+.install-desc { font-size: 13px; line-height: 1.55; color: var(--ink-dim); margin: 0 0 13px; }
+.inst-list {
+  margin: 0; padding-left: 20px;
+  display: grid; gap: 8px;
+  font-size: 13px; line-height: 1.5; color: var(--ink-dim);
+}
+.inst-list li::marker { color: var(--accent); font-weight: 700; }
+.inst-list b { color: var(--ink); font-weight: 600; }
+.inst-ico {
+  width: 15px; height: 15px; vertical-align: -3px; margin-left: 3px;
+  fill: none; stroke: var(--accent); stroke-width: 2; stroke-linecap: round;
+}
+.inst-note { margin: 11px 0 0; font-size: 11.5px; color: var(--ink-faint); }
+.install-btn {
+  margin-top: 13px; width: 100%; padding: 12px;
+  background: var(--accent); border: none; border-radius: var(--r-md);
+  color: #04121f; font: 700 14px var(--font); cursor: pointer;
+}
+.install-btn[hidden] { display: none; }
+.install-btn:active { transform: scale(.99); }
 
 /* ── Amtlicher DWD-Bericht ────────────────────────────────── */
 .dwd-text { font-size: 13.5px; line-height: 1.62; color: var(--ink-dim); }
