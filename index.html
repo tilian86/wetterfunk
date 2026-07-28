@@ -13,10 +13,10 @@
 <meta name="theme-color" content="#0b1220">
 <link rel="apple-touch-icon" href="icons/icon-180.png">
 <link rel="icon" href="icons/icon-192.png">
-<link rel="manifest" href="manifest.webmanifest?v=12">
+<link rel="manifest" href="manifest.webmanifest?v=13">
 
-<link rel="stylesheet" href="vendor/maplibre-gl.css?v=12">
-<link rel="stylesheet" href="css/style.css?v=12">
+<link rel="stylesheet" href="vendor/maplibre-gl.css?v=13">
+<link rel="stylesheet" href="css/style.css?v=13">
 </head>
 <body>
 
@@ -54,6 +54,10 @@
   <!-- ══ TAGESFORTSCHRITT ══ -->
   <div class="day-progress" id="dayProgress"></div>
 
+  <!-- Funkuhr: eigenes Element, damit der Sekundentakt das Tagesbalken-Rendern
+       nicht mitzieht. Der Fuß zeigt sie zusätzlich. -->
+  <p class="topclock" id="topClock"></p>
+
   <!-- ══ KLARTEXT ══ -->
   <p class="verdict" id="verdict"></p>
 
@@ -79,8 +83,12 @@
     <div class="card-head"><h2>10 Tage</h2><span class="card-sub" id="dailyRange"></span></div>
     <div class="daily" id="daily"></div>
     <p class="daily-legend">
-      <span class="dl-bar"></span> Balken: Tiefst- bis Höchstwert, im Vergleich zur Woche.
-      Rechts daneben Regenwahrscheinlichkeit oder Sonnenstunden.
+      Der Streifen zeigt den Tag von 0 bis 24 Uhr:
+      <span class="dl-key" style="background:#ffd25e"></span> sonnig
+      <span class="dl-key" style="background:#b9c2d2"></span> bewölkt
+      <span class="dl-key" style="background:#5ac8fa"></span> Regen
+      <span class="dl-key" style="background:#1e2740"></span> Nacht.
+      Tag antippen für Erklärungen.
     </p>
     <p class="confidence" id="confidence"></p>
   </section>
@@ -265,7 +273,8 @@
   <div class="sheet" role="dialog" aria-labelledby="explainTitle">
     <div class="sheet-grip"></div>
     <h3 id="explainTitle"></h3>
-    <p class="explain-text" id="explainText"></p>
+    <!-- div statt p: die Tagesansicht setzt hier Listen und Tabellen hinein -->
+    <div class="explain-text" id="explainText"></div>
     <a class="explain-link" id="explainLink" target="_blank" rel="noopener noreferrer" hidden></a>
     <button class="sheet-close" id="explainClose">Schließen</button>
   </div>
@@ -330,12 +339,12 @@
 
 <div class="toast" id="toast" hidden></div>
 
-<script src="vendor/maplibre-gl.js?v=12"></script>
-<script src="js/icons.js?v=12"></script>
-<script src="js/radar.js?v=12"></script>
-<script src="js/forecast.js?v=12"></script>
-<script src="js/briefing.js?v=12"></script>
-<script src="js/news.js?v=12"></script>
-<script src="js/app.js?v=12"></script>
+<script src="vendor/maplibre-gl.js?v=13"></script>
+<script src="js/icons.js?v=13"></script>
+<script src="js/radar.js?v=13"></script>
+<script src="js/forecast.js?v=13"></script>
+<script src="js/briefing.js?v=13"></script>
+<script src="js/news.js?v=13"></script>
+<script src="js/app.js?v=13"></script>
 </body>
 </html>

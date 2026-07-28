@@ -102,19 +102,30 @@ const Radar = (() => {
 
   /** Temperaturzahlen an den Rasterpunkten — damit man auf der Karte sofort
       sieht, wie warm es wo ist, statt Farben deuten zu müssen. */
+  /** Zahlen auf der Karte. Wo Regen fällt, steht die Menge in mm — die ist
+      dort die interessantere Angabe; sonst die Temperatur. */
   function updateLabels() {
     if (!ready || !map || !Forecast.ready()) return;
     const zeit = els.currentTime?.();
-    const h = zeit ? Forecast.indexFor(zeit) : 0;
-    const punkte = Forecast.points(Math.max(0, h), 'temp');
+    const h = Math.max(0, zeit ? Forecast.indexFor(zeit) : 0);
+    const temps = Forecast.points(h, 'temp');
+    const regen = Forecast.points(h, 'precip');
 
     const geo = {
       type: 'FeatureCollection',
-      features: punkte.map(p => ({
-        type: 'Feature',
-        geometry: { type: 'Point', coordinates: [p.lon, p.lat] },
-        properties: { t: `${Math.round(p.wert)}°` }
-      }))
+      features: temps.map((p, k) => {
+        const mm = regen[k]?.wert ?? 0;
+        const nass = mm >= 0.1;
+        return {
+          type: 'Feature',
+          geometry: { type: 'Point', coordinates: [p.lon, p.lat] },
+          properties: {
+            t: nass ? `${mm < 1 ? mm.toFixed(1) : Math.round(mm)} mm` : `${Math.round(p.wert)}°`,
+            nass: nass ? 1 : 0,
+            mm, grad: Math.round(p.wert), stunde: h
+          }
+        };
+      })
     };
 
     if (!map.getSource('temps')) {
@@ -123,17 +134,23 @@ const Radar = (() => {
         id: 'temp-labels', type: 'symbol', source: 'temps',
         layout: {
           'text-field': ['get', 't'],
-          'text-size': 12,
+          'text-size': ['case', ['==', ['get', 'nass'], 1], 12.5, 11.5],
           'text-font': ['Noto Sans Bold'],
           'text-allow-overlap': false,
           'text-padding': 6
         },
         paint: {
-          'text-color': '#ffffff',
+          'text-color': ['case', ['==', ['get', 'nass'], 1], '#bfe9ff', '#ffffff'],
           'text-halo-color': 'rgba(10,16,26,.85)',
           'text-halo-width': 1.6
         }
       });
+      map.on('click', 'temp-labels', (e) => {
+        const f = e.features?.[0]?.properties;
+        if (f) els.onPointTap?.(f, e.lngLat);
+      });
+      map.on('mouseenter', 'temp-labels', () => { map.getCanvas().style.cursor = 'pointer'; });
+      map.on('mouseleave', 'temp-labels', () => { map.getCanvas().style.cursor = ''; });
     } else {
       map.getSource('temps').setData(geo);
     }
@@ -355,21 +372,17 @@ const Radar = (() => {
     const bild = Forecast.frame(hourIndex, ebenen);
     if (!bild) return false;
 
+    // Bild- statt Canvas-Quelle: Letztere lieferte je nach Gerät eine
+    // schwarze Fläche, weil MapLibre das Canvas im falschen Moment ausliest.
+    const url = bild.toDataURL('image/png');
+    const ecken = Forecast.corners();
+
     if (!map.getSource('fc')) {
-      map.addSource('fc', {
-        type: 'canvas', canvas: bild,
-        coordinates: Forecast.corners(),
-        animate: true            // MapLibre liest das Canvas nur, solange es läuft
-      });
+      map.addSource('fc', { type: 'image', url, coordinates: ecken });
       map.addLayer({ id: 'fc-layer', type: 'raster', source: 'fc',
         paint: { 'raster-opacity': 0.88, 'raster-resampling': 'linear' } }, 'here-halo');
     } else {
-      // Kurz laufen lassen, damit das neu gezeichnete Bild übernommen wird,
-      // danach anhalten — sonst rendert die Karte dauerhaft weiter.
-      const src = map.getSource('fc');
-      src.play();
-      clearTimeout(fcTimer);
-      fcTimer = setTimeout(() => { try { src.pause(); } catch {} }, 260);
+      map.getSource('fc').updateImage({ url, coordinates: ecken });
     }
     map.setLayoutProperty('fc-layer', 'visibility', 'visible');
     setRadarVisible(false);

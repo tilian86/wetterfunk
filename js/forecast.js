@@ -44,9 +44,22 @@ async function load(lat, lon, zoom = 7) {
     forecast_days: '5', timezone: 'auto'
   });
 
-  const res = await fetch(`${API}?${p}`);
-  if (!res.ok) throw new Error(`Raster ${res.status}`);
-  const data = await res.json();
+  // 169 Punkte auf einmal — die teuerste Anfrage der App. Eine Viertelstunde
+  // vorhalten, sonst läuft man beim Herumschieben ins Abruflimit.
+  const url = `${API}?${p}`;
+  const key = `wf.fc:${url}`;
+  let data = null;
+  try {
+    const alt = JSON.parse(sessionStorage.getItem(key) || 'null');
+    if (alt && Date.now() - alt.t < 15 * 60000) data = alt.d;
+  } catch {}
+
+  if (!data) {
+    const res = await fetch(url);
+    if (!res.ok) throw new Error(`Raster ${res.status}`);
+    data = await res.json();
+    try { sessionStorage.setItem(key, JSON.stringify({ t: Date.now(), d: data })); } catch {}
+  }
   if (!Array.isArray(data) || !data.length) throw new Error('Kein Raster erhalten');
 
   grid = {
@@ -209,6 +222,19 @@ function points(h, feld = 'temp') {
   return out;
 }
 
+/** Zeitreihe am nächstgelegenen Rasterpunkt — für Antippen auf der Karte. */
+function series(lat, lon) {
+  if (!grid) return null;
+  const i = Math.max(0, Math.min(N - 1, Math.round((lat - grid.lat0) / grid.dLat)));
+  const j = Math.max(0, Math.min(N - 1, Math.round((lon - grid.lon0) / grid.dLon)));
+  const k = i * N + j;
+  return {
+    times: grid.times,
+    precip: grid.precip[k] || [], cloud: grid.cloud[k] || [],
+    temp: grid.temp[k] || [], gusts: grid.gusts[k] || []
+  };
+}
+
 /** Index der Stunde, die dem Zeitpunkt am nächsten liegt. */
 function indexFor(date) {
   if (!grid) return -1;
@@ -221,6 +247,6 @@ function indexFor(date) {
   return best;
 }
 
-return { load, frame, corners, ready, hours, indexFor, covers, points, stufeFuer,
+return { load, frame, corners, ready, hours, indexFor, covers, points, stufeFuer, series,
          get canvas() { return canvas; } };
 })();

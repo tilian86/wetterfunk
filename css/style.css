@@ -313,6 +313,36 @@ svg { fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round
 .bf-cost { font-size: 11px; color: var(--ink-faint); text-align: right; line-height: 1.4; }
 .bf-cost i { display: block; font-style: normal; opacity: .7; }
 
+/* Stimme und Sprechtempo */
+.bf-voice {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 10px 14px;
+  margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--card-line);
+  font-size: 12px; color: var(--ink-faint);
+}
+.bf-voice-pick { display: flex; align-items: center; gap: 7px; min-width: 0; flex: 1 1 190px; }
+.bf-voice-pick select {
+  flex: 1; min-width: 0; padding: 7px 10px;
+  background: rgba(255,255,255,.07); border: 1px solid var(--card-line);
+  border-radius: var(--r-sm); color: var(--ink); font: 12px var(--font);
+  outline: none; -webkit-appearance: none; appearance: none;
+}
+.bf-rate { display: flex; align-items: center; gap: 5px; }
+.bf-rate button {
+  padding: 6px 9px; min-height: 30px;
+  background: rgba(255,255,255,.06); border: 1px solid var(--card-line);
+  border-radius: var(--r-sm); color: var(--ink-dim);
+  font: 600 11.5px var(--font); cursor: pointer;
+}
+.bf-rate button.on { background: var(--accent); border-color: transparent; color: #04121f; }
+.bf-hint { opacity: .7; }
+.bf-voicehint {
+  flex: 1 1 100%; margin: 2px 0 0; padding: 9px 11px;
+  border-radius: var(--r-sm); background: rgba(255,210,94,.07);
+  border: 1px solid rgba(255,210,94,.18);
+  font-size: 11.5px; line-height: 1.5; color: var(--ink-faint);
+}
+.bf-voicehint b { color: var(--ink-dim); font-weight: 600; }
+
 select#bfModel {
   width: 100%; padding: 12px 14px;
   background: rgba(255,255,255,.07); border: 1px solid var(--card-line);
@@ -634,47 +664,57 @@ select#bfModel {
 
 .drow {
   display: grid; align-items: center;
-  grid-template-columns: 40px 30px minmax(52px, auto) 30px minmax(40px, 1fr) 32px;
-  gap: 5px 6px; padding: 6px 0;
-}
-/* Regendetails in eine eigene Zeile — nebeneinander lief der Text sonst
-   über die Temperaturspalte. */
-.d-detail {
-  grid-column: 3 / -1; font-size: 10.5px; color: var(--ink-faint);
-  margin-top: -2px;
+  grid-template-columns: 44px 30px 1fr auto;
+  gap: 3px 8px; padding: 8px 0 9px;
+  cursor: pointer;
 }
 .drow + .drow { border-top: 1px solid rgba(255,255,255,.055); }
 .drow.is-today .d-day { color: var(--ink); font-weight: 700; }
+.drow:active { background: rgba(255,255,255,.03); }
 
 .d-day { font-size: 14.5px; font-weight: 500; color: var(--ink-dim); }
 .d-icon { height: 30px; }
 .d-icon .wx { width: 30px; height: 30px; }
-.d-rain { display: grid; gap: 1px; line-height: 1.2; }
+
+.d-vals { display: flex; flex-wrap: wrap; gap: 2px 9px; line-height: 1.25; min-width: 0; }
 .d-sunval  { font-size: 10px; color: #ffd07a; opacity: .9; white-space: nowrap; }
 .d-rainval { font-size: 10px; color: var(--accent); white-space: nowrap; }
-.d-min { font-size: 14.5px; color: var(--ink-faint); text-align: right; }
-.d-max { font-size: 14.5px; font-weight: 500; text-align: right; }
+.d-windval { font-size: 10px; color: var(--ink-faint); white-space: nowrap; }
+.d-windval i { font-style: normal; opacity: .75; }
+.d-temps { font-size: 14px; color: var(--ink-faint); white-space: nowrap; }
+.d-temps b { font-size: 15px; font-weight: 600; color: var(--ink); }
+
+/* Tagesstreifen: eine Farbe je Stunde — gelb Sonne, grau Wolken,
+   blau Regen, dunkel Nacht. Sagt mehr als ein Min-Max-Balken. */
+.d-strip {
+  grid-column: 3 / -1; height: 9px; border-radius: 3px;
+  margin-top: 3px; box-shadow: inset 0 0 0 1px rgba(0,0,0,.25);
+}
+.d-hours {
+  grid-column: 3 / -1;
+  display: flex; justify-content: space-between;
+  font-size: 8.5px; color: var(--ink-faint); opacity: .6; margin-top: 1px;
+}
+.d-hours i { font-style: normal; }
+
+/* Regendetails in eine eigene Zeile — nebeneinander lief der Text sonst
+   über die Temperaturspalte. */
+.d-detail {
+  grid-column: 3 / -1; font-size: 10.5px; color: var(--ink-faint);
+  margin-top: 2px;
+}
 
 .d-sun { display: grid; line-height: 1.15; font-size: 12px; color: #ffd07a; opacity: .8; }
 .d-sun i { font-style: normal; font-size: 10px; color: var(--ink-faint); }
-
-.d-track {
-  height: 4px; border-radius: 3px;
-  background: rgba(255,255,255,.09); position: relative;
-}
-.d-fill {
-  position: absolute; top: 0; height: 100%; border-radius: 3px;
-  background: linear-gradient(90deg, #62b6f0, #ffd426 55%, #ff8a5c);
-}
 
 .daily-legend {
   display: flex; align-items: center; gap: 7px; flex-wrap: wrap;
   font-size: 10.5px; line-height: 1.45; color: var(--ink-faint);
   margin-top: 11px; padding-top: 10px; border-top: 1px solid var(--card-line);
 }
-.dl-bar {
-  width: 26px; height: 4px; border-radius: 3px; flex: none;
-  background: linear-gradient(90deg, #62b6f0, #ffd426 55%, #ff8a5c);
+.dl-key {
+  width: 13px; height: 9px; border-radius: 2px; flex: none;
+  box-shadow: inset 0 0 0 1px rgba(0,0,0,.3);
 }
 
 .confidence {
@@ -1189,6 +1229,14 @@ body.loading .hero-temp, body.loading .hero-desc { opacity: .45; }
 }
 .foot-clock b { color: var(--ink); font-weight: 600; }
 
+/* Funkuhr oben — bewusst zurückhaltend, sie soll den Wetterblick nicht stören */
+.topclock {
+  text-align: center; font-size: 12.5px; letter-spacing: .05em;
+  font-variant-numeric: tabular-nums; color: var(--ink-faint);
+  margin: -2px 0 2px;
+}
+.topclock b { color: var(--ink-dim); font-weight: 600; font-size: 14px; }
+
 /* ── Countdown Sonne & Mond ───────────────────────────────── */
 .cd-main {
   display: flex; align-items: center; gap: 14px;
@@ -1294,6 +1342,27 @@ body.loading .hero-temp, body.loading .hero-desc { opacity: .45; }
   background: rgba(255,255,255,.12); color: var(--ink-dim); vertical-align: 1px;
 }
 .explain-text { font-size: 14.5px; line-height: 1.6; color: var(--ink-dim); margin-bottom: 16px; }
+
+/* Tagesansicht im Erklär-Fenster */
+.ds-spans { display: grid; gap: 5px; margin-bottom: 15px; }
+.ds-span {
+  display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  padding: 8px 11px; border-radius: var(--r-sm);
+  background: rgba(255,255,255,.05); font-size: 13px;
+}
+.ds-span b { font-weight: 600; color: var(--ink); font-variant-numeric: tabular-nums; }
+
+.ds-facts {
+  display: grid; grid-template-columns: auto 1fr; gap: 5px 14px;
+  font-size: 13px; margin: 0 0 14px;
+}
+.ds-facts dt { color: var(--ink-faint); }
+.ds-facts dd { margin: 0; color: var(--ink); }
+.ds-note {
+  font-size: 12px; line-height: 1.55; color: var(--ink-faint);
+  padding: 10px 12px; border-radius: var(--r-sm);
+  background: rgba(90,200,250,.07); border: 1px solid rgba(90,200,250,.15);
+}
 .explain-link {
   display: block; padding: 12px 14px; margin-bottom: 12px;
   background: rgba(108,198,255,.13); border: 1px solid rgba(108,198,255,.32);

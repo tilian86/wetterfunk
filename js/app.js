@@ -105,6 +105,29 @@ async function fetchJSON(url, opts, tries = 3) {
   throw lastErr;
 }
 
+/* Der Wetterdienst begrenzt kostenlose Abrufe pro Stunde. Damit häufiges
+   Öffnen der App nicht ins Limit läuft, halten wir Antworten kurz vor. */
+const CACHE_MIN = 8;
+
+async function fetchCached(url, minuten = CACHE_MIN) {
+  const key = `wf.c:${url}`;
+  let alt = null;
+  try { alt = JSON.parse(sessionStorage.getItem(key) || 'null'); } catch {}
+  if (alt && Date.now() - alt.t < minuten * 60000) return alt.d;
+
+  try {
+    const d = await fetchJSON(url);
+    try { sessionStorage.setItem(key, JSON.stringify({ t: Date.now(), d })); } catch {}
+    return d;
+  } catch (e) {
+    // Lieber etwas ältere Daten zeigen als gar keine
+    if (alt) { veraltet = true; return alt.d; }
+    throw e;
+  }
+}
+
+let veraltet = false;
+
 function loadForecast(lat, lon) {
   const src = sourceId();
   const p = new URLSearchParams({
@@ -127,7 +150,7 @@ function loadForecast(lat, lon) {
       'wind_speed_10m_max', 'wind_gusts_10m_max', 'sunshine_duration'
     ].join(',')
   });
-  return fetchJSON(`${FORECAST}?${p}`);
+  return fetchCached(`${FORECAST}?${p}`);
 }
 
 function loadAir(lat, lon) {
@@ -135,7 +158,7 @@ function loadAir(lat, lon) {
     latitude: lat, longitude: lon, timezone: 'auto',
     current: 'european_aqi,pm2_5,alder_pollen,birch_pollen,grass_pollen,mugwort_pollen,ragweed_pollen'
   });
-  return fetchJSON(`${AIR}?${p}`).catch(() => null);
+  return fetchCached(`${AIR}?${p}`, 20).catch(() => null);
 }
 
 function loadModels(lat, lon) {
@@ -144,7 +167,7 @@ function loadModels(lat, lon) {
     hourly: 'temperature_2m,precipitation',
     models: MODELS.map(m => m.id).join(',')
   });
-  return fetchJSON(`${FORECAST}?${p}`).catch(() => null);
+  return fetchCached(`${FORECAST}?${p}`, 20).catch(() => null);
 }
 
 /** DWD-Warnungen. Antwort ist JSONP: warnWetter.loadWarnings({…}); */
@@ -543,10 +566,38 @@ function rainWindow(dayIndex) {
   return { von: a, bis: b, anteil: nass.length / Math.max(1, stunden.length) };
 }
 
+/** Farbe einer Tagesstunde für den Verlaufsbalken.
+    Reihenfolge zählt: Regen schlägt Bewölkung, Nacht färbt den Rest ein. */
+function hourShade(mm, wolken, tags) {
+  if (mm >= 1.5) return '#3d8fd6';
+  if (mm >= 0.4) return '#5ac8fa';
+  if (mm >= 0.1) return '#8ad8f5';
+  if (!tags)     return wolken > 70 ? '#2c3550' : '#1e2740';
+  if (wolken < 25) return '#ffd25e';
+  if (wolken < 55) return '#f0dc9a';
+  if (wolken < 80) return '#b9c2d2';
+  return '#7d8798';
+}
+
+/** 24-Stunden-Streifen eines Tages: zeigt auf einen Blick, wann die Sonne
+    scheint und wann Regen fällt — aussagekräftiger als ein Min-Max-Balken,
+    dessen Werte ohnehin daneben stehen. */
+function dayStrip(dayISO) {
+  const h = data.hourly;
+  const teile = [];
+  for (let u = 0; u < 24; u++) {
+    const marke = `${dayISO}T${String(u).padStart(2, '0')}:00`;
+    const k = h.time.indexOf(marke);
+    if (k < 0) { teile.push('#1a2135'); continue; }
+    teile.push(hourShade(h.precipitation[k] ?? 0, h.cloud_cover[k] ?? 0, h.is_day[k] === 1));
+  }
+  const stops = teile.map((c, u) => `${c} ${(u / 24 * 100).toFixed(2)}%, ${c} ${((u + 1) / 24 * 100).toFixed(2)}%`).join(', ');
+  return `<span class="d-strip" style="background:linear-gradient(90deg, ${stops})"></span>`;
+}
+
 function renderDaily() {
   const d = data.daily;
   const lo = Math.min(...d.temperature_2m_min), hi = Math.max(...d.temperature_2m_max);
-  const span = Math.max(1, hi - lo);
   const today = new Date().toDateString();
 
   $('#dailyRange').textContent = `${round(lo)}° bis ${round(hi)}°`;
@@ -554,24 +605,25 @@ function renderDaily() {
   $('#daily').innerHTML = d.time.map((day, i) => {
     const isToday = new Date(day).toDateString() === today;
     const min = d.temperature_2m_min[i], max = d.temperature_2m_max[i];
-    const left = ((min - lo) / span) * 100;
-    const width = Math.max(6, ((max - min) / span) * 100);
     const prob = d.precipitation_probability_max[i] ?? 0;
     const mm = d.precipitation_sum[i] ?? 0;
     const sun = Math.round((d.sunshine_duration?.[i] ?? 0) / 3600);
+    const wind = round(d.wind_speed_10m_max?.[i]);
+    const boe = round(d.wind_gusts_10m_max?.[i]);
     const w = mm >= 0.2 ? rainWindow(i) : null;
     const worte = mm >= 0.2 ? rainWords(mm) : null;
 
-    return `<div class="drow${isToday ? ' is-today' : ''}">
+    return `<div class="drow${isToday ? ' is-today' : ''}" data-day="${i}">
       <span class="d-day">${isToday ? 'Heute' : weekday(day)}</span>
       <span class="d-icon" title="${WX.text(daySymbol(i), 1)}">${WX.icon(daySymbol(i), 1)}</span>
-      <span class="d-rain">
+      <span class="d-vals">
         <span class="d-sunval">☀ ${sun} Std.</span>
         ${prob >= 10 ? `<span class="d-rainval">💧 ${prob}%</span>` : ''}
+        <span class="d-windval">🌬 ${wind} km/h${boe >= wind + 15 ? ` <i>Böen ${boe}</i>` : ''}</span>
       </span>
-      <span class="d-min">${round(min)}°</span>
-      <span class="d-track"><i class="d-fill" style="left:${left}%;width:${width}%"></i></span>
-      <span class="d-max">${round(max)}°</span>
+      <span class="d-temps"><b>${round(max)}°</b> / ${round(min)}°</span>
+      ${dayStrip(day)}
+      <span class="d-hours"><i>0</i><i>6</i><i>12</i><i>18</i><i>24</i></span>
       ${w ? `<span class="d-detail">${worte} · ${hhmm(w.von)}–${hhmm(w.bis)} · ${mm.toFixed(1)} mm</span>` : ''}
     </div>`;
   }).join('');
@@ -1161,6 +1213,123 @@ function wireExplain() {
     t.onclick = () => openExplain(t.dataset.info);
     t.onkeydown = (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openExplain(t.dataset.info); } };
   });
+  $$('#daily .drow').forEach(r => {
+    r.onclick = () => openDaySheet(Number(r.dataset.day));
+  });
+}
+
+/** Alle Stunden eines Tages als Zeilen — Grundlage der Tagesansicht. */
+function dayHours(dayISO) {
+  const h = data.hourly, out = [];
+  for (let u = 0; u < 24; u++) {
+    const k = h.time.indexOf(`${dayISO}T${String(u).padStart(2, '0')}:00`);
+    if (k < 0) continue;
+    out.push({ u, temp: h.temperature_2m[k], mm: h.precipitation[k] ?? 0,
+               wolken: h.cloud_cover[k] ?? 0, wind: h.wind_speed_10m[k],
+               boe: h.wind_gusts_10m[k], tags: h.is_day[k] === 1, uv: h.uv_index[k] });
+  }
+  return out;
+}
+
+/** Zusammenhängende Abschnitte gleicher Art zusammenfassen ("9–14 Uhr sonnig"). */
+function daySpans(stunden) {
+  const art = (s) => (s.mm >= 0.1 ? 'regen' : !s.tags ? 'nacht'
+                    : s.wolken < 25 ? 'sonnig' : s.wolken < 55 ? 'heiter'
+                    : s.wolken < 80 ? 'wolkig' : 'bedeckt');
+  const spans = [];
+  for (const s of stunden) {
+    const a = art(s);
+    const letzt = spans[spans.length - 1];
+    if (letzt && letzt.art === a) { letzt.bis = s.u + 1; letzt.mm += s.mm; }
+    else spans.push({ art: a, von: s.u, bis: s.u + 1, mm: s.mm });
+  }
+  return spans;
+}
+
+const SPAN_WORT = { sonnig: '☀️ sonnig', heiter: '🌤 heiter', wolkig: '⛅ wolkig',
+                    bedeckt: '☁️ bedeckt', regen: '🌧 Regen', nacht: '🌙 Nacht' };
+
+/** Antippen einer Zahl auf der Karte: was bedeutet der Wert, und wann
+    genau regnet es an dieser Stelle? */
+function showPointDetail(props, lngLat) {
+  const reihe = Forecast.series?.(lngLat.lat, lngLat.lng);
+  const mm = Number(props.mm) || 0;
+  const h = Number(props.stunde) || 0;
+
+  // Nächste Regenphase ab der gezeigten Stunde suchen
+  let phase = null;
+  if (reihe) {
+    for (let k = h; k < Math.min(reihe.times.length, h + 48); k++) {
+      if ((reihe.precip[k] ?? 0) >= 0.1) {
+        let bis = k, summe = 0;
+        while (bis < reihe.times.length && (reihe.precip[bis] ?? 0) >= 0.1) { summe += reihe.precip[bis]; bis++; }
+        phase = { von: new Date(reihe.times[k]), bis: new Date(reihe.times[bis] || reihe.times[bis - 1]), summe };
+        break;
+      }
+    }
+  }
+
+  $('#explainTitle').textContent = mm >= 0.1 ? `${mm.toFixed(1)} mm Regen` : `${props.grad}°`;
+  $('#explainText').innerHTML = `
+    <p style="margin:0 0 12px">${mm >= 0.1
+      ? `An dieser Stelle fällt in der gezeigten Stunde <b>${mm.toFixed(1)} mm</b> Regen — ${rainWords(mm)}.`
+      : `An dieser Stelle sind <b>${props.grad}°</b> vorhergesagt. Zeigt die Karte Regen, steht dort statt der Temperatur die Menge in Millimetern.`}</p>
+    ${phase ? `<div class="ds-span" style="margin-bottom:12px">
+      <b>${hhmm(phase.von)}–${hhmm(phase.bis)}</b>
+      <span>🌧 ${phase.summe.toFixed(1)} mm insgesamt</span>
+    </div>` : '<p class="ds-note" style="margin-bottom:12px">In den nächsten zwei Tagen ist hier kein Regen vorhergesagt.</p>'}
+    <dl class="ds-facts">
+      <dt>unter 0,5 mm</dt><dd>Nieseln — Jacke reicht</dd>
+      <dt>0,5 – 2 mm</dt><dd>leichter Regen — Schirm sinnvoll</dd>
+      <dt>2 – 5 mm</dt><dd>mäßiger Regen — man wird nass</dd>
+      <dt>über 5 mm</dt><dd>kräftiger Regen bis Starkregen</dd>
+    </dl>
+    <p class="ds-note">1 mm bedeutet: ein Liter Wasser pro Quadratmeter.
+      Die Werte stammen aus dem Vorhersagemodell, nicht aus dem Radar — je weiter
+      in der Zukunft, desto gröber.</p>`;
+  const l = $('#explainLink');
+  if (l) l.hidden = true;
+  openSheet('#explainSheet');
+}
+
+function openDaySheet(i) {
+  const d = data.daily, dayISO = d.time[i];
+  if (!dayISO) return;
+  const stunden = dayHours(dayISO);
+  const spans = daySpans(stunden).filter(s => s.art !== 'nacht' || s.bis - s.von >= 3);
+  const sun = Math.round((d.sunshine_duration?.[i] ?? 0) / 3600);
+  const mm = d.precipitation_sum[i] ?? 0;
+  const warm = stunden.reduce((a, b) => (b.temp > a.temp ? b : a), stunden[0] || { u: 12, temp: 0 });
+  const kalt = stunden.reduce((a, b) => (b.temp < a.temp ? b : a), stunden[0] || { u: 5, temp: 0 });
+  const uvMax = d.uv_index_max?.[i];
+  const heute = new Date(dayISO).toDateString() === new Date().toDateString();
+
+  $('#explainTitle').textContent = heute ? 'Heute' : `${weekday(dayISO)}, ${new Date(dayISO).toLocaleDateString('de-DE', { day: 'numeric', month: 'long' })}`;
+
+  $('#explainText').innerHTML = `
+    <div class="ds-spans">
+      ${spans.map(s => `<div class="ds-span">
+        <b>${String(s.von).padStart(2, '0')}–${String(s.bis).padStart(2, '0')} Uhr</b>
+        <span>${SPAN_WORT[s.art]}${s.art === 'regen' ? ` · ${s.mm.toFixed(1)} mm` : ''}</span>
+      </div>`).join('')}
+    </div>
+    <dl class="ds-facts">
+      <dt>Wärmster Moment</dt><dd>${round(warm.temp)}° gegen ${String(warm.u).padStart(2, '0')} Uhr</dd>
+      <dt>Kältester Moment</dt><dd>${round(kalt.temp)}° gegen ${String(kalt.u).padStart(2, '0')} Uhr</dd>
+      <dt>Sonne</dt><dd>${sun} Stunden${sun >= 8 ? ' — viel' : sun <= 2 ? ' — wenig' : ''}</dd>
+      <dt>Regen</dt><dd>${mm < 0.2 ? 'keiner erwartet' : `${mm.toFixed(1)} mm — ${rainWords(mm)}`}</dd>
+      <dt>Wind</dt><dd>bis ${round(d.wind_speed_10m_max?.[i])} km/h, Böen bis ${round(d.wind_gusts_10m_max?.[i])} km/h${
+        d.wind_gusts_10m_max?.[i] >= 60 ? ' — auf lose Gegenstände achten' : ''}</dd>
+      <dt>Sonnenaufgang</dt><dd>${hhmm(d.sunrise[i])}</dd>
+      <dt>Sonnenuntergang</dt><dd>${hhmm(d.sunset[i])}</dd>
+      ${uvMax != null ? `<dt>UV-Höchstwert</dt><dd>${uvMax.toFixed(1)}${uvMax >= 6 ? ' — Sonnenschutz sinnvoll' : uvMax >= 3 ? ' — mäßig' : ' — unkritisch'}</dd>` : ''}
+    </dl>
+    <p class="ds-note">1 mm Regen heißt: Auf einen Quadratmeter fällt ein Liter Wasser.
+      Verteilt über mehrere Stunden ist das kaum spürbar, in zehn Minuten ein kräftiger Schauer.</p>`;
+
+  const l = $('#explainLink');
+  if (l) l.hidden = true;
+  openSheet('#explainSheet');
 }
 
 function renderTiles(air) {
@@ -1623,12 +1792,17 @@ async function refresh() {
 
     $('#footStamp').textContent =
       `Zuletzt aktualisiert: ${new Date().toLocaleTimeString('de-DE')} · ` +
-      `Quelle: ${sourceOf(sourceId()).name}`;
-    toast('Aktualisiert.', 1400);
+      `Quelle: ${sourceOf(sourceId()).name}` +
+      (veraltet ? ' · aus dem Zwischenspeicher' : '');
+    toast(veraltet ? 'Der Wetterdienst antwortet gerade nicht — Daten aus dem Zwischenspeicher.'
+                   : 'Aktualisiert.', veraltet ? 4000 : 1400);
+    veraltet = false;
     document.body.classList.remove('loading', 'error');
   } catch (err) {
     console.error(err);
-    toast('Daten konnten nicht geladen werden. Offline?');
+    toast(/429/.test(err?.message)
+      ? 'Der Wetterdienst bremst gerade wegen zu vieler Abrufe. In ein paar Minuten nochmal.'
+      : 'Daten konnten nicht geladen werden. Offline?', 5000);
     document.body.classList.add('error');
   } finally {
     busy = false;
@@ -1799,6 +1973,7 @@ async function boot() {
       globe: $('#radarGlobe'), ticks: $('#radarTicks'), onMoveEnd: onMapMoved,
       currentTime: currentScrubTime,
       labelsOn: () => activeLayers().has('zahlen'),
+      onPointTap: showPointDetail,
       sharp: $('#mapSharp'),
       onLocate: () => Radar.setCenter(place.lat, place.lon)
     });
@@ -1824,8 +1999,8 @@ async function boot() {
 /** Sekundengenaue Uhr, einmal gegen die Serverzeit abgeglichen — die Gerätezeit
     kann abweichen, und bei Radarbildern zählt die Minute. */
 function startClock() {
-  const el = $('#footClock');
-  if (!el) return;
+  const ziele = [$('#topClock'), $('#footClock')].filter(Boolean);
+  if (!ziele.length) return;
   let versatz = 0;
 
   fetch('./manifest.webmanifest', { method: 'HEAD', cache: 'no-store' })
@@ -1837,10 +2012,11 @@ function startClock() {
 
   const tick = () => {
     const t = new Date(Date.now() + versatz);
-    el.innerHTML = `<b>${t.toLocaleTimeString('de-DE')}</b> Uhr` +
+    const html = `<b>${t.toLocaleTimeString('de-DE')}</b> Uhr` +
       (Math.abs(versatz) > 30000
         ? ` · Gerät geht ${versatz > 0 ? 'nach' : 'vor'} (${Math.abs(Math.round(versatz / 1000))} s)`
         : '');
+    ziele.forEach(el => { el.innerHTML = html; });
   };
   tick();
   setInterval(tick, 1000);

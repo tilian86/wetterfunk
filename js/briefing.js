@@ -30,7 +30,7 @@ const LENGTHS = [
 ];
 
 const LS = { proxy: 'wf.proxy', model: 'wf.model', parts: 'wf.parts', len: 'wf.len',
-             route: 'wf.route', key: 'wf.aikey' };
+             route: 'wf.route', key: 'wf.aikey', voice: 'wf.voice', rate: 'wf.rate' };
 
 /** Adresse des eigenen Cloudflare Workers. */
 const DEFAULT_PROXY = 'https://wetterfunk.florian-s-thiel.workers.dev';
@@ -183,7 +183,8 @@ Regeln:
 - Nenne konkrete Uhrzeiten, wenn sich etwas ändert. "Ab dem späten Nachmittag" ist gut, "irgendwann später" nicht.
 - Sei nüchtern und sachlich. Kein Pathos, keine Floskeln wie "Petrus meint es gut". Keine Anrede, keine Begrüßung, keine Verabschiedung.
 - Erfinde nichts. Was nicht in den Daten steht, kommt nicht vor.
-- Wenn amtliche Warnungen vorliegen, nenne sie zuerst und deutlich.
+- Beginne mit dem Wetter im Moment. Nur wenn amtliche Warnungen vorliegen, kommen die davor.
+- Erwähne nie, dass etwas nicht vorliegt. Keine Sätze wie "Es liegen keine Warnungen vor" oder "Regen ist nicht zu erwarten" als Einstieg.
 - Ziel: ungefähr ${len.words} Wörter.`;
 
   const user =
@@ -260,15 +261,49 @@ async function generate() {
 }
 
 // ══ Vorlesen ═══════════════════════════════════════════════
-let speaking = false, voice = null;
+let speaking = false, voice = null, saetze = [], satzNr = 0;
+
+/** Apples Spaßstimmen tauchen in der Liste mit auf, taugen aber nicht
+    zum Vorlesen — sie kommen ganz ans Ende. */
+const SPASS = /^(Eddy|Flo|Grandma|Grandpa|Reed|Rocko|Sandy|Shelley|Albert|Jester|Organ|Superstar|Trinoids|Whisper|Wobble|Zarvox|Bahh|Bells|Boing|Bubbles|Cellos)\b/i;
+
+/** Alle deutschen Stimmen, beste zuerst. Ohne Zusatzdownload steht auf Apple-
+    Geräten nur die alte "Anna" bereit — Premium/Enhanced klingen deutlich besser. */
+function germanVoices() {
+  const de = speechSynthesis.getVoices().filter(v => v.lang?.toLowerCase().startsWith('de'));
+  const rang = (v) => (SPASS.test(v.name) ? 9
+                     : /premium/i.test(v.name) ? 0
+                     : /enhanced/i.test(v.name) ? 1
+                     : /siri/i.test(v.name) ? 2
+                     : v.localService ? 3 : 4);
+  return de.sort((a, b) => rang(a) - rang(b) || a.name.localeCompare(b.name));
+}
+
+/** Stehen nur Basisstimmen bereit? Dann lohnt der Hinweis auf den Download. */
+const nurBasisStimmen = () => !germanVoices().some(v => /premium|enhanced|siri/i.test(v.name));
 
 function pickVoice() {
-  const all = speechSynthesis.getVoices();
-  const de = all.filter(v => v.lang?.toLowerCase().startsWith('de'));
-  // Bevorzugt hochwertige Stimmen, sonst die erste deutsche
-  return de.find(v => /premium|enhanced|siri/i.test(v.name))
-      || de.find(v => v.localService)
-      || de[0] || null;
+  const gespeichert = store.get(LS.voice, '');
+  const alle = germanVoices();
+  return alle.find(v => v.voiceURI === gespeichert) || alle[0] || null;
+}
+
+/** Sätze nacheinander sprechen statt alle auf einmal in die Schlange zu
+    legen — iOS bricht lange Schlangen sonst mittendrin ab. */
+function speakNext() {
+  if (!speaking || satzNr >= saetze.length) { setSpeaking(false); return; }
+  const u = new SpeechSynthesisUtterance(saetze[satzNr]);
+  if (voice) u.voice = voice;
+  u.lang = voice?.lang || 'de-DE';
+  u.rate = store.get(LS.rate, 1);
+  u.pitch = 1;
+  u.onend = () => { satzNr++; speakNext(); };
+  u.onerror = (e) => {
+    if (e.error === 'interrupted' || e.error === 'canceled') return;
+    console.warn('Vorlesen:', e.error);
+    satzNr++; speakNext();
+  };
+  speechSynthesis.speak(u);
 }
 
 function speak() {
@@ -276,24 +311,33 @@ function speak() {
   if (!text) return;
   if (speaking) { stopSpeaking(); return; }
 
-  voice = voice || pickVoice();
   speechSynthesis.cancel();
+  voice = pickVoice();
+  if (!voice) {
+    host.toast('Keine deutsche Stimme gefunden. In den iOS-Einstellungen unter Bedienungshilfen → Gesprochene Inhalte eine laden.', 5000);
+  }
 
-  // In Sätze zerlegen: iOS bricht lange Äußerungen sonst ab
-  const chunks = text.split(/(?<=[.!?])\s+/).filter(Boolean);
-  chunks.forEach((sentence, n) => {
-    const u = new SpeechSynthesisUtterance(sentence);
-    if (voice) u.voice = voice;
-    u.lang = voice?.lang || 'de-DE';
-    u.rate = 1.0; u.pitch = 1.0;
-    if (n === chunks.length - 1) u.onend = () => setSpeaking(false);
-    u.onerror = () => setSpeaking(false);
-    speechSynthesis.speak(u);
-  });
+  saetze = text.split(/(?<=[.!?])\s+/).map(s => s.trim()).filter(Boolean);
+  satzNr = 0;
   setSpeaking(true);
+
+  // Direkt im Klick starten — sonst blockt iOS die Sprachausgabe
+  speakNext();
+
+  // Manche Geräte pausieren die Ausgabe unerwartet; alle paar Sekunden lösen
+  clearInterval(speak._wach);
+  speak._wach = setInterval(() => {
+    if (!speaking) { clearInterval(speak._wach); return; }
+    if (speechSynthesis.paused) speechSynthesis.resume();
+  }, 3000);
 }
 
-function stopSpeaking() { speechSynthesis.cancel(); setSpeaking(false); }
+function stopSpeaking() {
+  speaking = false;
+  clearInterval(speak._wach);
+  speechSynthesis.cancel();
+  setSpeaking(false);
+}
 
 function setSpeaking(on) {
   speaking = on;
@@ -336,11 +380,59 @@ function renderResult(model, out) {
         <span id="bfSpeakLabel">Vorlesen</span>
       </button>
       <span class="bf-cost">${viaLabel(model, out)}</span>
-    </div>`;
+    </div>
+    <div class="bf-voice" id="bfVoiceBar"></div>`;
 
   $('#bfSpeak').addEventListener('click', speak);
+  renderVoiceBar();
   setSpeaking(false);
   box.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+}
+
+const RATES = [0.8, 1, 1.2, 1.5];
+
+/** Stimme und Tempo einstellen. Die Liste steht erst bereit, wenn der Browser
+    die Stimmen geladen hat — deshalb zusätzlich auf `voiceschanged` hören. */
+function renderVoiceBar() {
+  const bar = $('#bfVoiceBar');
+  if (!bar) return;
+  const stimmen = germanVoices();
+  if (!stimmen.length) { bar.innerHTML = '<span class="bf-hint">Stimmen werden geladen…</span>'; return; }
+
+  const aktiv = pickVoice();
+  const tempo = store.get(LS.rate, 1);
+  bar.innerHTML = `
+    <label class="bf-voice-pick">
+      <span>Stimme</span>
+      <select id="bfVoice">
+        ${stimmen.map(v => `<option value="${v.voiceURI}"${v.voiceURI === aktiv?.voiceURI ? ' selected' : ''}>${v.name.replace(/\s*\(.*?\)/, '')}</option>`).join('')}
+      </select>
+    </label>
+    <div class="bf-rate" role="group" aria-label="Sprechtempo">
+      <span>Tempo</span>
+      ${RATES.map(r => `<button type="button" data-rate="${r}" class="${r === tempo ? 'on' : ''}">${String(r).replace('.', ',')}×</button>`).join('')}
+    </div>
+    ${nurBasisStimmen() ? `<p class="bf-voicehint">
+      Klingt blechern? Es ist die alte Systemstimme. Eine natürliche gibt es gratis:
+      <b>Einstellungen → Bedienungshilfen → Gesprochene Inhalte → Stimmen → Deutsch</b>
+      und dort eine Premium-Stimme laden. Danach hier auswählen.
+    </p>` : ''}`;
+
+  $('#bfVoice').addEventListener('change', (e) => {
+    store.set(LS.voice, e.target.value);
+    voice = pickVoice();
+    if (speaking) { const n = satzNr; stopSpeaking(); satzNr = n; speaking = true; setSpeaking(true); speakNext(); }
+  });
+  $$('#bfVoiceBar .bf-rate button').forEach(b => b.addEventListener('click', () => {
+    store.set(LS.rate, Number(b.dataset.rate));
+    $$('#bfVoiceBar .bf-rate button').forEach(x => x.classList.toggle('on', x === b));
+    // Neues Tempo greift ab dem laufenden Satz
+    if (speaking) { const n = satzNr; speechSynthesis.cancel(); satzNr = n; speakNext(); }
+  }));
+}
+
+if ('speechSynthesis' in window) {
+  speechSynthesis.addEventListener?.('voiceschanged', () => { voice = null; renderVoiceBar(); });
 }
 
 function renderChips() {
