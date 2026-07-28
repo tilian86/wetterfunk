@@ -4,7 +4,7 @@
 
 // Bei jeder Auslieferung hochzählen — sonst behalten Geräte die alte
 // Programmhülle im Cache und sehen Korrekturen nicht.
-const VERSION = 'wetterfunk-v15';
+const VERSION = 'wetterfunk-v18';
 const SHELL = [
   './',
   './index.html',
@@ -56,5 +56,32 @@ self.addEventListener('fetch', (e) => {
         return res;
       })
       .catch(() => caches.match(request).then(r => r || caches.match('./index.html')))
+  );
+});
+
+/* ── Regenwarnungen ─────────────────────────────────────────
+   Der Worker schickt eine kurze Meldung, wenn Regen aufzieht.
+   Ohne diesen Empfänger zeigt iOS nur eine leere Standardmeldung. */
+self.addEventListener('push', (e) => {
+  let d = { titel: 'Wetterfunk', text: 'Es zieht Regen auf.' };
+  try { if (e.data) d = { ...d, ...e.data.json() }; } catch {}
+
+  e.waitUntil(self.registration.showNotification(d.titel, {
+    body: d.text,
+    icon: './icons/icon-192.png',
+    badge: './icons/icon-192.png',
+    tag: d.art === 'test' ? 'wf-test' : 'wf-regen',   // ersetzt die vorige Meldung
+    renotify: true,
+    data: { url: './' }
+  }));
+});
+
+self.addEventListener('notificationclick', (e) => {
+  e.notification.close();
+  e.waitUntil(
+    self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then(liste => {
+      for (const c of liste) if ('focus' in c) return c.focus();
+      return self.clients.openWindow('./');
+    })
   );
 });

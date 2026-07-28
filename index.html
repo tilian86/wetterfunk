@@ -13,10 +13,10 @@
 <meta name="theme-color" content="#0b1220">
 <link rel="apple-touch-icon" href="icons/icon-180.png">
 <link rel="icon" href="icons/icon-192.png">
-<link rel="manifest" href="manifest.webmanifest?v=15">
+<link rel="manifest" href="manifest.webmanifest?v=18">
 
-<link rel="stylesheet" href="vendor/maplibre-gl.css?v=15">
-<link rel="stylesheet" href="css/style.css?v=15">
+<link rel="stylesheet" href="vendor/maplibre-gl.css?v=18">
+<link rel="stylesheet" href="css/style.css?v=18">
 </head>
 <body>
 
@@ -131,6 +131,23 @@
     <p class="radar-hint">Dieser Regler zeigt die <b>Vergangenheit</b> — echte Radarmessung.
       Für die Zukunft nimm den <b>Zeitstrahl</b> weiter unten: der steuert dieselbe Karte
       und reicht fünf Tage voraus.</p>
+  </section>
+
+  <!-- ══ REGENWARNUNG AUFS GERÄT ══ -->
+  <section class="card card-push" id="pushCard" hidden>
+    <div class="card-head">
+      <h2>Regenwarnung</h2>
+      <span class="card-sub" id="pushState"></span>
+    </div>
+    <p class="push-desc" id="pushDesc">
+      Eine Meldung aufs Gerät, sobald in den nächsten zwei Stunden Regen aufzieht —
+      mit Startzeit, Dauer und Menge. Höchstens alle drei Stunden eine.
+    </p>
+    <div class="push-row">
+      <button class="push-btn" id="pushToggle">Einschalten</button>
+      <button class="link-btn" id="pushTest" hidden>Probemeldung</button>
+    </div>
+    <p class="push-hint" id="pushHint"></p>
   </section>
 
   <!-- ══ ZEITSTRAHL ══ -->
@@ -350,12 +367,12 @@
 
 <div class="toast" id="toast" hidden></div>
 
-<script src="vendor/maplibre-gl.js?v=15"></script>
-<script src="js/icons.js?v=15"></script>
-<script src="js/radar.js?v=15"></script>
-<script src="js/forecast.js?v=15"></script>
-<script src="js/briefing.js?v=15"></script>
-<script src="js/news.js?v=15"></script>
-<script src="js/app.js?v=15"></script>
+<script src="vendor/maplibre-gl.js?v=18"></script>
+<script src="js/icons.js?v=18"></script>
+<script src="js/radar.js?v=18"></script>
+<script src="js/forecast.js?v=18"></script>
+<script src="js/briefing.js?v=18"></script>
+<script src="js/news.js?v=18"></script>
+<script src="js/app.js?v=18"></script>
 </body>
 </html>

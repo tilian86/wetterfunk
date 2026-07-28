@@ -1757,6 +1757,10 @@ async function refresh() {
   if (stamp) stamp.textContent = 'Daten werden geholt…';
   toast('Daten werden geholt…', 1500);
 
+  // Unabhängig von den Zahlen — er soll auch dastehen, wenn Open-Meteo hakt
+  loadDwdText(place.lat, place.lon);
+  renderPush();
+
   try {
     const [fc, aq, md, warn] = await Promise.all([
       loadForecast(place.lat, place.lon),
@@ -1781,7 +1785,6 @@ async function refresh() {
     renderCountdown();
     renderSky();
     renderCams();
-    loadDwdText(place.lat, place.lon);   // im Hintergrund, blockiert nichts
 
     // Radarbilder mitziehen — sonst zeigt die Karte nach dem Aktualisieren
     // weiter den Stand vom Seitenaufruf.
@@ -1824,6 +1827,132 @@ async function useGPS() {
 }
 
 // ══ Sprungleiste ═══════════════════════════════════════════
+/* ── Regenwarnung aufs Gerät ────────────────────────────────
+   Web Push. Auf dem iPhone geht das nur, wenn die Seite über "Zum
+   Home-Bildschirm" installiert wurde — im Safari-Tab fehlt die Schnittstelle. */
+const pushProxy = () => ((localStorage.getItem('wf.proxy') || '').replace(/^"|"$/g, '')
+  || 'https://wetterfunk.florian-s-thiel.workers.dev').replace(/\/+$/, '');
+
+const pushMoeglich = () => 'serviceWorker' in navigator && 'PushManager' in window && 'Notification' in window;
+const alsAppInstalliert = () => window.matchMedia('(display-mode: standalone)').matches
+  || window.navigator.standalone === true;
+
+function urlB64ToUint8(b64) {
+  const pad = '='.repeat((4 - b64.length % 4) % 4);
+  const roh = atob((b64 + pad).replace(/-/g, '+').replace(/_/g, '/'));
+  return Uint8Array.from(roh, c => c.charCodeAt(0));
+}
+
+async function aktuellesAbo() {
+  if (!pushMoeglich()) return null;
+  const reg = await navigator.serviceWorker.getRegistration();
+  return reg ? reg.pushManager.getSubscription() : null;
+}
+
+async function renderPush() {
+  const karte = $('#pushCard');
+  if (!karte) return;
+
+  if (!pushMoeglich()) {
+    karte.hidden = true;
+    return;
+  }
+  karte.hidden = false;
+
+  const abo = await aktuellesAbo();
+  const an = !!abo;
+
+  // Beim Ortswechsel den hinterlegten Standort nachziehen
+  if (an && place?.lat != null) {
+    fetch(`${pushProxy()}/push/an`, {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ abo: abo.toJSON(), lat: place.lat, lon: place.lon, ort: place.name })
+    }).catch(() => {});
+  }
+
+  $('#pushState').textContent = an ? 'eingeschaltet' : 'aus';
+  $('#pushToggle').textContent = an ? 'Ausschalten' : 'Einschalten';
+  $('#pushToggle').classList.toggle('on', an);
+  $('#pushTest').hidden = !an;
+
+  const hinweis = $('#pushHint');
+  if (an) {
+    hinweis.textContent = `Gilt für ${place.name}. Beim Ortswechsel hier neu einschalten.`;
+  } else if (!alsAppInstalliert() && /iPhone|iPad/.test(navigator.userAgent)) {
+    hinweis.innerHTML = 'Auf dem iPhone geht das nur aus der installierten App heraus: ' +
+      'im Safari auf <b>Teilen → Zum Home-Bildschirm</b>, danach die App vom Homescreen öffnen.';
+  } else if (Notification.permission === 'denied') {
+    hinweis.innerHTML = 'Mitteilungen sind für diese Seite gesperrt — ' +
+      'in den Einstellungen des Geräts wieder erlauben.';
+  } else {
+    hinweis.textContent = '';
+  }
+}
+
+async function pushUmschalten() {
+  const knopf = $('#pushToggle');
+  knopf.disabled = true;
+  try {
+    const reg = await navigator.serviceWorker.ready;
+    const vorhanden = await reg.pushManager.getSubscription();
+
+    if (vorhanden) {
+      await fetch(`${pushProxy()}/push/aus`, {
+        method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ endpoint: vorhanden.endpoint })
+      }).catch(() => {});
+      await vorhanden.unsubscribe();
+      toast('Regenwarnungen ausgeschaltet.');
+      return renderPush();
+    }
+
+    const erlaubnis = await Notification.requestPermission();
+    if (erlaubnis !== 'granted') {
+      toast('Ohne Erlaubnis für Mitteilungen geht es nicht.', 4000);
+      return renderPush();
+    }
+
+    const { key } = await (await fetch(`${pushProxy()}/push/key`)).json();
+    if (!key) throw new Error('Kein Schlüssel vom Server');
+
+    const abo = await reg.pushManager.subscribe({
+      userVisibleOnly: true,
+      applicationServerKey: urlB64ToUint8(key)
+    });
+
+    const res = await fetch(`${pushProxy()}/push/an`, {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        abo: abo.toJSON(), lat: place.lat, lon: place.lon, ort: place.name
+      })
+    });
+    if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || `Server ${res.status}`);
+
+    toast('Regenwarnungen eingeschaltet.');
+  } catch (e) {
+    console.warn('Push:', e);
+    toast(`Hat nicht geklappt: ${e.message}`.slice(0, 120), 5000);
+  } finally {
+    knopf.disabled = false;
+    renderPush();
+  }
+}
+
+async function pushProbe() {
+  const abo = await aktuellesAbo();
+  if (!abo) return;
+  try {
+    const res = await fetch(`${pushProxy()}/push/test`, {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ endpoint: abo.endpoint })
+    });
+    const d = await res.json();
+    toast(d.ok ? 'Probemeldung unterwegs.' : `Fehlgeschlagen: ${d.error || d.status}`, 4000);
+  } catch (e) {
+    toast(`Probemeldung fehlgeschlagen: ${e.message}`.slice(0, 120), 4000);
+  }
+}
+
 /* ── Amtlicher Regionalwetterbericht des DWD ────────────────
    Von Meteorologen geschriebene Lagebeurteilung — mehr Einordnung, als
    Zahlen liefern können. Die Region wird grob aus den Koordinaten geraten;
@@ -1977,6 +2106,9 @@ function wire() {
   $('#gpsBtn').addEventListener('click', useGPS);
   $('#mapFull').addEventListener('click', toggleMapFull);
   $('#dwdMore')?.addEventListener('click', openDwdFull);
+  $('#pushToggle')?.addEventListener('click', pushUmschalten);
+  $('#pushTest')?.addEventListener('click', pushProbe);
+  renderPush();
   $('#refreshBtn').addEventListener('click', refresh);
 
   // Datenquelle

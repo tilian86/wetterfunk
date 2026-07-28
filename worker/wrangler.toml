@@ -5,3 +5,17 @@ workers_dev = true
 
 # Schlüssel nicht hier eintragen, sondern:
 #   wrangler secret put ANTHROPIC_API_KEY
+#   wrangler secret put VAPID_PRIVATE
+
+# Abos für Regenwarnungen
+[[kv_namespaces]]
+binding = "WF_PUSH"
+id = "47a55c12ad0544398c1a12c06c254ed2"
+
+# Alle 15 Minuten prüfen, ob bei jemandem Regen aufzieht
+[triggers]
+crons = ["*/15 * * * *"]
+
+[vars]
+VAPID_PUBLIC = "BD_3JQs9OeMY8GfVSpKkOpa4JYyQ9Te2meM2qgFGB5oBtSFkNHbTGaSN7HKYAYO-1bfweUNvDRpkpk2a937-Oow"
+VAPID_SUBJECT = "mailto:florian.s.thiel@gmail.com"

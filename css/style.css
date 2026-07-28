@@ -313,6 +313,23 @@ svg { fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round
 .bf-cost { font-size: 11px; color: var(--ink-faint); text-align: right; line-height: 1.4; }
 .bf-cost i { display: block; font-style: normal; opacity: .7; }
 
+/* ── Regenwarnung aufs Gerät ──────────────────────────────── */
+.push-desc { font-size: 13px; line-height: 1.55; color: var(--ink-dim); margin: 0 0 13px; }
+.push-row { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.push-btn {
+  padding: 11px 18px; border-radius: var(--r-md);
+  background: var(--accent); border: none; color: #04121f;
+  font: 700 14px var(--font); cursor: pointer;
+}
+.push-btn.on { background: rgba(255,255,255,.09); color: var(--ink-dim); }
+.push-btn:disabled { opacity: .55; }
+.push-btn:active { transform: scale(.98); }
+.push-hint {
+  margin: 11px 0 0; font-size: 11.5px; line-height: 1.5; color: var(--ink-faint);
+}
+.push-hint:empty { display: none; }
+.push-hint b { color: var(--ink-dim); }
+
 /* ── Amtlicher DWD-Bericht ────────────────────────────────── */
 .dwd-text { font-size: 13.5px; line-height: 1.62; color: var(--ink-dim); }
 .dwd-text p { margin: 0 0 10px; }

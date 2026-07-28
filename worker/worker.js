@@ -1,9 +1,13 @@
 /* Wetterfunk — Cloudflare Worker
-   Zwei Aufgaben:
+   Aufgaben:
      1. /rss?url=…  holt RSS-Feeds (der Browser darf das wegen CORS nicht selbst)
      2. /ai         reicht Textanfragen an die Mac-Bridge weiter, die sie über
                     die Claude-CLI beantwortet — läuft damit über das Max-Abo
                     statt über bezahlte API-Tokens. Kein API-Schlüssel nötig.
+     3. /dwdtext    amtlicher Regionalwetterbericht des DWD
+     4. /push/*     Abos für Regenwarnungen; ein Zeitplan prüft alle 15 Minuten,
+                    ob bei einem Abonnenten Regen aufzieht, und schickt eine
+                    Benachrichtigung aufs Gerät.
 
    Ist der Mac aus, meldet /ai das ehrlich zurück; es gibt bewusst keinen
    kostenpflichtigen Ausweichweg.
@@ -12,7 +16,10 @@
      wrangler deploy
      wrangler secret put BRIDGE_URL      # https://…ts.net
      wrangler secret put BRIDGE_SECRET   # gleiches Geheimnis wie in der Bridge
+     wrangler secret put VAPID_PRIVATE   # privater Schlüssel für Web Push
 */
+
+import { sendPush } from './push.js';
 
 // Nur diese Absender dürfen den Worker nutzen.
 const ALLOWED_ORIGINS = [
@@ -102,6 +109,59 @@ export default {
       }
     }
 
+    // ── Regenwarnungen: an- und abmelden ─────────────────────
+    if (url.pathname === '/push/key') {
+      return json({ key: env.VAPID_PUBLIC }, 200, origin);
+    }
+
+    if (url.pathname === '/push/an' && request.method === 'POST') {
+      let req;
+      try { req = await request.json(); } catch { return json({ error: 'Ungültige Anfrage' }, 400, origin); }
+      const { abo, lat, lon, ort } = req || {};
+      if (!abo?.endpoint || !abo?.keys?.p256dh || !abo?.keys?.auth) {
+        return json({ error: 'Unvollständiges Abo' }, 400, origin);
+      }
+      if (typeof lat !== 'number' || typeof lon !== 'number') {
+        return json({ error: 'Standort fehlt' }, 400, origin);
+      }
+
+      // Beim Ortswechsel wird derselbe Eintrag überschrieben. Den Zeitpunkt
+      // der letzten Meldung übernehmen, sonst käme sofort wieder eine.
+      const key = aboSchluessel(abo.endpoint);
+      const alt = await env.WF_PUSH.get(key, 'json');
+      await env.WF_PUSH.put(key, JSON.stringify({
+        abo, lat, lon, ort: String(ort || '').slice(0, 60),
+        seit: alt?.seit || Date.now(), zuletzt: alt?.zuletzt || 0
+      }));
+      return json({ ok: true }, 200, origin);
+    }
+
+    if (url.pathname === '/push/aus' && request.method === 'POST') {
+      let req;
+      try { req = await request.json(); } catch { return json({ error: 'Ungültige Anfrage' }, 400, origin); }
+      if (!req?.endpoint) return json({ error: 'endpoint fehlt' }, 400, origin);
+      await env.WF_PUSH.delete(aboSchluessel(req.endpoint));
+      return json({ ok: true }, 200, origin);
+    }
+
+    // Probelauf, damit man das Einrichten prüfen kann
+    if (url.pathname === '/push/test' && request.method === 'POST') {
+      let req;
+      try { req = await request.json(); } catch { return json({ error: 'Ungültige Anfrage' }, 400, origin); }
+      const eintrag = await env.WF_PUSH.get(aboSchluessel(req?.endpoint || ''), 'json');
+      if (!eintrag) return json({ error: 'Kein Abo gefunden' }, 404, origin);
+      try {
+        const status = await sendPush(eintrag.abo, JSON.stringify({
+          titel: 'Wetterfunk meldet sich',
+          text: `Regenwarnungen für ${eintrag.ort || 'deinen Ort'} sind aktiv.`,
+          art: 'test'
+        }), env);
+        return json({ ok: status < 300, status }, 200, origin);
+      } catch (e) {
+        return json({ error: e.message }, 500, origin);
+      }
+    }
+
     // ── Text über die Mac-Bridge erzeugen ────────────────────
     if (url.pathname === '/ai' && request.method === 'POST') {
       if (!env.BRIDGE_URL || !env.BRIDGE_SECRET) {
@@ -151,9 +211,116 @@ export default {
       }
     }
 
-    return json({ error: 'Unbekannter Pfad', paths: ['/rss?url=…', '/ai'] }, 404, origin);
+    return json({ error: 'Unbekannter Pfad',
+      paths: ['/rss?url=…', '/ai', '/dwdtext?region=…', '/push/an', '/push/aus', '/push/test'] },
+      404, origin);
+  },
+
+  /* ── Zeitplan: zieht bei jemandem Regen auf? ───────────────
+     Läuft alle 15 Minuten über alle Abos. Gemeldet wird nur, wenn in den
+     nächsten zwei Stunden Regen beginnt und die letzte Meldung für diesen
+     Ort mindestens drei Stunden her ist — sonst wird es zur Belästigung. */
+  async scheduled(event, env, ctx) {
+    ctx.waitUntil(regenPruefen(env));
   }
 };
+
+const RUHE_MS = 3 * 3600 * 1000;   // Mindestabstand zwischen zwei Meldungen
+
+async function regenPruefen(env) {
+  const liste = await env.WF_PUSH.list({ prefix: 'abo:' });
+
+  for (const eintragMeta of liste.keys) {
+    const eintrag = await env.WF_PUSH.get(eintragMeta.name, 'json');
+    if (!eintrag) continue;
+
+    try {
+      const treffer = await regenVoraus(eintrag.lat, eintrag.lon);
+      if (!treffer) continue;
+      if (Date.now() - (eintrag.zuletzt || 0) < RUHE_MS) continue;
+
+      const status = await sendPush(eintrag.abo, JSON.stringify({
+        titel: treffer.titel, text: treffer.text, art: 'regen'
+      }), env);
+
+      // 404/410 heißt: Gerät hat das Abo verworfen
+      if (status === 404 || status === 410) {
+        await env.WF_PUSH.delete(eintragMeta.name);
+        continue;
+      }
+      if (status < 300) {
+        eintrag.zuletzt = Date.now();
+        await env.WF_PUSH.put(eintragMeta.name, JSON.stringify(eintrag));
+      }
+    } catch (e) {
+      console.log('Regenprüfung fehlgeschlagen:', eintragMeta.name, e.message);
+    }
+  }
+}
+
+/** Beginnt in den nächsten zwei Stunden Regen? Nutzt die Viertelstundenwerte. */
+async function regenVoraus(lat, lon) {
+  const p = new URLSearchParams({
+    latitude: String(lat), longitude: String(lon), timezone: 'auto',
+    minutely_15: 'precipitation', forecast_days: '1'
+  });
+  const res = await fetch(`https://api.open-meteo.com/v1/forecast?${p}`);
+  if (!res.ok) return null;
+  const d = await res.json();
+
+  const zeiten = d.minutely_15?.time || [];
+  const werte = d.minutely_15?.precipitation || [];
+  const jetzt = Date.now();
+
+  /* Open-Meteo liefert Ortszeit ohne Zeitzonenkürzel ("2026-07-28T05:15").
+     Der Worker läuft in UTC — ohne Umrechnung läge alles um den Zeitversatz
+     daneben. Deshalb als UTC lesen und den Versatz abziehen. */
+  const versatz = (d.utc_offset_seconds ?? 0) * 1000;
+  const alsZeit = (t) => Date.parse(t + 'Z') - versatz;
+
+  // Fenster: von jetzt bis in zwei Stunden
+  const ab = zeiten.findIndex(t => alsZeit(t) >= jetzt);
+  if (ab < 0) return null;
+  const bis = Math.min(zeiten.length, ab + 8);
+
+  // Regnet es schon? Dann ist die Meldung keine Vorwarnung mehr.
+  if ((werte[ab] ?? 0) >= 0.1) return null;
+
+  let start = -1;
+  for (let i = ab; i < bis; i++) {
+    if ((werte[i] ?? 0) >= 0.1) { start = i; break; }
+  }
+  if (start < 0) return null;
+
+  // Wie lange und wie kräftig?
+  let ende = start, summe = 0, spitze = 0;
+  while (ende < zeiten.length && (werte[ende] ?? 0) >= 0.1) {
+    summe += werte[ende]; spitze = Math.max(spitze, werte[ende]); ende++;
+  }
+
+  const minuten = Math.round((alsZeit(zeiten[start]) - jetzt) / 60000);
+  const dauer = (ende - start) * 15;
+  const hhmm = zeiten[start].slice(11, 16);   // steht schon in Ortszeit da
+
+  const staerke = spitze >= 2.5 ? 'kräftiger Regen'
+                : spitze >= 0.8 ? 'Regen'
+                : 'leichter Regen';
+  const dauerWort = dauer >= 120 ? 'über zwei Stunden'
+                  : dauer >= 60 ? `etwa ${Math.round(dauer / 60)} Std.`
+                  : `etwa ${dauer} Minuten`;
+
+  return {
+    titel: minuten <= 20 ? `Gleich ${staerke}` : `In ${minuten} Minuten ${staerke}`,
+    text: `Ab ${hhmm} Uhr, ${dauerWort}, rund ${summe.toFixed(1)} mm.`
+  };
+}
+
+/** KV-Schlüssel aus der Abo-Adresse — die ist je Gerät eindeutig. */
+function aboSchluessel(endpoint) {
+  let h = 0;
+  for (let i = 0; i < endpoint.length; i++) h = (h * 31 + endpoint.charCodeAt(i)) | 0;
+  return `abo:${(h >>> 0).toString(36)}:${endpoint.slice(-24).replace(/[^\w-]/g, '')}`;
+}
 
 function json(obj, status, origin, cache) {
   return new Response(JSON.stringify(obj), {
