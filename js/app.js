@@ -475,7 +475,7 @@ function renderHourly() {
 
   $('#hourly').innerHTML = items.map((x, n) => {
     if (x.kind === 'sun') {
-      return `<div class="hcol hcol-sun">
+      return `<div class="hcol hcol-sun" data-zeit="${x.t}">
         <span class="h-time">${hhmm(x.t)}</span>
         <span class="sun-ico">${x.up ? sunUpSvg() : sunDownSvg()}</span>
         <span class="h-sunlabel">${x.up ? 'Aufgang' : 'Untergang'}</span>
@@ -487,7 +487,7 @@ function renderHourly() {
     const temp = round(h.temperature_2m[i]);
     const rel = (h.temperature_2m[i] - tMin) / span;      // 0..1 für den Verlauf
     const isNow = n === 0 || (items[0].kind === 'sun' && n === 1);
-    return `<div class="hcol${isNow ? ' is-now' : ''}">
+    return `<div class="hcol${isNow ? ' is-now' : ''}" data-zeit="${x.t}">
       <span class="h-time">${isNow ? 'Jetzt' : hhmm(x.t)}</span>
       <span class="h-icon">${WX.icon(h.weather_code[i], h.is_day[i])}</span>
       <span class="h-temp" style="--rel:${rel.toFixed(2)}">${temp}°</span>
@@ -508,6 +508,41 @@ function wireHourlyScroll() {
   const box = $('#hourly');
   if (!box || box.dataset.wired) return;
   box.dataset.wired = '1';
+
+  /* Beim Schieben zeigt die Kopfzeile, wo man gerade ist. Unter dem Daumen
+     steht der Wert, aber der Tag ist dort nicht ablesbar — oben schon. */
+  const marke = $('#hourlyWhen');
+  let ruhe = null;
+  const zeigeZeit = () => {
+    if (!marke) return;
+    const kasten = box.getBoundingClientRect();
+    // Die Spalte, die am linken Rand steht — dort setzt der Blick an
+    const spalten = [...box.querySelectorAll('.hcol[data-zeit]')];
+    const treffer = spalten.find(s => s.getBoundingClientRect().right > kasten.left + 12);
+    if (!treffer) return;
+
+    // Steht die Leiste am Anfang, bleibt die Beschriftung stehen
+    if (treffer.classList.contains('is-now')) {
+      marke.textContent = '48 Stunden';
+      marke.classList.remove('on');
+      return;
+    }
+    const t = new Date(+treffer.dataset.zeit);
+
+    const heute = t.toDateString() === new Date().toDateString();
+    const morgen = t.toDateString() === new Date(Date.now() + 864e5).toDateString();
+    const tag = heute ? 'Heute' : morgen ? 'Morgen' : weekday(t);
+    marke.textContent = `${tag}, ${hhmm(t)} Uhr`;
+    marke.classList.add('on');
+
+    // Nach dem Loslassen zurück auf die Beschriftung
+    clearTimeout(ruhe);
+    ruhe = setTimeout(() => {
+      marke.textContent = '48 Stunden';
+      marke.classList.remove('on');
+    }, 2200);
+  };
+  box.addEventListener('scroll', zeigeZeit, { passive: true });
 
   box.addEventListener('wheel', (e) => {
     // Waagerechte Gesten macht der Browser selbst; nur senkrechte umlenken
@@ -882,7 +917,27 @@ function renderScrub() {
     if (e?.isTrusted && spielTimer) toggleZeitraffer();
     paint();
     syncMapAt(punkte[+sl.value]?.t);
+    zeitMarkeHeben();      // Zeitpunkt oben in der Karte kurz hervorheben
   };
+
+  /* Am Rechner gibt es kein Wischen: waagerechte Trackpad-Gesten und das
+     Mausrad über dem Regler auf den Zeitstrahl umlenken. Sonst muss man den
+     kleinen Knopf treffen, um die Karte durch die Zeit zu schieben. */
+  const wrap = sl.parentElement;
+  if (wrap && !wrap.dataset.wired) {
+    wrap.dataset.wired = '1';
+    wrap.addEventListener('wheel', (ev) => {
+      const d = Math.abs(ev.deltaX) >= Math.abs(ev.deltaY) ? ev.deltaX : ev.deltaY;
+      if (!d) return;
+      const weiter = Math.sign(d) * Math.max(1, Math.round(Math.abs(d) / 12));
+      const neu = clamp(+sl.value + weiter, 0, +sl.max);
+      if (neu === +sl.value) return;                  // am Ende die Seite scrollen lassen
+      ev.preventDefault();
+      if (spielTimer) toggleZeitraffer();
+      sl.value = String(neu);
+      sl.dispatchEvent(new Event('input'));
+    }, { passive: false });
+  }
   // Beim Öffnen im Jetzt stehen — nicht am linken Rand in der Vergangenheit
   sl.value = String(nullpunkt);
   paint();
@@ -955,34 +1010,60 @@ const currentScrubTime = () => {
   return p[Math.min(+($('#scrubSlider')?.value || 0), p.length - 1)]?.t;
 };
 
+/** Kurzform des Zeitpunkts für die Karte: heute reicht die Uhrzeit,
+    an anderen Tagen gehört der Wochentag davor. */
+function mapZeitWort(t) {
+  const d = t instanceof Date ? t : new Date(t);
+  const minuten = Math.round((d - Date.now()) / 60000);
+  if (Math.abs(minuten) <= 7) return 'jetzt';
+  return d.toDateString() === new Date().toDateString()
+    ? `${hhmm(d)} Uhr` : `${weekday(d)} ${hhmm(d)} Uhr`;
+}
+
+/** Beschriftung oben in der Karte: erst der Zeitpunkt, dann die Art der
+    Darstellung. Beim Schieben am Zeitstrahl ist der Zeitpunkt das Wichtigste —
+    sonst sieht man nicht, welchen Moment die Karte gerade zeigt. */
+function setMapMode(zeit, art, mode) {
+  const label = $('#mapMode');
+  if (!label) return;
+  label.innerHTML = (zeit ? `<b class="mm-zeit">${zeit}</b>` : '') +
+                    `<span class="mm-art">${art}</span>`;
+  label.dataset.mode = mode;
+}
+
+/** Beim Schieben tritt die Zeit kurz hervor und legt sich danach wieder
+    zurück — dauerhaft groß würde sie die Karte verdecken. */
+let zeitMarkeTimer = null;
+function zeitMarkeHeben() {
+  const label = $('#mapMode');
+  if (!label) return;
+  label.classList.add('is-scrub');
+  clearTimeout(zeitMarkeTimer);
+  zeitMarkeTimer = setTimeout(() => label.classList.remove('is-scrub'), 1600);
+}
+
 /** Karte an den Zeitstrahl koppeln: bis 30 Minuten zeigt das echte Radar,
     danach die selbst gezeichnete Flächenvorhersage. */
 function syncMapAt(ziel) {
   if (!radarReady || !ziel) return;
   const vorlauf = (ziel - Date.now()) / 60000;      // Minuten voraus
 
-  const label = $('#mapMode');
+  const zeit = mapZeitWort(ziel);
   if (vorlauf <= 35) {
     Radar.showRadar();
     Radar.showAt(ziel instanceof Date ? ziel.getTime() : ziel);
     Radar.updateLabels();          // sonst greift ein Ebenenwechsel hier nicht
-    if (label) {
-      label.textContent = vorlauf < -3 ? 'Radarmessung · Vergangenheit'
-                        : vorlauf > 7  ? 'Radar-Kurzprognose' : 'Radarmessung · jetzt';
-      label.dataset.mode = 'radar';
-    }
+    setMapMode(zeit, vorlauf > 7 ? 'Radar-Kurzprognose' : 'Radarmessung', 'radar');
   } else {
     const hi = Forecast.indexFor(ziel);
     const flaechen = new Set([...activeLayers()].filter(x => x !== 'zahlen'));
     const ok = hi >= 0 && (flaechen.size ? Radar.showForecast(hi, flaechen) : true);
     Radar.updateLabels();
-    if (label) {
-      // Die Zahlen sind keine Fläche — sie gehören nicht in die Aufzählung
-      const namen = LAYERS.filter(l => l.id !== 'zahlen' && activeLayers().has(l.id))
-        .map(l => l.name).join(' + ') || 'Karte';
-      label.textContent = ok ? `${namen} · Vorhersage` : 'Vorhersage nicht geladen';
-      label.dataset.mode = ok ? 'forecast' : 'none';
-    }
+    // Die Zahlen sind keine Fläche — sie gehören nicht in die Aufzählung
+    const namen = LAYERS.filter(l => l.id !== 'zahlen' && activeLayers().has(l.id))
+      .map(l => l.name).join(' + ') || 'Karte';
+    setMapMode(zeit, ok ? `${namen} · Vorhersage` : 'Vorhersage nicht geladen',
+               ok ? 'forecast' : 'none');
   }
 }
 
@@ -1008,20 +1089,18 @@ function onMapMoved(mitte, zoom) {
 
 /** Raster holen und dabei sichtbar machen, dass gerade geladen wird. */
 function ladeRaster(lat, lon, zoom, ebenen, sicht) {
-  const marke = $('#mapMode');
+  const zeit = () => { const t = currentScrubTime(); return t ? mapZeitWort(t) : ''; };
   const laden = $('#mapLoading');
-  if (marke) { marke.textContent = 'Vorhersage wird geladen…'; marke.dataset.mode = 'laden'; }
+  setMapMode(zeit(), 'Vorhersage wird geladen…', 'laden');
   if (laden) laden.hidden = false;
 
   return Forecast.load(lat, lon, zoom, ebenen, sicht)
     .then(() => { syncMapAt(currentScrubTime()); Radar.updateLabels?.(); })
     .catch((e) => {
-      if (!marke) return;
       // Beim Abruflimit den Grund nennen — "keine Daten" wäre irreführend
-      marke.textContent = /429/.test(e?.message)
+      setMapMode(zeit(), /429/.test(e?.message)
         ? 'Wetterdienst bremst — gleich nochmal versuchen'
-        : 'für diese Region keine Daten';
-      marke.dataset.mode = 'none';
+        : 'für diese Region keine Daten', 'none');
     })
     .finally(() => { if (laden) laden.hidden = true; });
 }

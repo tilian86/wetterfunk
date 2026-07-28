@@ -262,6 +262,9 @@ svg { fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round
 .card-sub[data-tone="good"] { color: var(--good); }
 .card-sub[data-tone="ok"]   { color: var(--warn); }
 .card-sub[data-tone="bad"]  { color: var(--bad); }
+/* Zeigt beim Schieben der Stundenleiste den Zeitpunkt am linken Rand */
+#hourlyWhen { transition: color .2s ease; font-variant-numeric: tabular-nums; }
+#hourlyWhen.on { color: var(--accent); font-weight: 600; }
 .card-note { font-size: 12.5px; line-height: 1.5; color: var(--ink-dim); margin: -4px 0 12px; }
 .card-note b { color: var(--ink); font-weight: 600; }
 
@@ -600,11 +603,28 @@ select#bfModel {
 
 .map-mode {
   position: absolute; left: 9px; top: 9px; z-index: 500;
+  display: flex; align-items: baseline; gap: 6px;
+  max-width: calc(100% - 18px);
   padding: 5px 11px; border-radius: 30px;
   background: rgba(10, 16, 26, .74); border: 1px solid var(--card-line);
   backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px);
   font-size: 10.5px; font-weight: 600; letter-spacing: .02em;
   color: var(--ink-dim); pointer-events: none;
+  transition: background .18s ease, border-color .18s ease, padding .18s ease;
+}
+/* Der Zeitpunkt steht vorn und ist heller als die Art der Darstellung —
+   beim Schieben am Zeitstrahl ist er das, was man sucht. */
+.mm-zeit {
+  color: var(--ink); font-size: 12px; font-weight: 700; white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+  transition: font-size .18s ease;
+}
+.mm-art { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* Während des Schiebens tritt die Zeit hervor und legt sich danach zurück */
+.map-mode.is-scrub { background: rgba(10, 16, 26, .9); border-color: rgba(255,255,255,.26); }
+.map-mode.is-scrub .mm-zeit { font-size: 16px; }
+@media (prefers-reduced-motion: reduce) {
+  .map-mode, .mm-zeit { transition: none; }
 }
 .map-mode[data-mode="radar"]    { color: var(--good); }
 .map-mode[data-mode="forecast"] { color: var(--warn); }
