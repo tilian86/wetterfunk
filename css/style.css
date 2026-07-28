@@ -1594,6 +1594,40 @@ body.loading .hero-temp, body.loading .hero-desc { opacity: .45; }
 .globus-note { font-size: 12.5px; line-height: 1.55; color: var(--ink-dim); margin: 0 0 12px; }
 .globus-note b { color: var(--ink); }
 
+/* Frage beim Ortswechsel — erscheint nur, wenn das Gerät weit weg ist */
+.orts-frage {
+  display: grid; gap: 10px;
+  margin-bottom: var(--gap); padding: 14px 15px;
+  border-radius: var(--r-md);
+  background: rgba(108,198,255,.12); border: 1px solid rgba(108,198,255,.3);
+}
+.of-text { font-size: 13.5px; line-height: 1.5; color: var(--ink); }
+.of-text b { font-weight: 700; }
+.of-knoepfe { display: flex; gap: 9px; }
+.of-ja, .of-nein {
+  padding: 9px 15px; border-radius: var(--r-sm);
+  font: 600 13px var(--font); cursor: pointer; border: 1px solid transparent;
+}
+.of-ja { background: var(--accent); color: #04121f; }
+.of-nein { background: rgba(255,255,255,.08); color: var(--ink-dim); border-color: var(--card-line); }
+@media (min-width: 1000px) { .orts-frage { grid-column: 1 / -1; } }
+
+/* Wann losgehen — direkt unter dem Countdown, weil man dort nachschaut */
+.cd-losgehen {
+  display: grid; gap: 3px;
+  margin: 13px 0 0; padding: 12px 14px; border-radius: var(--r-md);
+  background: linear-gradient(135deg, rgba(255,190,90,.14), rgba(255,140,80,.07));
+  border: 1px solid rgba(255,190,90,.26);
+}
+.cl-kopf {
+  font-size: 10.5px; font-weight: 700; letter-spacing: .05em;
+  text-transform: uppercase; color: #ffc978;
+}
+.cl-haupt { font-size: 14.5px; color: var(--ink); }
+.cl-haupt b { color: #ffd98a; font-weight: 700; }
+.cl-weg { font-size: 11.5px; line-height: 1.55; color: var(--ink-dim); margin-top: 3px; }
+.cl-weg b { color: var(--ink); font-weight: 600; font-variant-numeric: tabular-nums; }
+
 .cd-globus {
   width: 100%; margin-top: 13px; padding: 11px;
   background: rgba(255,255,255,.06); border: 1px solid var(--card-line);

@@ -2000,6 +2000,7 @@ function renderCountdown() {
         <span class="cd-clock">um ${hhmm(erstes.t)} Uhr${erstes.zusatz ? ` · ${erstes.zusatz}` : ''}</span>
       </span>
     </div>
+    ${losgehenZeile()}
     <div class="cd-list">
       ${weitere.map(e => `
         <div class="cd-row">
@@ -2393,6 +2394,67 @@ async function useGPS() {
   }, { enableHighAccuracy: false, timeout: 9000, maximumAge: 6e5 });
 }
 
+/* ── Bist du woanders? ──────────────────────────────────────
+   Die App wechselt den Ort nicht von selbst — sonst verlöre man beim Blick
+   auf das Wetter zu Hause aus Versehen die Ansicht. Aber wenn das Gerät weit
+   weg ist und die Standortfreigabe ohnehin schon erteilt wurde, fragt sie
+   einmal nach. Ohne erteilte Freigabe passiert gar nichts. */
+const ORTS_SCHWELLE_KM = 40;
+
+async function pruefeStandortWechsel() {
+  if (!navigator.geolocation || !place) return;
+
+  // Nur wenn die Erlaubnis schon steht — sonst käme ungefragt ein Dialog
+  try {
+    const status = await navigator.permissions?.query({ name: 'geolocation' });
+    if (status && status.state !== 'granted') return;
+  } catch { return; }
+
+  navigator.geolocation.getCurrentPosition(async (pos) => {
+    const { latitude: lat, longitude: lon } = pos.coords;
+    const km = entfernungKm(lat, lon, place.lat, place.lon);
+    if (km < ORTS_SCHWELLE_KM) return;
+
+    const p = await reverseGeocode(lat, lon).catch(() => null);
+    if (!p?.name) return;
+    if (store.get('wf.ortAbgelehnt', '') === p.name) return;   // schon abgelehnt
+
+    zeigeOrtsFrage(p, Math.round(km));
+  }, () => {}, { enableHighAccuracy: false, timeout: 8000, maximumAge: 9e5 });
+}
+
+/** Entfernung zweier Punkte in Kilometern (Haversine). */
+function entfernungKm(lat1, lon1, lat2, lon2) {
+  const R = 6371, rad = Math.PI / 180;
+  const dLat = (lat2 - lat1) * rad, dLon = (lon2 - lon1) * rad;
+  const a = Math.sin(dLat / 2) ** 2
+          + Math.cos(lat1 * rad) * Math.cos(lat2 * rad) * Math.sin(dLon / 2) ** 2;
+  return 2 * R * Math.asin(Math.sqrt(a));
+}
+
+function zeigeOrtsFrage(p, km) {
+  const alt = $('#ortsFrage');
+  if (alt) alt.remove();
+
+  const el = document.createElement('div');
+  el.className = 'orts-frage';
+  el.id = 'ortsFrage';
+  el.innerHTML = `
+    <span class="of-text">Du scheinst in <b>${p.name}</b> zu sein —
+      ${km} km von ${place.name} entfernt. Wetter dort anzeigen?</span>
+    <span class="of-knoepfe">
+      <button class="of-ja">Ja, wechseln</button>
+      <button class="of-nein">Nein</button>
+    </span>`;
+  document.querySelector('#app')?.prepend(el);
+
+  el.querySelector('.of-ja').onclick = () => { el.remove(); selectPlace(p); };
+  el.querySelector('.of-nein').onclick = () => {
+    store.set('wf.ortAbgelehnt', p.name);      // nicht nochmal für denselben Ort fragen
+    el.remove();
+  };
+}
+
 // ══ Sprungleiste ═══════════════════════════════════════════
 /* ── Wo ist gerade Tag? ─────────────────────────────────────
    Die Grenze zwischen Tag und Nacht heißt Terminator. Sie hängt nur von der
@@ -2783,6 +2845,38 @@ function openDatenschutz() {
   const l = $('#explainLink');
   if (l) l.hidden = true;
   openSheet('#explainSheet');
+}
+
+/* Die wichtigste Zeile für alle, die den Sonnenuntergang wirklich sehen
+   wollen: nicht wann er ist, sondern wann man losgehen muss. Steht direkt
+   unter dem Countdown, weil man dort ohnehin nachschaut. */
+function losgehenZeile() {
+  if (!place || !data?.daily) return '';
+  const ev = sunEvents(new Date(), place.lat, place.lon);
+  if (!ev.goldenStartAbend || !ev.untergang) return '';
+
+  const start = new Date(ev.goldenStartAbend).getTime();
+  const unter = new Date(ev.untergang).getTime();
+  const jetzt = Date.now();
+  if (jetzt > unter) return '';                       // heute vorbei
+
+  const bis = Math.round((start - jetzt) / 60000);
+  const gehZeit = (minuten) => hhmm(new Date(start - minuten * 60000));
+
+  /* Kein data-t hier: Der Countdown-Takt schreibt in jedes Element mit diesem
+     Attribut die Restzeit und würde den ganzen Block überschreiben. */
+  return `<div class="cd-losgehen">
+    <span class="cl-kopf">🌅 Für den Sonnenuntergang</span>
+    <span class="cl-haupt">${bis > 0
+      ? `Schönes Licht ab <b>${hhmm(start)}</b> — in ${bis > 90
+          ? `${Math.floor(bis / 60)} Std. ${String(bis % 60).padStart(2, '0')} Min.` : `${bis} Min.`}`
+      : `Das gute Licht läuft <b>jetzt gerade</b> — bis ${hhmm(unter)}`}</span>
+    <span class="cl-weg">
+      Bei 20 Min. Weg um <b>${gehZeit(20)}</b> los ·
+      bei 45 Min. um <b>${gehZeit(45)}</b> ·
+      bei einer Stunde um <b>${gehZeit(60)}</b>
+    </span>
+  </div>`;
 }
 
 /* Wer den Sonnenuntergang sehen will, muss vorher da sein: Das schöne Licht
@@ -3457,6 +3551,8 @@ async function boot() {
 
   startClock();
   registerWorker();
+  // Zum Schluss, damit die Frage nicht während des Aufbaus aufpoppt
+  setTimeout(pruefeStandortWechsel, 2500);
 }
 
 /** Sekundengenaue Uhr, einmal gegen die Serverzeit abgeglichen — die Gerätezeit
