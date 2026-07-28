@@ -13,10 +13,10 @@
 <meta name="theme-color" content="#0b1220">
 <link rel="apple-touch-icon" href="icons/icon-180.png">
 <link rel="icon" href="icons/icon-192.png">
-<link rel="manifest" href="manifest.webmanifest?v=43">
+<link rel="manifest" href="manifest.webmanifest?v=45">
 
-<link rel="stylesheet" href="vendor/maplibre-gl.css?v=43">
-<link rel="stylesheet" href="css/style.css?v=43">
+<link rel="stylesheet" href="vendor/maplibre-gl.css?v=45">
+<link rel="stylesheet" href="css/style.css?v=45">
 </head>
 <body>
 
@@ -49,9 +49,14 @@
     <span id="placeName">Standort wird geladen…</span>
     <svg class="chev" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 9l6 6 6-6"/></svg>
   </button>
-  <button class="icon-btn" id="refreshBtn" aria-label="Aktualisieren">
-    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 11a8 8 0 1 0-.6 4"/><path d="M20 4v7h-7"/></svg>
-  </button>
+  <!-- Stand der Daten direkt am Aktualisieren-Knopf: Beim Wetter zählt,
+       wie alt die Zahlen sind. -->
+  <span class="refresh-wrap">
+    <button class="icon-btn" id="refreshBtn" aria-label="Aktualisieren">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 11a8 8 0 1 0-.6 4"/><path d="M20 4v7h-7"/></svg>
+    </button>
+    <span class="refresh-age" id="refreshAge"></span>
+  </span>
 </header>
 
 <nav class="nav" id="nav" aria-label="Abschnitte"></nav>
@@ -424,12 +429,12 @@
 
 <div class="toast" id="toast" hidden></div>
 
-<script src="vendor/maplibre-gl.js?v=43"></script>
-<script src="js/icons.js?v=43"></script>
-<script src="js/radar.js?v=43"></script>
-<script src="js/forecast.js?v=43"></script>
-<script src="js/briefing.js?v=43"></script>
-<script src="js/news.js?v=43"></script>
-<script src="js/app.js?v=43"></script>
+<script src="vendor/maplibre-gl.js?v=45"></script>
+<script src="js/icons.js?v=45"></script>
+<script src="js/radar.js?v=45"></script>
+<script src="js/forecast.js?v=45"></script>
+<script src="js/briefing.js?v=45"></script>
+<script src="js/news.js?v=45"></script>
+<script src="js/app.js?v=45"></script>
 </body>
 </html>

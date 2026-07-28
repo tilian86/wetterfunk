@@ -467,12 +467,33 @@ const Radar = (() => {
   }
 
   // ── Legende ──────────────────────────────────────────────
+  /* Bei mehreren Ebenen übereinander ist sonst nicht zu erkennen, was ein
+     rötlicher oder violetter Schatten bedeutet. Die Legende zeigt deshalb
+     genau die Ebenen, die gerade eingeschaltet sind. */
+  const LEGENDE = {
+    wolken:     { farbe: '#9aa8bb', text: 'Wolken' },
+    boeen:      { farbe: '#af5afa', text: 'Böen ab 45 km/h' },
+    gewitter:   { farbe: '#ff3c3c', text: 'Gewitterneigung' },
+    temperatur: { farbe: '#ff9f6a', text: 'Temperatur' }
+  };
+
   function renderLegend() {
     if (!els.legend) return;
-    els.legend.innerHTML = `
-      <span class="lg-label">leicht</span>
-      <span class="lg-bar"></span>
-      <span class="lg-label">stark</span>`;
+    const an = els.aktiveEbenen?.() || new Set(['regen']);
+    const teile = [];
+
+    if (an.has('regen')) {
+      teile.push(`<span class="lg-eintrag"><span class="lg-bar"></span>
+        <span class="lg-label">Regen: leicht → stark</span></span>`);
+    }
+    for (const [id, l] of Object.entries(LEGENDE)) {
+      if (!an.has(id)) continue;
+      teile.push(`<span class="lg-eintrag">
+        <span class="lg-punkt" style="background:${l.farbe}"></span>
+        <span class="lg-label">${l.text}</span></span>`);
+    }
+    els.legend.innerHTML = teile.join('');
+    els.legend.hidden = !teile.length;
   }
 
   /** Eine leere Karte ist mehrdeutig — kein Regen oder nichts geladen?
@@ -560,5 +581,6 @@ const Radar = (() => {
 
   return { init, load, setCenter, play, pause, toggle, show, isPlaying,
            showForecast, showRadar, updateLabels, frameTimes, showAt, lastMeasured,
+           updateLegend: renderLegend,
            get map() { return map; } };
 })();

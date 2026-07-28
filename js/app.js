@@ -925,6 +925,7 @@ function renderLayerPicker() {
     if (!jetzt.size) jetzt.add('regen');            // mindestens eine Ebene
     store.set(LS.layers, [...jetzt]);
     renderLayerPicker();
+    Radar.updateLegend?.();      // Legende zeigt nur die aktiven Ebenen
     ebenenGeaendert();
   }));
 }
@@ -2177,6 +2178,7 @@ async function refresh() {
   $('#refreshBtn').classList.add('spin');
   const stamp = $('#footStamp');
   if (stamp) stamp.textContent = 'Daten werden geholt…';
+  zeigeStand('lädt…');
   toast('Daten werden geholt…', 1500);
 
   // Unabhängig von den Zahlen — er soll auch dastehen, wenn Open-Meteo hakt
@@ -2220,6 +2222,7 @@ async function refresh() {
       `Zuletzt aktualisiert: ${new Date().toLocaleTimeString('de-DE')} · ` +
       `Quelle: ${sourceOf(sourceId()).name}` +
       (veraltet ? ' · aus dem Zwischenspeicher' : umweg ? ' · über den Umweg geholt' : '');
+    setzeStand(Date.now());
     toast(veraltet ? 'Der Wetterdienst antwortet gerade nicht — Daten aus dem Zwischenspeicher.'
                    : 'Aktualisiert.', veraltet ? 4000 : 1400);
     veraltet = false; umweg = false;
@@ -2415,6 +2418,55 @@ async function installAnstossen() {
   installEreignis = null;
   if (outcome === 'accepted') $('#installCard').hidden = true;
   else toast('Kannst du jederzeit später machen.');
+}
+
+/* ── Was zeigt die Karte gerade? ────────────────────────────
+   Bei mehreren Ebenen übereinander sind farbige Schatten ohne Erklärung
+   nicht zu deuten. Ein Tippen auf die Legende sagt, was was bedeutet. */
+const EBENEN_HILFE = {
+  regen: { name: 'Niederschlag', farbe: '#5ac8fa',
+    text: 'Wie viel Regen oder Schnee in einer Stunde fällt. Blau ist wenig, '
+        + 'grün und gelb mittel, rot und violett viel. Unter 0,5 mm merkt man kaum etwas, '
+        + 'ab 5 mm in der Stunde wird man ohne Schirm nass.' },
+  wolken: { name: 'Wolken', farbe: '#9aa8bb',
+    text: 'Wie dicht der Himmel bedeckt ist. Je grauer die Fläche, desto geschlossener '
+        + 'die Wolkendecke. Helle Stellen sind Lücken, durch die die Sonne kommt.' },
+  temperatur: { name: 'Temperatur', farbe: '#ff9f6a',
+    text: 'Blau ist kalt, grün mild, orange und rot heiß. Gut zu sehen, wo eine '
+        + 'Kaltfront durchzieht oder wo es im Bergland kühler bleibt.' },
+  boeen: { name: 'Sturmböen', farbe: '#af5afa',
+    text: 'Violett erscheint erst ab 45 km/h — das ist Windstärke 6, bei der Regenschirme '
+        + 'kaum noch zu halten sind. Ab 60 km/h knicken Äste, ab 75 km/h wird es gefährlich.' },
+  gewitter: { name: 'Gewitterneigung', farbe: '#ff3c3c',
+    text: 'Zeigt, wie viel Energie in der Luft steckt (Fachleute sagen CAPE dazu). '
+        + 'Rot heißt: Die Luft ist labil genug für Gewitter. Ob wirklich eines entsteht, '
+        + 'hängt davon ab, ob etwas es auslöst — ein Bergrücken, eine Front. '
+        + 'Rot ist also keine Gewittervorhersage, sondern eine Bereitschaft.' },
+  zahlen: { name: 'Zahlen auf der Karte', farbe: '#ffffff',
+    text: 'Die Messpunkte des Rasters. Wo Regen fällt, steht die Menge in Millimetern, '
+        + 'sonst die Temperatur. Antippen erklärt den Wert.' }
+};
+
+function openEbenenHilfe() {
+  const an = activeLayers();
+  const aktiv = Object.entries(EBENEN_HILFE).filter(([id]) => an.has(id));
+
+  $('#explainTitle').textContent = 'Was die Karte zeigt';
+  $('#explainText').innerHTML = `
+    <p style="margin:0 0 14px">Mehrere Ebenen liegen übereinander. Von hinten nach vorn:
+      Temperatur, Wolken, Böen, Gewitter, Regen — der Regen liegt immer obenauf.</p>
+    ${aktiv.map(([, e]) => `
+      <div class="eh-block">
+        <span class="eh-kopf"><span class="lg-punkt" style="background:${e.farbe}"></span>
+          <b>${e.name}</b></span>
+        <span class="eh-text">${e.text}</span>
+      </div>`).join('')}
+    ${aktiv.length > 2 ? `<p class="ds-note">Mit drei oder mehr Ebenen gleichzeitig wird das
+      Bild schnell unübersichtlich — für eine klare Aussage lieber nur eine oder zwei
+      einschalten.</p>` : ''}`;
+  const l = $('#explainLink');
+  if (l) l.hidden = true;
+  openSheet('#explainSheet');
 }
 
 /* ── Zeitzonen ──────────────────────────────────────────────
@@ -2791,6 +2843,7 @@ function wire() {
   });
   $('#pushToggle')?.addEventListener('click', pushUmschalten);
   $('#installBtn')?.addEventListener('click', installAnstossen);
+  $('#radarLegend')?.addEventListener('click', openEbenenHilfe);
   renderInstall();
   $('#pushTest')?.addEventListener('click', pushProbe);
   renderPush();
@@ -2883,6 +2936,7 @@ async function boot() {
       globe: $('#radarGlobe'), onMoveEnd: onMapMoved,
       currentTime: currentScrubTime,
       labelsOn: () => activeLayers().has('zahlen'),
+      aktiveEbenen: activeLayers,
       onPointTap: showPointDetail,
       sharp: $('#mapSharp'),
       onLocate: () => Radar.setCenter(place.lat, place.lon)
@@ -2912,6 +2966,33 @@ async function boot() {
 
 /** Sekundengenaue Uhr, einmal gegen die Serverzeit abgeglichen — die Gerätezeit
     kann abweichen, und bei Radarbildern zählt die Minute. */
+/* ── Stand der Daten ────────────────────────────────────────
+   Beim Wetter zählt, wie alt die Zahlen sind. Der Zeitpunkt steht deshalb
+   direkt am Aktualisieren-Knopf und altert sichtbar mit. */
+let standZeit = null, standTimer = null;
+
+function setzeStand(zeit) {
+  standZeit = zeit;
+  zeigeStand();
+  clearInterval(standTimer);
+  standTimer = setInterval(zeigeStand, 30000);
+}
+
+function zeigeStand(text = null) {
+  const el = $('#refreshAge');
+  if (!el) return;
+  if (text) { el.textContent = text; el.dataset.alt = '0'; return; }
+  if (!standZeit) { el.textContent = ''; return; }
+
+  const min = Math.round((Date.now() - standZeit) / 60000);
+  el.textContent = min < 1 ? 'gerade eben'
+                 : min < 60 ? `vor ${min} Min.`
+                 : hhmm(standZeit) + ' Uhr';
+  el.title = `Daten von ${hhmm(standZeit)} Uhr`;
+  // Ab einer halben Stunde farblich anmerken, dass es Zeit wird
+  el.dataset.alt = min >= 30 ? '1' : '0';
+}
+
 function startClock() {
   const ziele = [$('#topClock'), $('#footClock')].filter(Boolean);
   if (!ziele.length) return;

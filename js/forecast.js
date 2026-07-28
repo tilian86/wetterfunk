@@ -239,12 +239,18 @@ function frame(h, ebenen = new Set(['regen', 'wolken'])) {
         }
       }
       if (ebenen.has('boeen')) {
+        /* Erst ab 45 km/h einfärben — das ist Windstärke 6, ab da wird es
+           spürbar. Bei 30 km/h war praktisch die halbe Karte lila, ohne dass
+           das etwas bedeutet hätte. */
         const w = sample(grid.gusts, h, fy, fx);
-        if (w > 30) mischen([185, 105, 250], Math.min(0.72, (w - 30) / 55));
+        if (w > 45) mischen([175, 90, 250], Math.min(0.8, (w - 45) / 45));
       }
       if (ebenen.has('gewitter')) {
+        /* CAPE misst, wie viel Energie in der Luft steckt. Im Sommer liegt sie
+           fast überall über 250 — daran ist nichts besonderes. Erst ab etwa
+           800 wird es labil genug für Gewitter, ab 2000 für kräftige. */
         const cape = sample(grid.cape, h, fy, fx);
-        if (cape > 250) mischen([255, 70, 70], Math.min(0.75, (cape - 250) / 1400));
+        if (cape > 800) mischen([255, 60, 60], Math.min(0.8, (cape - 800) / 1400));
       }
       if (ebenen.has('regen')) {
         const c = rainColor(sample(grid.precip, h, fy, fx));

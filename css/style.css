@@ -5,13 +5,17 @@
    ═══════════════════════════════════════════════════════════ */
 
 :root {
-  --ink:        #f4f7fb;
-  --ink-dim:    #a8b6c8;
-  --ink-faint:  #6f8098;
+  /* Kontrast: Die Karten lagen als helle Schleier über einem hellen
+     Himmelsverlauf — Nebentext kam dort auf ein Verhältnis von 1,2 zu 1,
+     lesbar sind erst 4,5. Jetzt dunkeln die Karten ab, dann trägt auch die
+     feine Abstufung zwischen Haupt- und Nebentext wieder. */
+  --ink:        #f7fafd;
+  --ink-dim:    #c4d2e4;
+  --ink-faint:  #9db0c9;
 
-  --card:       rgba(255, 255, 255, .075);
-  --card-line:  rgba(255, 255, 255, .11);
-  --card-hi:    rgba(255, 255, 255, .14);
+  --card:       rgba(11, 22, 38, .62);
+  --card-line:  rgba(255, 255, 255, .13);
+  --card-hi:    rgba(255, 255, 255, .12);
 
   --accent:     #6cc6ff;
   --warn:       #ffb340;
@@ -121,7 +125,9 @@ body[data-mood="night"]   .sky-grad { background: linear-gradient(178deg,#1b2647
 .brand-text { display: grid; line-height: 1.1; }
 .brand-text b { font-size: 12.5px; font-weight: 700; letter-spacing: -.01em; color: var(--ink); }
 .brand-text i {
-  font-style: normal; font-size: 9px; color: var(--ink-faint);
+  /* Bei dieser Größe reicht die Nebentextfarbe nicht — kleine Schrift
+     braucht mehr Kontrast als die Norm für Fließtext vorgibt. */
+  font-style: normal; font-size: 9.5px; color: #b9c7da;
   letter-spacing: .01em; white-space: nowrap;
 }
 
@@ -141,6 +147,16 @@ body[data-mood="night"]   .sky-grad { background: linear-gradient(178deg,#1b2647
 .place-btn .pin { width: 17px; height: 17px; flex: none; opacity: .85; }
 .place-btn .chev { width: 15px; height: 15px; flex: none; opacity: .55; }
 .place-btn:active { opacity: .6; }
+
+/* Aktualisieren-Knopf mit Stand der Daten darunter */
+.refresh-wrap { display: grid; justify-items: center; gap: 2px; flex: none; }
+.refresh-age {
+  font-size: 8.5px; line-height: 1; color: #a9bcd4;
+  font-variant-numeric: tabular-nums; white-space: nowrap;
+  text-shadow: 0 1px 2px rgba(4,10,22,.5);
+}
+.refresh-age:empty { display: none; }
+.refresh-age[data-alt="1"] { color: #ffc978; }
 
 .icon-btn {
   width: 36px; height: 36px; flex: none;
@@ -576,13 +592,34 @@ select#bfModel {
 @keyframes ml-dreh { to { transform: rotate(360deg); } }
 @media (prefers-reduced-motion: reduce) { .ml-spinner { animation-duration: 2.4s; } }
 
+/* Zeigt genau die Ebenen, die eingeschaltet sind — bei mehreren übereinander
+   ist sonst nicht zu erkennen, was ein farbiger Schatten bedeutet. */
 .radar-legend {
-  position: absolute; left: 9px; bottom: 9px; z-index: 500;
-  display: flex; align-items: center; gap: 6px;
-  padding: 5px 8px; border-radius: 30px;
-  background: rgba(10, 16, 26, .72);
+  position: absolute; left: 9px; bottom: 9px; right: 58px; z-index: 500;
+  display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px;
+  padding: 6px 9px; border-radius: 12px;
+  background: rgba(10, 16, 26, .78);
   backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px);
   font-size: 10px; color: var(--ink-dim);
+}
+.radar-legend[hidden] { display: none; }
+.radar-legend { cursor: pointer; }
+.radar-legend::after {
+  content: '?'; margin-left: auto;
+  width: 14px; height: 14px; border-radius: 50%; flex: none;
+  display: grid; place-items: center;
+  background: rgba(255,255,255,.14); color: var(--ink-dim);
+  font-size: 9px; font-weight: 700;
+}
+.lg-eintrag { display: flex; align-items: center; gap: 5px; }
+
+/* Erklärung der Kartenebenen */
+.eh-block { display: grid; gap: 4px; margin-bottom: 14px; }
+.eh-kopf { display: flex; align-items: center; gap: 7px; font-size: 14px; color: var(--ink); }
+.eh-text { font-size: 12.5px; line-height: 1.55; color: var(--ink-dim); }
+.lg-punkt {
+  width: 10px; height: 10px; border-radius: 3px; flex: none;
+  box-shadow: inset 0 0 0 1px rgba(0,0,0,.3);
 }
 /* Stufen wie in rainColor() — harte Kanten statt Verlauf, damit die Legende
    dieselben Farben zeigt, die auch auf der Karte stehen. */
@@ -1421,15 +1458,17 @@ body.loading .hero-temp, body.loading .hero-desc { opacity: .45; }
 .foot-clock b { color: var(--ink); font-weight: 600; }
 
 /* Funkuhr oben — bewusst zurückhaltend, sie soll den Wetterblick nicht stören */
+/* Steht ohne Kartenfläche direkt auf dem Himmelsverlauf — dort trägt die
+   normale Nebentextfarbe nicht, deshalb eigene, hellere Werte. */
 .topclock {
   text-align: center; font-size: 12.5px; letter-spacing: .05em;
-  font-variant-numeric: tabular-nums; color: var(--ink-faint);
-  margin: -2px 0 2px;
+  font-variant-numeric: tabular-nums; color: #c9d7e8;
+  margin: -2px 0 2px; text-shadow: 0 1px 3px rgba(4,10,22,.45);
 }
-.topclock b { color: var(--ink-dim); font-weight: 600; font-size: 14px; }
+.topclock b { color: #fff; font-weight: 600; font-size: 14px; }
 .topclock, .foot-clock { cursor: pointer; }
 .topclock::after {
-  content: ' · Zeitzonen'; font-size: 10px; opacity: .55;
+  content: ' · Zeitzonen'; font-size: 10px; color: #a9bcd4;
 }
 
 /* Tag-Nacht-Kugel */
