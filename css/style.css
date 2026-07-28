@@ -1100,8 +1100,10 @@ select#bfModel {
 /* ── Webcams ──────────────────────────────────────────────── */
 .cams { display: grid; gap: 11px; }
 .cam { border-radius: var(--r-md); overflow: hidden; background: rgba(0,0,0,.28); }
-.cam-img { position: relative; aspect-ratio: 16 / 9; }
-.cam-img img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.cam-img { position: relative; aspect-ratio: 16 / 9; display: block; background: #0a1018; }
+/* contain statt cover: Die Kameras liefern 4:3, 16:9 und 1200×630 gemischt.
+   Bei foto-webcam.eu ist Beschneiden laut Nutzungsbedingungen sogar untersagt. */
+.cam-img img { width: 100%; height: 100%; object-fit: contain; display: block; }
 .cam-err-msg {
   display: none; position: absolute; inset: 0;
   place-items: center; font-size: 12.5px; color: var(--ink-faint);
@@ -1128,8 +1130,13 @@ select#bfModel {
 }
 
 .cam figcaption {
-  display: flex; align-items: center; justify-content: space-between;
+  display: flex; align-items: center; justify-content: space-between; gap: 8px;
   padding: 8px 11px; font-size: 13px; font-weight: 500;
+}
+.cam-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cam-ort {
+  font-size: 10px; font-weight: 400; color: var(--ink-faint);
+  text-align: right; white-space: nowrap;
 }
 .cam-del {
   background: none; border: 0; color: var(--ink-faint);
