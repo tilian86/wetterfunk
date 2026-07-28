@@ -270,9 +270,12 @@ const SPASS = /^(Eddy|Flo|Grandma|Grandpa|Reed|Rocko|Sandy|Shelley|Albert|Jester
 /** Alle deutschen Stimmen, beste zuerst. Ohne Zusatzdownload steht auf Apple-
     Geräten nur die alte "Anna" bereit — Premium/Enhanced klingen deutlich besser. */
 function germanVoices() {
-  const de = speechSynthesis.getVoices().filter(v => v.lang?.toLowerCase().startsWith('de'));
-  const rang = (v) => (SPASS.test(v.name) ? 9
-                     : /premium/i.test(v.name) ? 0
+  const de = speechSynthesis.getVoices()
+    .filter(v => v.lang?.toLowerCase().startsWith('de'))
+    // Spaßstimmen ganz raus: Sie stehen sonst gleichwertig in der Liste und
+    // machen aus dem Wetterbericht eine Karikatur.
+    .filter(v => !SPASS.test(v.name));
+  const rang = (v) => (/premium/i.test(v.name) ? 0
                      : /enhanced/i.test(v.name) ? 1
                      : /siri/i.test(v.name) ? 2
                      : v.localService ? 3 : 4);

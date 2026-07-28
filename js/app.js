@@ -277,6 +277,16 @@ function renderDayProgress() {
     : ` · morgen ${diff > 0 ? `${diff} Min. länger` : `${-diff} Min. kürzer`}`;
 
   el.dataset.phase = phase === 'Tag' ? 'tag' : 'nacht';
+  // Antippen springt zu Sonne & Licht — dort stehen die Zeiten im Detail
+  el.setAttribute('role', 'button');
+  el.tabIndex = 0;
+  el.onclick = () => {
+    const ziel = document.querySelector('.card-cd') || document.querySelector('#tiles');
+    if (!ziel) return;
+    const kopf = ($('.topbar')?.offsetHeight || 0) + ($('#nav')?.offsetHeight || 0) + 8;
+    window.scrollTo({ top: Math.max(0, ziel.getBoundingClientRect().top + window.scrollY - kopf),
+                      behavior: 'smooth' });
+  };
   el.innerHTML = `
     <span class="dp-head">
       <span class="dp-label">${phase === 'Tag' ? '☀ Tag' : '☾ Nacht'} zu
@@ -1750,6 +1760,9 @@ function renderTiles(air) {
   const sunH = Math.floor((d.sunshine_duration?.[0] ?? 0) / 3600);
   const minutenTag = Math.round((ss - sr) / 60000);
   const dayLen = `${Math.floor(minutenTag / 60)} Std. ${minutenTag % 60} Min.`;
+  // Höchststand: wichtig für Schatten, UV und Fotografie
+  const mittag = solarNoon(new Date(), place.lat, place.lon);
+  const hoechststand = sunAltitude(mittag, place.lat, place.lon);
   out.push(`<div class="tile t-wide has-info" data-info="sonne" role="button" tabindex="0">
     <span class="t-label">Sonne<i class="t-q">?</i></span>
     <div class="sun-arc">
@@ -1758,11 +1771,18 @@ function renderTiles(air) {
         <path class="arc-fg" d="M${ARC.x0} ${ARC.y} A ${ARC.rx} ${ARC.ry} 0 0 1 ${ARC.x1} ${ARC.y}"
               style="--p:${dayProg};--len:${ARC.len.toFixed(1)}"/>
         <line class="arc-ground" x1="4" y1="${ARC.y}" x2="196" y2="${ARC.y}"/>
+        <!-- Höchststand: Scheitel des Bogens, dort steht die Sonne am steilsten -->
+        <line class="arc-noon" x1="${ARC.cx}" y1="${ARC.y}" x2="${ARC.cx}" y2="${(ARC.y - ARC.ry).toFixed(1)}"/>
+        <circle class="arc-noon-dot" cx="${ARC.cx}" cy="${(ARC.y - ARC.ry).toFixed(1)}" r="2.6"/>
         <circle class="arc-sun" r="5.5"
           cx="${(ARC.cx - ARC.rx * Math.cos(Math.PI * dayProg)).toFixed(1)}"
           cy="${(ARC.y - ARC.ry * Math.sin(Math.PI * dayProg)).toFixed(1)}"/>
       </svg>
-      <div class="arc-times"><span>↑ ${hhmm(sr)}</span><span>↓ ${hhmm(ss)}</span></div>
+      <div class="arc-times">
+        <span>↑ ${hhmm(sr)}</span>
+        <span class="arc-mittag">☀ ${hhmm(mittag)}<i>${hoechststand.toFixed(0)}°</i></span>
+        <span>↓ ${hhmm(ss)}</span>
+      </div>
     </div>
     <span class="t-sub">${sunH} Std. Sonnenschein erwartet · Tag ${dayLen}</span>
   </div>`);
@@ -1781,8 +1801,10 @@ function renderTiles(air) {
       <div class="lrow"><span class="ld gold"></span><span>Goldene Stunde früh</span><b>${z(ev.aufgang)}–${z(ev.goldenEndeMorgen)}</b></div>
       <div class="lrow"><span class="ld gold"></span><span>Goldene Stunde abends</span><b>${z(ev.goldenStartAbend)}–${z(ev.untergang)}</b></div>
       <div class="lrow"><span class="ld blau"></span><span>Blaue Stunde abends</span><b>${z(ev.untergang)}–${z(ev.blaueStundeEndeAbend)}</b></div>
+      <div class="lrow"><span class="ld sonne"></span><span>Sonnenhöchststand</span><b>${z(mittag)} · ${hoechststand.toFixed(0)}°</b></div>
       <div class="lrow"><span class="ld nacht"></span><span>Astronomische Nacht</span><b>ab ${z(ev.astroNacht)}</b></div>
     </div>
+    ${sonnenuntergangTipp(ev)}
   </div>`);
 
   // Mond
@@ -2193,6 +2215,7 @@ async function refresh() {
 
   // Unabhängig von den Zahlen — er soll auch dastehen, wenn Open-Meteo hakt
   loadDwdText(place.lat, place.lon);
+  ladeStationen(place.lat, place.lon);
   renderPush();
 
   try {
@@ -2330,9 +2353,12 @@ function baueGlobus() {
   const ziel = document.getElementById('globusMap');
   if (!ziel || typeof maplibregl === 'undefined') return;
 
+  /* Helle Karte als Tagseite, darüber die Nachtseite als dunkle Fläche —
+     so sieht man auf einen Blick, wo gerade Licht ist. Auf einer dunklen
+     Grundkarte wäre der Unterschied nicht zu erkennen gewesen. */
   globusKarte = new maplibregl.Map({
     container: ziel,
-    style: 'https://tiles.openfreemap.org/styles/dark',   // derselbe Anbieter wie beim Radar
+    style: 'https://tiles.openfreemap.org/styles/positron',
     center: [place.lon, place.lat],
     zoom: 0.55,
     projection: { type: 'globe' },
@@ -2343,9 +2369,11 @@ function baueGlobus() {
   globusKarte.on('load', () => {
     globusKarte.addSource('nacht', { type: 'geojson', data: nachtPolygon() });
     globusKarte.addLayer({ id: 'nacht', type: 'fill', source: 'nacht',
-      paint: { 'fill-color': '#05070f', 'fill-opacity': 0.62 } });
+      paint: { 'fill-color': '#0a1428', 'fill-opacity': 0.74 } });
+    // Dämmerungssaum: der Übergang ist keine scharfe Kante
     globusKarte.addLayer({ id: 'nachtkante', type: 'line', source: 'nacht',
-      paint: { 'line-color': '#ffb35c', 'line-width': 1.4, 'line-opacity': 0.7 } });
+      paint: { 'line-color': '#ff9a3c', 'line-width': 2.4, 'line-opacity': 0.85,
+               'line-blur': 2 } });
 
     const s = subsolarPunkt();
     globusKarte.addSource('sonne', { type: 'geojson', data: {
@@ -2429,6 +2457,107 @@ async function installAnstossen() {
   if (outcome === 'accepted') $('#installCard').hidden = true;
   else toast('Kannst du jederzeit später machen.');
 }
+
+/* Wer den Sonnenuntergang sehen will, muss vorher da sein: Das schöne Licht
+   beginnt mit der goldenen Stunde, und bis zu einem Aussichtspunkt braucht
+   man Zeit. Punkt Sonnenuntergang anzukommen heißt, das Beste zu verpassen. */
+function sonnenuntergangTipp(ev) {
+  if (!ev.goldenStartAbend || !ev.untergang) return '';
+  const start = new Date(ev.goldenStartAbend), unter = new Date(ev.untergang);
+  const jetzt = Date.now();
+  const bisStart = Math.round((start - jetzt) / 60000);
+
+  if (bisStart < -30 && jetzt > unter.getTime()) return '';   // vorbei für heute
+
+  const wann = bisStart > 120 ? `ab ${hhmm(start)} Uhr`
+             : bisStart > 0 ? `in ${bisStart} Min., ab ${hhmm(start)} Uhr`
+             : 'jetzt gerade';
+  const dauer = Math.round((unter - start) / 60000);
+
+  return `<p class="su-tipp">
+    <b>Für den Sonnenuntergang</b> lohnt es sich, ${wann} draußen zu sein —
+    dann beginnt die goldene Stunde und das Licht wird warm. Sie dauert etwa
+    ${dauer} Minuten bis zum Untergang um ${hhmm(unter)} Uhr. Danach folgt noch
+    die blaue Stunde; oft sind die Farben erst nach dem Untergang am kräftigsten.
+    Für einen Aussichtspunkt den Aufstieg dazurechnen.
+  </p>`;
+}
+
+/* ── Messwerte aus der Region ───────────────────────────────
+   Echte Stationsmessungen des DWD über Bright Sky — ein freier Zugang zu
+   denselben Daten, aber als JSON und mit Freigabe für den Browser. Die
+   Vorhersagezahlen der App sind gerechnet, das hier ist gemessen. */
+const BRIGHTSKY = 'https://api.brightsky.dev';
+
+async function ladeStationen(lat, lon) {
+  const karte = $('#stationenCard');
+  if (!karte) return;
+
+  try {
+    const res = await fetch(`${BRIGHTSKY}/sources?lat=${lat}&lon=${lon}&max_dist=70000`);
+    if (!res.ok) throw new Error(`Stationen ${res.status}`);
+    const { sources = [] } = await res.json();
+
+    /* Nur echte Messstationen ("synop"), und nur solche, die in der letzten
+       Stunde gemeldet haben — sonst antwortet der Messwert-Abruf mit 404. */
+    const frisch = Date.now() - 3600000;
+    const nah = sources
+      .filter(s => s.observation_type === 'synop' && s.last_record
+                && new Date(s.last_record).getTime() > frisch)
+      .sort((a, b) => a.distance - b.distance)
+      .slice(0, 7);
+
+    if (!nah.length) { karte.hidden = true; return; }
+
+    const werte = await Promise.all(nah.map(s =>
+      fetch(`${BRIGHTSKY}/current_weather?source_id=${s.id}`)
+        .then(r => (r.ok ? r.json() : null))
+        .catch(() => null)));
+
+    const zeilen = nah.map((s, i) => ({ station: s, w: werte[i]?.weather }))
+      .filter(x => x.w && x.w.temperature != null);
+
+    if (!zeilen.length) { karte.hidden = true; return; }
+    renderStationen(zeilen);
+    karte.hidden = false;
+  } catch (e) {
+    console.warn('Stationen:', e.message);
+    karte.hidden = true;
+  }
+}
+
+function renderStationen(zeilen) {
+  // Die Aggregate heißen je nach Messintervall anders
+  const wert = (w, feld) => w[`${feld}_10`] ?? w[`${feld}_30`] ?? w[`${feld}_60`] ?? null;
+  const neueste = Math.max(...zeilen.map(z => new Date(z.w.timestamp).getTime()));
+  $('#stationenStand').textContent = `gemessen ${hhmm(neueste)} Uhr`;
+
+  $('#stationen').innerHTML = zeilen.map(({ station: s, w }) => {
+    const wind = wert(w, 'wind_speed');
+    const boe = wert(w, 'wind_gust_speed');
+    const richtung = wert(w, 'wind_direction');
+    const km = Math.round(s.distance / 1000);
+
+    const rechts = [];
+    if (w.cloud_cover != null) rechts.push(wolkenWort(w.cloud_cover));
+    if (wind != null) rechts.push(`Wind ${richtung != null ? dirName(richtung) + ' ' : ''}${round(wind)} km/h`);
+    if (boe != null && boe >= (wind ?? 0) + 5) rechts.push(`Böen ${round(boe)} km/h`);
+    if (!rechts.length && w.relative_humidity != null) rechts.push(`Feuchte ${w.relative_humidity} %`);
+
+    return `<div class="st-zeile">
+      <span class="st-ort">
+        <b>${s.station_name}</b>
+        <i>${s.height != null ? `${Math.round(s.height)} m` : ''}${
+             s.height != null && km ? ' · ' : ''}${km ? `${km} km entfernt` : ''}</i>
+      </span>
+      <span class="st-temp">${dez(w.temperature)}°</span>
+      <span class="st-rest">${rechts.join('<br>') || '–'}</span>
+    </div>`;
+  }).join('');
+}
+
+const wolkenWort = (p) => p < 12 ? 'wolkenlos' : p < 38 ? 'heiter'
+                        : p < 70 ? 'wolkig' : p < 88 ? 'stark bewölkt' : 'bedeckt';
 
 /* ── Was zeigt die Karte gerade? ────────────────────────────
    Bei mehreren Ebenen übereinander sind farbige Schatten ohne Erklärung

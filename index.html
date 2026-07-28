@@ -13,10 +13,10 @@
 <meta name="theme-color" content="#0b1220">
 <link rel="apple-touch-icon" href="icons/icon-180.png">
 <link rel="icon" href="icons/icon-192.png">
-<link rel="manifest" href="manifest.webmanifest?v=48">
+<link rel="manifest" href="manifest.webmanifest?v=50">
 
-<link rel="stylesheet" href="vendor/maplibre-gl.css?v=48">
-<link rel="stylesheet" href="css/style.css?v=48">
+<link rel="stylesheet" href="vendor/maplibre-gl.css?v=50">
+<link rel="stylesheet" href="css/style.css?v=50">
 </head>
 <body>
 
@@ -186,6 +186,19 @@
 
   <!-- ══ DETAILS ══ -->
   <section class="tiles" id="tiles"></section>
+
+  <!-- ══ MESSWERTE AUS DER REGION ══
+       Echte Stationsmessungen des DWD, keine Berechnung. -->
+  <section class="card card-stationen" id="stationenCard" hidden>
+    <div class="card-head">
+      <h2>Messwerte aus der Region</h2>
+      <span class="card-sub" id="stationenStand"></span>
+    </div>
+    <div class="stationen" id="stationen"></div>
+    <p class="stationen-fuss">Gemessen an Wetterstationen des Deutschen Wetterdienstes.
+      Nicht jede Station hat alle Sensoren — kleine Automatikstationen messen oft nur
+      die Temperatur.</p>
+  </section>
 
   <!-- ══ SONNE & MOND ══ -->
   <section class="card card-cd">
@@ -445,12 +458,12 @@
 
 <div class="toast" id="toast" hidden></div>
 
-<script src="vendor/maplibre-gl.js?v=48"></script>
-<script src="js/icons.js?v=48"></script>
-<script src="js/radar.js?v=48"></script>
-<script src="js/forecast.js?v=48"></script>
-<script src="js/briefing.js?v=48"></script>
-<script src="js/news.js?v=48"></script>
-<script src="js/app.js?v=48"></script>
+<script src="vendor/maplibre-gl.js?v=50"></script>
+<script src="js/icons.js?v=50"></script>
+<script src="js/radar.js?v=50"></script>
+<script src="js/forecast.js?v=50"></script>
+<script src="js/briefing.js?v=50"></script>
+<script src="js/news.js?v=50"></script>
+<script src="js/app.js?v=50"></script>
 </body>
 </html>
