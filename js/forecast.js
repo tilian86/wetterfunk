@@ -8,18 +8,25 @@ const Forecast = (() => {
 'use strict';
 
 const API = 'https://api.open-meteo.com/v1/forecast';
-// 13×13 Punkte über eine engere Fläche: rund 20 km Rasterabstand statt 40.
-// Kostet einmalig etwa 900 KB, dafür ist die Vorhersagekarte doppelt so fein.
-const N = 13;                // Rasterpunkte je Richtung
-const SPAN_LAT = 2.3;        // abgedeckte Fläche in Grad
-const SPAN_LON = 3.1;
+// Immer 13×13 Punkte, aber die abgedeckte Fläche richtet sich nach dem Zoom:
+// nah am Ort eng und fein (~20 km), auf der Kugel weit und grob — sonst wäre
+// das Raster dort nur ein Fleck von wenigen Pixeln.
+const N = 13;
+const STUFEN = [
+  { abZoom: 5.5, lat: 2.3,  lon: 3.1,  name: 'fein'  },   // ~20 km
+  { abZoom: 3.5, lat: 7.0,  lon: 9.5,  name: 'mittel' },  // ~60 km
+  { abZoom: 0,   lat: 26.0, lon: 34.0, name: 'weit'   }   // ~230 km
+];
+const stufeFuer = (zoom) => STUFEN.find(s => zoom >= s.abZoom) || STUFEN[STUFEN.length - 1];
 const CELL = 128;            // Zeichenfläche; wird von der Karte weichgezeichnet
 
 let grid = null;             // { lat0, lon0, dLat, dLon, times, precip, cloud }
 let canvas = null, ctx = null;
 
-/** Raster um den Ort herum laden. */
-async function load(lat, lon) {
+/** Raster um den Ort herum laden. `zoom` bestimmt, wie weit es reicht. */
+async function load(lat, lon, zoom = 7) {
+  const stufe = stufeFuer(zoom);
+  const SPAN_LAT = stufe.lat, SPAN_LON = stufe.lon;
   const lat0 = lat - SPAN_LAT / 2, lon0 = lon - SPAN_LON / 2;
   const dLat = SPAN_LAT / (N - 1), dLon = SPAN_LON / (N - 1);
 
@@ -44,6 +51,7 @@ async function load(lat, lon) {
 
   grid = {
     lat0, lon0, dLat, dLon,
+    spanLat: SPAN_LAT, spanLon: SPAN_LON, stufe: stufe.name,
     mitte: [lat, lon],
     times: data[0].hourly.time,
     precip: data.map(d => d.hourly.precipitation),
@@ -69,8 +77,8 @@ async function load(lat, lon) {
 /** Eckpunkte der abgedeckten Fläche, im Uhrzeigersinn ab oben links. */
 function corners() {
   if (!grid) return null;
-  const { lat0, lon0 } = grid;
-  const lat1 = lat0 + SPAN_LAT, lon1 = lon0 + SPAN_LON;
+  const { lat0, lon0, spanLat, spanLon } = grid;
+  const lat1 = lat0 + spanLat, lon1 = lon0 + spanLon;
   return [[lon0, lat1], [lon1, lat1], [lon1, lat0], [lon0, lat0]];
 }
 
@@ -170,10 +178,35 @@ function frame(h, ebenen = new Set(['regen', 'wolken'])) {
 }
 
 /** Ist ein Punkt noch vom geladenen Raster abgedeckt? */
-function covers(lat, lon) {
+function covers(lat, lon, zoom) {
   if (!grid) return false;
-  return lat >= grid.lat0 && lat <= grid.lat0 + SPAN_LAT
-      && lon >= grid.lon0 && lon <= grid.lon0 + SPAN_LON;
+  // Auch die Auflösungsstufe muss passen — sonst bleibt auf der Kugel
+  // ein Fleck stehen oder nah dran wird es unnötig grob.
+  if (zoom !== undefined && stufeFuer(zoom).name !== grid.stufe) return false;
+  // Etwas Rand lassen, damit nicht bei jeder kleinen Bewegung neu geladen wird
+  const randLat = grid.spanLat * 0.18, randLon = grid.spanLon * 0.18;
+  return lat >= grid.lat0 + randLat && lat <= grid.lat0 + grid.spanLat - randLat
+      && lon >= grid.lon0 + randLon && lon <= grid.lon0 + grid.spanLon - randLon;
+}
+
+/** Messpunkte des Rasters mit Werten — für Beschriftungen auf der Karte. */
+function points(h, feld = 'temp') {
+  if (!grid) return [];
+  const arr = grid[feld];
+  if (!arr) return [];
+  const out = [];
+  for (let i = 0; i < N; i++) {
+    for (let j = 0; j < N; j++) {
+      const v = arr[i * N + j]?.[h];
+      if (v == null) continue;
+      out.push({
+        lat: grid.lat0 + i * grid.dLat,
+        lon: grid.lon0 + j * grid.dLon,
+        wert: v
+      });
+    }
+  }
+  return out;
 }
 
 /** Index der Stunde, die dem Zeitpunkt am nächsten liegt. */
@@ -188,6 +221,6 @@ function indexFor(date) {
   return best;
 }
 
-return { load, frame, corners, ready, hours, indexFor, covers,
+return { load, frame, corners, ready, hours, indexFor, covers, points, stufeFuer,
          get canvas() { return canvas; } };
 })();

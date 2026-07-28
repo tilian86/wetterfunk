@@ -728,7 +728,8 @@ const LAYERS = [
   { id: 'wolken',     name: 'Wolken',       farbe: '#e6ecf5' },
   { id: 'temperatur', name: 'Temperatur',   farbe: '#ff9f6a' },
   { id: 'boeen',      name: 'Sturmböen',    farbe: '#be78f0' },
-  { id: 'gewitter',   name: 'Gewitter',     farbe: '#ff5a5a' }
+  { id: 'gewitter',   name: 'Gewitter',     farbe: '#ff5a5a' },
+  { id: 'zahlen',     name: 'Grad-Zahlen',  farbe: '#ffffff' }
 ];
 
 const activeLayers = () => new Set(store.get(LS.layers, ['regen', 'wolken']));
@@ -769,7 +770,9 @@ function syncMapAt(ziel) {
     if (label) { label.textContent = 'Radarmessung'; label.dataset.mode = 'radar'; }
   } else {
     const hi = Forecast.indexFor(ziel);
-    const ok = hi >= 0 && Radar.showForecast(hi, activeLayers());
+    const flaechen = new Set([...activeLayers()].filter(x => x !== 'zahlen'));
+    const ok = hi >= 0 && (flaechen.size ? Radar.showForecast(hi, flaechen) : true);
+    Radar.updateLabels();
     if (label) {
       const namen = LAYERS.filter(l => activeLayers().has(l.id)).map(l => l.name).join(' + ');
       label.textContent = ok ? `${namen} · Vorhersage` : 'Vorhersage nicht geladen';
@@ -782,16 +785,15 @@ function syncMapAt(ziel) {
     mehr ab. Dann für die neue Mitte nachladen — auch auf dem Globus. */
 let nachladeTimer = null;
 function onMapMoved(mitte, zoom) {
-  if (zoom < 3) return;                     // auf der Kugel lohnt es nicht
-  if (Forecast.covers(mitte.lat, mitte.lng)) return;
+  if (Forecast.covers(mitte.lat, mitte.lng, zoom)) { Radar.updateLabels?.(); return; }
   clearTimeout(nachladeTimer);
   nachladeTimer = setTimeout(() => {
     const marke = $('#mapMode');
     if (marke) marke.textContent = 'lädt für diese Region…';
-    Forecast.load(mitte.lat, mitte.lng)
-      .then(() => syncMapAt(currentScrubTime()))
-      .catch(() => {});
-  }, 700);
+    Forecast.load(mitte.lat, mitte.lng, zoom)
+      .then(() => { syncMapAt(currentScrubTime()); Radar.updateLabels?.(); })
+      .catch(() => { if (marke) marke.textContent = 'für diese Region keine Daten'; });
+  }, 600);
 }
 
 // ══ Rendering: Modellvergleich ═════════════════════════════
@@ -1646,12 +1648,69 @@ async function useGPS() {
   }, { enableHighAccuracy: false, timeout: 9000, maximumAge: 6e5 });
 }
 
+// ══ Sprungleiste ═══════════════════════════════════════════
+const NAV = [
+  { id: 'nav-jetzt',   ziel: '.hero',        name: 'Jetzt' },
+  { id: 'nav-stunden', ziel: '.card-hourly', name: 'Stündlich' },
+  { id: 'nav-tage',    ziel: '#daily',       name: '10 Tage' },
+  { id: 'nav-radar',   ziel: '.card-radar',  name: 'Radar' },
+  { id: 'nav-zeit',    ziel: '.card-scrub',  name: 'Zeitstrahl' },
+  { id: 'nav-details', ziel: '#tiles',       name: 'Details' },
+  { id: 'nav-sonne',   ziel: '.card-cd',     name: 'Sonne' },
+  { id: 'nav-bericht', ziel: '.card-brief',  name: 'Bericht' },
+  { id: 'nav-news',    ziel: '.card-news',   name: 'News' }
+];
+
+/** Waagerechte Leiste unter dem Kopf: springt zum Abschnitt und hebt hervor,
+    wo man gerade ist. Auf der langen Seite spart das viel Scrollen. */
+function renderNav() {
+  const bar = $('#nav');
+  if (!bar) return;
+
+  bar.innerHTML = NAV.map(n =>
+    `<button class="nav-chip" data-ziel="${n.ziel}">${n.name}</button>`).join('');
+
+  $$('.nav-chip', bar).forEach(b => b.addEventListener('click', () => {
+    const el = document.querySelector(b.dataset.ziel);
+    if (!el) return;
+    const kopf = $('.topbar').offsetHeight + bar.offsetHeight + 8;
+    const y = el.getBoundingClientRect().top + window.scrollY - kopf;
+    window.scrollTo({ top: Math.max(0, y), behavior: 'smooth' });
+  }));
+
+  // Aktiven Abschnitt beim Scrollen mitführen
+  const ziele = NAV.map(n => ({ ...n, el: document.querySelector(n.ziel) })).filter(z => z.el);
+  const beob = new IntersectionObserver((eintraege) => {
+    const sichtbar = eintraege.filter(e => e.isIntersecting)
+      .sort((a, b) => b.intersectionRatio - a.intersectionRatio)[0];
+    if (!sichtbar) return;
+    const treffer = ziele.find(z => z.el === sichtbar.target);
+    if (!treffer) return;
+    $$('.nav-chip', bar).forEach(c => c.classList.toggle('on', c.dataset.ziel === treffer.ziel));
+    const aktiv = bar.querySelector('.nav-chip.on');
+    if (aktiv) aktiv.scrollIntoView({ block: 'nearest', inline: 'center', behavior: 'smooth' });
+  }, { rootMargin: '-90px 0px -60% 0px', threshold: [0.05, 0.3] });
+
+  ziele.forEach(z => beob.observe(z.el));
+}
+
+/** Karte auf den ganzen Bildschirm ziehen. */
+function toggleMapFull() {
+  const karte = $('.card-radar');
+  const an = karte.classList.toggle('is-full');
+  document.body.classList.toggle('map-full', an);
+  $('#mapFull').setAttribute('aria-label', an ? 'Karte verkleinern' : 'Karte vergrößern');
+  setTimeout(() => Radar.map?.resize(), 220);
+  if (an) karte.scrollIntoView({ block: 'start', behavior: 'instant' });
+}
+
 // ══ Ereignisse ═════════════════════════════════════════════
 function wire() {
   $('#placeBtn').addEventListener('click', () => { openSheet('#placeSheet'); $('#placeSearch').focus(); });
   $('#placeClose').addEventListener('click', () => closeSheet('#placeSheet'));
   $('#placeSheet').addEventListener('click', e => { if (e.target.id === 'placeSheet') closeSheet('#placeSheet'); });
   $('#gpsBtn').addEventListener('click', useGPS);
+  $('#mapFull').addEventListener('click', toggleMapFull);
   $('#refreshBtn').addEventListener('click', refresh);
 
   // Datenquelle
@@ -1710,6 +1769,7 @@ const hostApi = {
 
 async function boot() {
   wire();
+  renderNav();
   renderSaved();
   renderCams();
   Briefing.init(hostApi);
@@ -1737,6 +1797,8 @@ async function boot() {
       slider: $('#radarSlider'), play: $('#playBtn'), time: $('#radarTime'),
       legend: $('#radarLegend'), locate: $('#radarLocate'), empty: $('#radarEmpty'),
       globe: $('#radarGlobe'), ticks: $('#radarTicks'), onMoveEnd: onMapMoved,
+      currentTime: currentScrubTime,
+      labelsOn: () => activeLayers().has('zahlen'),
       sharp: $('#mapSharp'),
       onLocate: () => Radar.setCenter(place.lat, place.lon)
     });

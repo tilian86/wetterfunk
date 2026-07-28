@@ -100,6 +100,47 @@ const Radar = (() => {
     if (els.sharp) els.sharp.hidden = !an;
   }
 
+  /** Temperaturzahlen an den Rasterpunkten — damit man auf der Karte sofort
+      sieht, wie warm es wo ist, statt Farben deuten zu müssen. */
+  function updateLabels() {
+    if (!ready || !map || !Forecast.ready()) return;
+    const zeit = els.currentTime?.();
+    const h = zeit ? Forecast.indexFor(zeit) : 0;
+    const punkte = Forecast.points(Math.max(0, h), 'temp');
+
+    const geo = {
+      type: 'FeatureCollection',
+      features: punkte.map(p => ({
+        type: 'Feature',
+        geometry: { type: 'Point', coordinates: [p.lon, p.lat] },
+        properties: { t: `${Math.round(p.wert)}°` }
+      }))
+    };
+
+    if (!map.getSource('temps')) {
+      map.addSource('temps', { type: 'geojson', data: geo });
+      map.addLayer({
+        id: 'temp-labels', type: 'symbol', source: 'temps',
+        layout: {
+          'text-field': ['get', 't'],
+          'text-size': 12,
+          'text-font': ['Noto Sans Bold'],
+          'text-allow-overlap': false,
+          'text-padding': 6
+        },
+        paint: {
+          'text-color': '#ffffff',
+          'text-halo-color': 'rgba(10,16,26,.85)',
+          'text-halo-width': 1.6
+        }
+      });
+    } else {
+      map.getSource('temps').setData(geo);
+    }
+    map.setLayoutProperty('temp-labels', 'visibility',
+      els.labelsOn?.() ? 'visible' : 'none');
+  }
+
   /** Standortpunkt als eigene Ebene, damit er auch auf der Kugel klebt. */
   function addHereMarker() {
     if (map.getSource('here')) return;
@@ -350,5 +391,5 @@ const Radar = (() => {
   }
 
   return { init, load, setCenter, play, pause, toggle, show, isPlaying,
-           showForecast, showRadar, get map() { return map; } };
+           showForecast, showRadar, updateLabels, get map() { return map; } };
 })();

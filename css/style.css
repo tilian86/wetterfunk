@@ -1301,3 +1301,53 @@ body.loading .hero-temp, body.loading .hero-desc { opacity: .45; }
   font: 600 14px var(--font); text-decoration: none; text-align: center;
 }
 .explain-link[hidden] { display: none; }
+
+/* ── Sprungleiste ─────────────────────────────────────────── */
+.nav {
+  position: fixed; z-index: 39;
+  top: calc(var(--sat) + 52px); left: 0; right: 0;
+  display: flex; gap: 6px; overflow-x: auto; scrollbar-width: none;
+  padding: 7px calc(var(--pad) + var(--sar)) 8px calc(var(--pad) + var(--sal));
+  background: linear-gradient(#0b1220f0, #0b1220d0 70%, #0b122000);
+  backdrop-filter: blur(14px) saturate(140%);
+  -webkit-backdrop-filter: blur(14px) saturate(140%);
+}
+.nav::-webkit-scrollbar { display: none; }
+.nav-chip {
+  flex: none; padding: 6px 13px; border-radius: 30px;
+  background: rgba(255,255,255,.07); border: 1px solid transparent;
+  color: var(--ink-faint); font: 600 12.5px var(--font);
+  cursor: pointer; white-space: nowrap;
+  transition: background .15s, color .15s, border-color .15s;
+}
+.nav-chip.on {
+  background: rgba(108,198,255,.18); border-color: rgba(108,198,255,.42);
+  color: var(--accent);
+}
+.nav-chip:active { transform: scale(.95); }
+
+/* Platz für die Leiste schaffen */
+body { padding-top: calc(var(--sat) + 96px); }
+
+/* ── Karte auf Vollbild ───────────────────────────────────── */
+.radar-full {
+  position: absolute; right: 9px; bottom: 91px; z-index: 500;
+  width: 33px; height: 33px; display: grid; place-items: center;
+  background: rgba(10, 16, 26, .72); border: 1px solid var(--card-line);
+  border-radius: 50%; color: var(--ink); cursor: pointer;
+  backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px);
+}
+.radar-full svg { width: 16px; height: 16px; }
+.radar-full:active { transform: scale(.9); }
+
+body.map-full { overflow: hidden; }
+body.map-full > *:not(.card-radar):not(.sky):not(.topbar):not(.toast) { visibility: hidden; }
+.card-radar.is-full {
+  position: fixed; inset: 0; z-index: 60; margin: 0; border-radius: 0;
+  display: flex; flex-direction: column;
+  padding: calc(var(--sat) + 56px) var(--pad) calc(var(--sab) + 12px);
+  background: #0b1220; visibility: visible;
+}
+.card-radar.is-full .radar-wrap { flex: 1; height: auto; }
+.card-radar.is-full .radar-hint,
+.card-radar.is-full .slider-scale { display: none; }

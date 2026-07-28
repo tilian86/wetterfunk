@@ -13,10 +13,10 @@
 <meta name="theme-color" content="#0b1220">
 <link rel="apple-touch-icon" href="icons/icon-180.png">
 <link rel="icon" href="icons/icon-192.png">
-<link rel="manifest" href="manifest.webmanifest?v=11">
+<link rel="manifest" href="manifest.webmanifest?v=12">
 
-<link rel="stylesheet" href="vendor/maplibre-gl.css?v=11">
-<link rel="stylesheet" href="css/style.css?v=11">
+<link rel="stylesheet" href="vendor/maplibre-gl.css?v=12">
+<link rel="stylesheet" href="css/style.css?v=12">
 </head>
 <body>
 
@@ -35,6 +35,8 @@
     <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 11a8 8 0 1 0-.6 4"/><path d="M20 4v7h-7"/></svg>
   </button>
 </header>
+
+<nav class="nav" id="nav" aria-label="Abschnitte"></nav>
 
 <main id="app">
 
@@ -97,6 +99,9 @@
       <div class="radar-legend" id="radarLegend"></div>
       <button class="radar-locate" id="radarLocate" aria-label="Auf Standort zentrieren">
         <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3.2"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3"/><circle cx="12" cy="12" r="8"/></svg>
+      </button>
+      <button class="radar-full" id="mapFull" aria-label="Karte vergrößern">
+        <svg viewBox="0 0 24 24"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/></svg>
       </button>
       <button class="radar-globe" id="radarGlobe" aria-label="Erdkugel anzeigen">
         <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M3 12h18"/><path d="M12 3a14 14 0 0 1 0 18a14 14 0 0 1 0-18z"/></svg>
@@ -325,12 +330,12 @@
 
 <div class="toast" id="toast" hidden></div>
 
-<script src="vendor/maplibre-gl.js?v=11"></script>
-<script src="js/icons.js?v=11"></script>
-<script src="js/radar.js?v=11"></script>
-<script src="js/forecast.js?v=11"></script>
-<script src="js/briefing.js?v=11"></script>
-<script src="js/news.js?v=11"></script>
-<script src="js/app.js?v=11"></script>
+<script src="vendor/maplibre-gl.js?v=12"></script>
+<script src="js/icons.js?v=12"></script>
+<script src="js/radar.js?v=12"></script>
+<script src="js/forecast.js?v=12"></script>
+<script src="js/briefing.js?v=12"></script>
+<script src="js/news.js?v=12"></script>
+<script src="js/app.js?v=12"></script>
 </body>
 </html>
