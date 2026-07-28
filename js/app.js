@@ -411,7 +411,17 @@ function renderWarnings(raw) {
     seen.add(k); return true;
   }).sort((a, b) => b.level - a.level);
 
-  const LEVELS = { 1: 'Wetterhinweis', 2: 'Wetterwarnung', 3: 'Markantes Wetter', 4: 'Unwetter', 5: 'Extremes Unwetter' };
+  /* Die Stufe steckt nicht verlässlich im \`level\`: Für Hitze nutzt der DWD
+     eine eigene Skala (50 aufwärts), für Wetterwarnungen 1 bis 4. Die
+     Überschrift ist dagegen immer eindeutig formuliert. */
+  const stufeVon = (w) => {
+    const h = String(w.headline || '').toUpperCase();
+    if (h.includes('EXTREME')) return 'Extremes Unwetter';
+    if (h.includes('UNWETTER')) return 'Unwetterwarnung';
+    if (h.includes('VORABINFORMATION')) return 'Vorabinformation';
+    if (w.level >= 4 && w.level < 10) return 'Unwetterwarnung';
+    return 'Warnung';
+  };
   activeWarnings = uniq;
 
   box.innerHTML = uniq.map(w => `
@@ -419,7 +429,7 @@ function renderWarnings(raw) {
       <summary>
         <svg class="warn-ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3.5 1.8 21h20.4L12 3.5z"/><path d="M12 10v5" stroke-width="2"/><circle cx="12" cy="18" r="1.1" fill="currentColor" stroke="none"/></svg>
         <span class="warn-txt">
-          <b>${w.event || LEVELS[w.level] || 'Warnung'}</b>
+          <b>${w.event || stufeVon(w)}</b>
           <i>${w.regionName} · bis ${hhmm(w.end)}</i>
         </span>
         <svg class="warn-chev" viewBox="0 0 24 24"><path d="M6 9l6 6 6-6"/></svg>
@@ -427,7 +437,7 @@ function renderWarnings(raw) {
       <div class="warn-body">
         <p>${w.description || ''}</p>
         ${w.instruction ? `<p class="warn-instr">${w.instruction}</p>` : ''}
-        <p class="warn-src">${LEVELS[w.level] || ''} · Deutscher Wetterdienst</p>
+        <p class="warn-src">${stufeVon(w)} · Deutscher Wetterdienst</p>
       </div>
     </details>`).join('');
 }
@@ -2552,6 +2562,13 @@ const pushProxy = () => ((localStorage.getItem('wf.proxy') || '').replace(/^"|"$
   || 'https://wetterfunk.florian-s-thiel.workers.dev').replace(/\/+$/, '');
 
 const pushMoeglich = () => 'serviceWorker' in navigator && 'PushManager' in window && 'Notification' in window;
+
+/** Welche Meldungen sollen kommen — lokal gemerkt, damit die Kästchen
+    beim nächsten Öffnen noch stimmen. */
+const pushArten = () => ({
+  regen: store.get('wf.artRegen', true),
+  warnungen: store.get('wf.artWarn', true)
+});
 const alsAppInstalliert = () => window.matchMedia('(display-mode: standalone)').matches
   || window.navigator.standalone === true;
 
@@ -2584,13 +2601,21 @@ async function renderPush() {
   if (an && place?.lat != null) {
     fetch(`${pushProxy()}/push/an`, {
       method: 'POST', headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ abo: abo.toJSON(), lat: place.lat, lon: place.lon, ort: place.name })
+      body: JSON.stringify({ abo: abo.toJSON(), lat: place.lat, lon: place.lon,
+                                ort: place.name, kreis: place.county, arten: pushArten() })
     }).catch(() => {});
   }
 
-  $('#pushState').textContent = an ? 'eingeschaltet' : 'aus';
+  const arten = pushArten();
+  $('#artRegen').checked = arten.regen;
+  $('#artWarnungen').checked = arten.warnungen;
+
+  const gewaehlt = [arten.regen && 'Regen', arten.warnungen && 'Warnungen']
+    .filter(Boolean).join(' + ');
+  $('#pushState').textContent = an ? (gewaehlt || 'nichts gewählt') : 'aus';
   $('#pushToggle').textContent = an ? 'Ausschalten' : 'Einschalten';
   $('#pushToggle').classList.toggle('on', an);
+  $('#pushToggle').disabled = !an && !arten.regen && !arten.warnungen;
   $('#pushTest').hidden = !an;
   // Läuft die Warnung, schrumpft die Karte — dann gibt es nichts mehr zu tun
   karte.classList.toggle('is-on', an);
@@ -2643,7 +2668,8 @@ async function pushUmschalten() {
     const res = await fetch(`${pushProxy()}/push/an`, {
       method: 'POST', headers: { 'content-type': 'application/json' },
       body: JSON.stringify({
-        abo: abo.toJSON(), lat: place.lat, lon: place.lon, ort: place.name
+        abo: abo.toJSON(), lat: place.lat, lon: place.lon,
+        ort: place.name, kreis: place.county, arten: pushArten()
       })
     });
     if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || `Server ${res.status}`);
@@ -2842,6 +2868,16 @@ function wire() {
     el.addEventListener('click', openZonen);
   });
   $('#pushToggle')?.addEventListener('click', pushUmschalten);
+  // Häkchen wirken sofort — auch bei bereits laufendem Abo
+  [['#artRegen', 'wf.artRegen'], ['#artWarnungen', 'wf.artWarn']].forEach(([sel, key]) => {
+    $(sel)?.addEventListener('change', (e) => {
+      store.set(key, e.target.checked);
+      renderPush();
+      if (!e.target.checked && !pushArten().regen && !pushArten().warnungen) {
+        toast('Ohne Auswahl kommen keine Meldungen.', 3000);
+      }
+    });
+  });
   $('#installBtn')?.addEventListener('click', installAnstossen);
   $('#radarLegend')?.addEventListener('click', openEbenenHilfe);
   renderInstall();

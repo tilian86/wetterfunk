@@ -181,7 +181,7 @@ export default {
     if (url.pathname === '/push/an' && request.method === 'POST') {
       let req;
       try { req = await request.json(); } catch { return json({ error: 'Ungültige Anfrage' }, 400, origin); }
-      const { abo, lat, lon, ort } = req || {};
+      const { abo, lat, lon, ort, kreis, arten } = req || {};
       if (!abo?.endpoint || !abo?.keys?.p256dh || !abo?.keys?.auth) {
         return json({ error: 'Unvollständiges Abo' }, 400, origin);
       }
@@ -194,8 +194,18 @@ export default {
       const key = aboSchluessel(abo.endpoint);
       const alt = await env.WF_PUSH.get(key, 'json');
       await env.WF_PUSH.put(key, JSON.stringify({
-        abo, lat, lon, ort: String(ort || '').slice(0, 60),
-        seit: alt?.seit || Date.now(), zuletzt: alt?.zuletzt || 0
+        abo, lat, lon,
+        ort: String(ort || '').slice(0, 60),
+        kreis: String(kreis || '').slice(0, 80),
+        // Was gemeldet werden soll — beides an, wenn nichts angegeben ist
+        arten: {
+          regen: arten?.regen !== false,
+          warnungen: arten?.warnungen !== false
+        },
+        seit: alt?.seit || Date.now(),
+        zuletzt: alt?.zuletzt || 0,
+        gemeldet: alt?.gemeldet || null,
+        warnGemeldet: alt?.warnGemeldet || []
       }));
       return json({ ok: true }, 200, origin);
     }
@@ -299,18 +309,31 @@ const MIN_ABSTAND    = 20 * 60000;   // Nie öfter als alle 20 Minuten irgendetw
 
 async function regenPruefen(env) {
   const liste = await env.WF_PUSH.list({ prefix: 'abo:' });
+  if (!liste.keys.length) return;
+
+  // Amtliche Warnungen einmal für alle holen, nicht je Abo
+  const warnungen = await ladeWarnungen();
 
   for (const eintragMeta of liste.keys) {
     const eintrag = await env.WF_PUSH.get(eintragMeta.name, 'json');
     if (!eintrag) continue;
+    const arten = eintrag.arten || { regen: true, warnungen: true };
 
     try {
-      const lage = await regenLage(eintrag.lat, eintrag.lon);
-      if (!lage) continue;
+      let meldung = null;
 
-      const meldung = entscheide(lage, eintrag);
+      /* Amtliche Warnungen haben Vorrang: Ein Unwetter ist wichtiger als die
+         Ankündigung von Nieselregen. */
+      if (arten.warnungen && warnungen) {
+        meldung = warnungMelden(warnungen, eintrag);
+      }
+      if (!meldung && arten.regen) {
+        const lage = await regenLage(eintrag.lat, eintrag.lon);
+        if (lage) meldung = entscheide(lage, eintrag);
+      }
       if (!meldung) continue;
-      if (Date.now() - (eintrag.zuletzt || 0) < MIN_ABSTAND) continue;
+      // Warnungen dürfen die Ruhefrist durchbrechen — bei Unwetter zählt Zeit
+      if (meldung.art !== 'warnung' && Date.now() - (eintrag.zuletzt || 0) < MIN_ABSTAND) continue;
 
       const status = await sendPush(eintrag.abo, JSON.stringify({
         titel: meldung.titel, text: meldung.text, art: meldung.art
@@ -323,13 +346,105 @@ async function regenPruefen(env) {
       }
       if (status < 300) {
         eintrag.zuletzt = Date.now();
-        eintrag.gemeldet = meldung.merker;
+        if (meldung.art === 'warnung') {
+          // Kennungen der gemeldeten Warnungen merken, höchstens 40 Stück
+          eintrag.warnGemeldet = [...(eintrag.warnGemeldet || []), ...meldung.kennungen].slice(-40);
+        } else {
+          eintrag.gemeldet = meldung.merker;
+        }
         await env.WF_PUSH.put(eintragMeta.name, JSON.stringify(eintrag));
       }
     } catch (e) {
-      console.log('Regenprüfung fehlgeschlagen:', eintragMeta.name, e.message);
+      console.log('Prüfung fehlgeschlagen:', eintragMeta.name, e.message);
     }
   }
+}
+
+/* ── Amtliche Warnungen des DWD ─────────────────────────────
+   Die Datei ist als JSONP verpackt: warnWetter.loadWarnings({...}). */
+async function ladeWarnungen() {
+  try {
+    const res = await fetch('https://www.dwd.de/DWD/warnungen/warnapp/json/warnings.json',
+      { cf: { cacheTtl: 240, cacheEverything: true } });
+    if (!res.ok) return null;
+    const txt = await res.text();
+    const a = txt.indexOf('{'), b = txt.lastIndexOf('}');
+    if (a < 0 || b < 0) return null;
+    return JSON.parse(txt.slice(a, b + 1));
+  } catch (e) {
+    console.log('DWD-Warnungen:', e.message);
+    return null;
+  }
+}
+
+/* Die Stufe steckt nicht verlässlich im `level`: Für Hitze verwendet der DWD
+   eine eigene Skala (50 und höher), für Wetterwarnungen 1 bis 4. Die
+   Überschrift ist dagegen immer eindeutig formuliert. */
+function stufeVon(w) {
+  const h = String(w.headline || '').toUpperCase();
+  if (h.includes('EXTREME')) return { wort: 'Extremes Unwetter', dringend: true };
+  if (h.includes('UNWETTER')) return { wort: 'Unwetterwarnung', dringend: true };
+  if (h.includes('VORABINFORMATION')) return { wort: 'Vorabinformation', dringend: false };
+  if (w.level >= 4 && w.level < 10) return { wort: 'Unwetterwarnung', dringend: true };
+  return { wort: 'Warnung', dringend: false };
+}
+
+/** Ortsnamen vergleichbar machen — der DWD schreibt "Kreis und Stadt Tübingen". */
+const glatt = (s) => String(s || '').toLowerCase()
+  .replace(/ä/g, 'a').replace(/ö/g, 'o').replace(/ü/g, 'u').replace(/ß/g, 'ss')
+  .replace(/\b(stadt|kreis|landkreis|und|die|der)\b/g, ' ')
+  .replace(/[^a-z0-9]+/g, ' ').trim();
+
+/** Gibt es eine neue Warnung für diesen Ort? */
+function warnungMelden(daten, eintrag) {
+  const ziele = [glatt(eintrag.ort), glatt(eintrag.kreis)].filter(Boolean);
+  if (!ziele.length) return null;
+
+  const passt = (regionName) => {
+    const r = glatt(regionName);
+    if (!r) return false;
+    return ziele.some(z => z && (r === z || r.includes(z) || z.includes(r)));
+  };
+
+  const gefunden = [];
+  for (const gruppe of [daten.warnings, daten.vorabInformation]) {
+    for (const id in (gruppe || {})) {
+      for (const w of gruppe[id]) {
+        if (passt(w.regionName)) gefunden.push(w);
+      }
+    }
+  }
+  if (!gefunden.length) return null;
+
+  // Dieselbe Warnung kommt für mehrere Warncells — nach Inhalt entdoppeln
+  const schon = new Set(eintrag.warnGemeldet || []);
+  const gesehen = new Set();
+  const neu = gefunden.filter(w => {
+    const k = `${w.type}|${w.level}|${w.event}|${w.start}`;
+    if (gesehen.has(k) || schon.has(k)) return false;
+    gesehen.add(k);
+    return true;
+  }).sort((a, b) => (stufeVon(b).dringend ? 1 : 0) - (stufeVon(a).dringend ? 1 : 0));
+
+  if (!neu.length) return null;
+
+  const w = neu[0];
+  const stufe = stufeVon(w);
+  const bis = w.end ? new Date(w.end).toLocaleTimeString('de-DE',
+    { hour: '2-digit', minute: '2-digit', timeZone: 'Europe/Berlin' }) : null;
+  const weitere = neu.length > 1 ? ` Dazu ${neu.length - 1} weitere Warnung${neu.length > 2 ? 'en' : ''}.` : '';
+
+  // Der Ereignisname des DWD steht in Großbuchstaben — das schreit in einer Meldung
+  const ereignis = String(w.event || '').replace(/\b[A-ZÄÖÜ]{2,}\b/g,
+    m => m.charAt(0) + m.slice(1).toLowerCase());
+
+  return {
+    art: 'warnung',
+    titel: `${stufe.dringend ? '⚠️ ' : ''}${stufe.wort}: ${ereignis}`,
+    text: `${w.regionName}${bis ? `, bis ${bis} Uhr` : ''}.${weitere} ` +
+          `${String(w.description || '').slice(0, 150)}`.trim().slice(0, 180),
+    kennungen: neu.map(x => `${x.type}|${x.level}|${x.event}|${x.start}`)
+  };
 }
 
 /** Aus der Lage und dem zuletzt Gemeldeten ableiten, ob etwas zu sagen ist. */

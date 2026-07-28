@@ -363,6 +363,23 @@ svg { fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round
 }
 .card-push.is-on .push-hint { font-size: 10.5px; }
 .card-push.is-on .card-sub { color: #7ee0a0; }
+/* Auswahl, was gemeldet werden soll */
+.push-arten { display: grid; gap: 10px; margin-bottom: 15px; }
+.pa-zeile {
+  display: flex; gap: 11px; align-items: flex-start;
+  padding: 11px 12px; border-radius: var(--r-md);
+  background: rgba(255,255,255,.05); border: 1px solid var(--card-line);
+  cursor: pointer;
+}
+.pa-zeile input {
+  width: 20px; height: 20px; flex: none; margin: 1px 0 0;
+  accent-color: var(--accent); cursor: pointer;
+}
+.pa-text { display: grid; gap: 3px; min-width: 0; }
+.pa-text b { font-size: 13.5px; font-weight: 600; color: var(--ink); }
+.pa-text i { font-style: normal; font-size: 11.5px; line-height: 1.5; color: var(--ink-dim); }
+.card-push.is-on .push-arten { display: none; }
+
 .push-row { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
 .push-btn {
   padding: 11px 18px; border-radius: var(--r-md);
