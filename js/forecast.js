@@ -205,16 +205,16 @@ function frame(h, ebenen = new Set(['regen', 'wolken'])) {
         mischen(tempColor(sample(grid.temp, h, fy, fx)), 0.55);
       }
       if (ebenen.has('wolken')) {
-        /* Wolken als helle Fläche waren auf der Karte unsichtbar. Jetzt eine
-           kühle Graustufe, die mit der Dichte deutlich zunimmt — so erkennt
-           man Wolkenfelder und Lücken auf einen Blick. */
+        /* Auf der hellen Karte muss die Wolkendecke abdunkeln, nicht
+           aufhellen — dichter Himmel ist dunkler Himmel. Ein weißer Schleier
+           auf fast weißem Grund wäre unsichtbar. */
         const cc = sample(grid.cloud, h, fy, fx);
         if (cc > 12) {
           const t = Math.min(1, (cc - 12) / 78);          // 12 % … 90 %
-          const hell = 158 + t * 84;                       // dünn dunkler, dicht heller
+          const grau = 214 - t * 92;                       // dünn hell, dicht grau
           // Gedeckelt: Bei durchgehender Bewölkung war die Karte darunter
           // nicht mehr zu erkennen, damit fehlte jede Orientierung.
-          mischen([hell, hell + 8, hell + 22], 0.10 + t * 0.26);
+          mischen([grau, grau + 4, grau + 14], 0.14 + t * 0.34);
         }
       }
       if (ebenen.has('boeen')) {

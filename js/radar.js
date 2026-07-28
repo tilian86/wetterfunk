@@ -7,10 +7,11 @@
 const Radar = (() => {
 
   const API   = 'https://api.rainviewer.com/public/weather-maps.json';
-  /* Dunkle Grundkarte: Auf der hellen Version verschwanden Regen- und
-     Wolkenflächen fast vollständig — dieselben Farben, die andere Radar-Apps
-     kräftig zeigen, wirken auf hellgrauem Grund nur wie ein blasser Schleier. */
-  const STYLE = 'https://tiles.openfreemap.org/styles/dark';
+  /* Helle, entsättigte Grundkarte wie bei den Radarbildern des DWD: fast
+     weiß, nur Grenzen, Gewässer und Ortsnamen. Der Fehler zuvor war nicht die
+     Helligkeit, sondern die bunte Straßenkarte — auf grünen Wäldern und gelben
+     Straßen geht jede Wetterfarbe unter. Auf ruhigem Hellgrau knallen sie. */
+  const STYLE = 'https://tiles.openfreemap.org/styles/positron';
   const COLOR = 8;          // kräftiges Schema — leichte und starke Zellen klar
                             // unterscheidbar, wichtiger als dezente Optik
   const OPTS  = '1_1';      // geglättet, mit Schnee
@@ -53,7 +54,7 @@ const Radar = (() => {
       try { map.setProjection({ type: 'globe' }); } catch { /* ältere Fassung */ }
       addDwdLayer();
       addHereMarker();
-      beschriftungAufhellen();
+      beschriftungLesbar();
       ready = true;
       if (frames.length) mountLayers();
       ladeDwdBild();
@@ -242,9 +243,11 @@ const Radar = (() => {
           'text-padding': 6
         },
         paint: {
-          'text-color': ['case', ['==', ['get', 'nass'], 1], '#bfe9ff', '#ffffff'],
-          'text-halo-color': 'rgba(10,16,26,.85)',
-          'text-halo-width': 1.6
+          // Dunkle Schrift mit weißem Rand — auf der hellen Karte und über
+          // farbigen Regenflächen gleichermaßen lesbar
+          'text-color': ['case', ['==', ['get', 'nass'], 1], '#0d3a5c', '#22303f'],
+          'text-halo-color': 'rgba(255,255,255,.9)',
+          'text-halo-width': 1.8
         }
       });
       map.on('click', 'temp-labels', (e) => {
@@ -269,19 +272,20 @@ const Radar = (() => {
     return erste ? erste.id : undefined;
   }
 
-  /** Die Ortsnamen des dunklen Stils sind mittelgrau — über einer grauen
-      Wolkenfläche sind sie nicht mehr zu lesen. Heller Text mit dunklem
-      Rand bleibt auf jedem Untergrund erkennbar. */
-  function beschriftungAufhellen() {
+  /** Ortsnamen mit weißem Rand hinterlegen: Über einer Regen- oder
+      Wolkenfläche gingen sie sonst unter. Dunkle Schrift auf hellem Rand
+      bleibt auf jedem Untergrund lesbar — so macht es der DWD auch. */
+  function beschriftungLesbar() {
     const ebenen = map.getStyle()?.layers || [];
     for (const l of ebenen) {
       if (l.type !== 'symbol') continue;
-      if (!/place|water_name|state|country/i.test(l.id)) continue;
+      // Je nach Kartenstil heißen die Ortsebenen "place_city" oder "label_city"
+      if (!/^(place|label)_|water_name|state|country/i.test(l.id)) continue;
       try {
-        map.setPaintProperty(l.id, 'text-color', '#f2f6fb');
-        map.setPaintProperty(l.id, 'text-halo-color', 'rgba(6,10,18,.92)');
-        map.setPaintProperty(l.id, 'text-halo-width', 1.9);
-        map.setPaintProperty(l.id, 'text-halo-blur', 0.3);
+        map.setPaintProperty(l.id, 'text-color', '#1c2431');
+        map.setPaintProperty(l.id, 'text-halo-color', 'rgba(255,255,255,.95)');
+        map.setPaintProperty(l.id, 'text-halo-width', 2);
+        map.setPaintProperty(l.id, 'text-halo-blur', 0.2);
       } catch { /* Ebene ohne Textfarbe */ }
     }
   }
@@ -296,7 +300,8 @@ const Radar = (() => {
     map.addLayer({
       id: 'here-halo', type: 'circle', source: 'here',
       paint: {
-        'circle-radius': 13, 'circle-color': '#6cc6ff', 'circle-opacity': .25,
+        // Auf der hellen Karte braucht der Hof mehr Deckkraft als auf dunkler
+        'circle-radius': 13, 'circle-color': '#2f9fe0', 'circle-opacity': .22,
         'circle-stroke-width': 0
       }
     });
