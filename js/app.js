@@ -1781,6 +1781,7 @@ async function refresh() {
     renderCountdown();
     renderSky();
     renderCams();
+    loadDwdText(place.lat, place.lon);   // im Hintergrund, blockiert nichts
 
     // Radarbilder mitziehen — sonst zeigt die Karte nach dem Aktualisieren
     // weiter den Stand vom Seitenaufruf.
@@ -1823,6 +1824,95 @@ async function useGPS() {
 }
 
 // ══ Sprungleiste ═══════════════════════════════════════════
+/* ── Amtlicher Regionalwetterbericht des DWD ────────────────
+   Von Meteorologen geschriebene Lagebeurteilung — mehr Einordnung, als
+   Zahlen liefern können. Die Region wird grob aus den Koordinaten geraten;
+   die Grenzen sind Rechtecke, das genügt für die Zuordnung. */
+const DWD_REGIONEN = [
+  { k: 'DWHH', name: 'Schleswig-Holstein und Hamburg', lat: [53.3, 55.1], lon: [7.8, 11.4] },
+  { k: 'DWPH', name: 'Mecklenburg-Vorpommern',         lat: [53.0, 54.8], lon: [10.5, 14.5] },
+  { k: 'DWHG', name: 'Niedersachsen und Bremen',       lat: [51.2, 53.9], lon: [6.6, 11.6] },
+  { k: 'DWPG', name: 'Brandenburg und Berlin',         lat: [51.3, 53.6], lon: [11.2, 14.8] },
+  { k: 'DWEH', name: 'Nordrhein-Westfalen',            lat: [50.3, 52.6], lon: [5.8, 9.5] },
+  { k: 'DWLH', name: 'Sachsen-Anhalt',                 lat: [50.9, 53.1], lon: [10.5, 13.3] },
+  { k: 'DWEG', name: 'Hessen',                         lat: [49.3, 51.7], lon: [7.7, 10.3] },
+  { k: 'DWLI', name: 'Thüringen',                      lat: [50.2, 51.7], lon: [9.8, 12.7] },
+  { k: 'DWLG', name: 'Sachsen',                        lat: [50.1, 51.7], lon: [11.8, 15.1] },
+  { k: 'DWEI', name: 'Rheinland-Pfalz und Saarland',   lat: [48.9, 51.0], lon: [6.0, 8.6] },
+  { k: 'DWMO', name: 'Nordbayern',                     lat: [48.9, 50.6], lon: [8.9, 12.4] },
+  { k: 'DWSG', name: 'Baden-Württemberg',              lat: [47.5, 49.8], lon: [7.5, 10.5] },
+  { k: 'DWMP', name: 'Südbayern',                      lat: [47.2, 49.1], lon: [9.7, 13.9] }
+];
+
+const dwdRegionFuer = (lat, lon) =>
+  DWD_REGIONEN.find(r => lat >= r.lat[0] && lat <= r.lat[1] && lon >= r.lon[0] && lon <= r.lon[1])
+  || { k: 'DWOG', name: 'Deutschland' };
+
+let dwdVoll = '';
+
+async function loadDwdText(lat, lon) {
+  const karte = $('#dwdCard');
+  if (!karte) return;
+  const region = dwdRegionFuer(lat, lon);
+
+  try {
+    const proxy = (localStorage.getItem('wf.proxy') || '').replace(/^"|"$/g, '')
+      || 'https://wetterfunk.florian-s-thiel.workers.dev';
+    const res = await fetch(`${proxy.replace(/\/+$/, '')}/dwdtext?region=${region.k}`);
+    const d = await res.json();
+    if (!d.text) throw new Error(d.error || 'kein Text');
+
+    // Fernschreibformat: Steuerzeichen weg, harte Zeilenumbrüche auflösen
+    const roh = d.text.replace(/[\x00-\x08\x0b\x0c\x0e-\x1f]/g, "").replace(/\r/g, "");
+    const absaetze = roh.split(/\n{2,}/)
+      .map(a => a.replace(/\n/g, " ").replace(/\s{2,}/g, " ").trim())
+      .filter(Boolean);
+
+    const kopfEnde = absaetze.findIndex(a => /\d{1,2}\.\d{2}\.\d{4}/.test(a));
+    const stand = (absaetze[kopfEnde] || "")
+      .match(/\w+tag, \d{1,2}\.\d{2}\.\d{4}, \d{1,2}[:.]\d{2} Uhr/)?.[0] || "";
+
+    // Überschriften wie "WIND:" stehen im Original in derselben Zeile wie der
+    // Text — hier eigene Absätze daraus machen, sonst liest es sich als Brei.
+    const inhalt = [];
+    for (const a of absaetze.slice(Math.max(0, kopfEnde + 1))) {
+      const m = a.match(/^([A-ZÄÖÜ][\wÄÖÜäöüß\- ]{2,38}:)\s*(.*)$/);
+      if (m) { inhalt.push(m[1]); if (m[2]) inhalt.push(m[2]); }
+      else inhalt.push(a);
+    }
+
+    dwdVoll = inhalt.join("\n\n");
+    const kurz = inhalt.slice(0, 3);
+
+    $('#dwdRegion').textContent = region.name;
+    $('#dwdText').innerHTML = kurz.map(dwdAbsatz).join('');
+    $('#dwdFoot').textContent = stand ? `Deutscher Wetterdienst · Stand ${stand}` : 'Deutscher Wetterdienst';
+    $('#dwdMore').hidden = inhalt.length <= 2;
+    karte.hidden = false;
+  } catch (e) {
+    console.warn('DWD-Text:', e);
+    karte.hidden = true;
+  }
+}
+
+/** Kurze Absätze, die mit Doppelpunkt enden, sind im DWD-Text Überschriften. */
+const dwdAbsatz = (a) => (a.length < 42 && a.trim().endsWith(':')
+  ? `<p class="dwd-h">${a.replace(/:$/, '')}</p>`
+  : `<p>${a}</p>`);
+
+function openDwdFull() {
+  $('#explainTitle').textContent = `Amtlicher Bericht · ${$('#dwdRegion').textContent}`;
+  $('#explainText').innerHTML =
+    `<div class="dwd-text">${dwdVoll.split('\n\n').map(dwdAbsatz).join('')}</div>`;
+  const l = $('#explainLink');
+  if (l) {
+    l.href = 'https://www.dwd.de/DE/wetter/wetterundklima_vorort/_node.html';
+    l.textContent = 'Beim DWD weiterlesen →';
+    l.hidden = false;
+  }
+  openSheet('#explainSheet');
+}
+
 const NAV = [
   { id: 'nav-jetzt',   ziel: '.hero',        name: 'Jetzt' },
   { id: 'nav-stunden', ziel: '.card-hourly', name: 'Stündlich' },
@@ -1831,6 +1921,7 @@ const NAV = [
   { id: 'nav-zeit',    ziel: '.card-scrub',  name: 'Zeitstrahl' },
   { id: 'nav-details', ziel: '#tiles',       name: 'Details' },
   { id: 'nav-sonne',   ziel: '.card-cd',     name: 'Sonne' },
+  { id: 'nav-dwd',     ziel: '.card-dwd',    name: 'DWD' },
   { id: 'nav-bericht', ziel: '.card-brief',  name: 'Bericht' },
   { id: 'nav-news',    ziel: '.card-news',   name: 'News' }
 ];
@@ -1885,6 +1976,7 @@ function wire() {
   $('#placeSheet').addEventListener('click', e => { if (e.target.id === 'placeSheet') closeSheet('#placeSheet'); });
   $('#gpsBtn').addEventListener('click', useGPS);
   $('#mapFull').addEventListener('click', toggleMapFull);
+  $('#dwdMore')?.addEventListener('click', openDwdFull);
   $('#refreshBtn').addEventListener('click', refresh);
 
   // Datenquelle

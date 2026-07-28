@@ -75,6 +75,33 @@ export default {
       });
     }
 
+    /* ── Amtlicher Regionalwetterbericht des DWD ──────────────
+       Von Meteorologen geschriebene Texte, offene Daten. Der Server setzt
+       keine CORS-Freigabe und liefert Latin-1, deshalb der Umweg hier. */
+    if (url.pathname === '/dwdtext') {
+      const kuerzel = (url.searchParams.get('region') || 'DWSG').toUpperCase();
+      if (!/^DW[A-Z]{2}$/.test(kuerzel)) return json({ error: 'Ungültige Region' }, 400, origin);
+
+      const BASIS = 'https://opendata.dwd.de/weather/text_forecasts/txt/';
+      try {
+        const liste = await fetch(BASIS, { cf: { cacheTtl: 900, cacheEverything: true } });
+        if (!liste.ok) return json({ error: `DWD antwortet ${liste.status}` }, 502, origin);
+
+        const namen = [...(await liste.text()).matchAll(/href="([^"]*VHDL13_[A-Z]{4}[^"]*ia5)"/g)]
+          .map(m => m[1]).filter(n => n.includes(`VHDL13_${kuerzel}_`));
+        if (!namen.length) return json({ error: 'Kein Bericht für diese Region' }, 404, origin);
+
+        const datei = namen[namen.length - 1];
+        const res = await fetch(BASIS + datei, { cf: { cacheTtl: 900, cacheEverything: true } });
+        if (!res.ok) return json({ error: `DWD antwortet ${res.status}` }, 502, origin);
+
+        const text = new TextDecoder('iso-8859-1').decode(await res.arrayBuffer());
+        return json({ text, datei }, 200, origin, 'public, max-age=900');
+      } catch (e) {
+        return json({ error: `DWD nicht erreichbar: ${e.message}` }, 502, origin);
+      }
+    }
+
     // ── Text über die Mac-Bridge erzeugen ────────────────────
     if (url.pathname === '/ai' && request.method === 'POST') {
       if (!env.BRIDGE_URL || !env.BRIDGE_SECRET) {
@@ -128,10 +155,13 @@ export default {
   }
 };
 
-function json(obj, status, origin) {
+function json(obj, status, origin, cache) {
   return new Response(JSON.stringify(obj), {
     status,
-    headers: { ...cors(origin), 'content-type': 'application/json' }
+    headers: {
+      ...cors(origin), 'content-type': 'application/json',
+      ...(cache ? { 'cache-control': cache } : {})
+    }
   });
 }
 

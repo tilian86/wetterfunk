@@ -313,6 +313,28 @@ svg { fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round
 .bf-cost { font-size: 11px; color: var(--ink-faint); text-align: right; line-height: 1.4; }
 .bf-cost i { display: block; font-style: normal; opacity: .7; }
 
+/* ── Amtlicher DWD-Bericht ────────────────────────────────── */
+.dwd-text { font-size: 13.5px; line-height: 1.62; color: var(--ink-dim); }
+.dwd-text p { margin: 0 0 10px; }
+.dwd-text p:last-child { margin-bottom: 0; }
+.dwd-text .dwd-h {
+  font-size: 11px; font-weight: 700; letter-spacing: .07em;
+  text-transform: uppercase; color: var(--ink-faint);
+  margin: 14px 0 5px;
+}
+.dwd-text .dwd-h:first-child { margin-top: 0; }
+.dwd-more {
+  margin-top: 11px; padding: 9px 14px; width: 100%;
+  background: rgba(255,255,255,.06); border: 1px solid var(--card-line);
+  border-radius: var(--r-md); color: var(--ink-dim);
+  font: 600 13px var(--font); cursor: pointer;
+}
+.dwd-more:active { transform: scale(.99); }
+.dwd-more[hidden] { display: none; }
+.dwd-foot {
+  margin-top: 10px; font-size: 10.5px; color: var(--ink-faint); opacity: .8;
+}
+
 /* Stimme und Sprechtempo */
 .bf-voice {
   display: flex; flex-wrap: wrap; align-items: center; gap: 10px 14px;
