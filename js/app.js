@@ -968,17 +968,41 @@ function syncMapAt(ziel) {
 /** Wird die Karte weit weggeschoben, deckt das Raster den Ausschnitt nicht
     mehr ab. Dann für die neue Mitte nachladen — auch auf dem Globus. */
 let nachladeTimer = null;
+/** Sichtbarer Kartenausschnitt in der Form, die Forecast erwartet. */
+function sichtbarerBereich() {
+  const b = Radar.map?.getBounds?.();
+  if (!b) return null;
+  return { south: b.getSouth(), north: b.getNorth(), west: b.getWest(), east: b.getEast() };
+}
+
 function onMapMoved(mitte, zoom) {
   const ebenen = activeLayers();
-  if (Forecast.covers(mitte.lat, mitte.lng, zoom, ebenen)) { Radar.updateLabels?.(); return; }
+  const sicht = sichtbarerBereich();
+  if (Forecast.covers(mitte.lat, mitte.lng, zoom, ebenen, sicht)) { Radar.updateLabels?.(); return; }
   clearTimeout(nachladeTimer);
   nachladeTimer = setTimeout(() => {
-    const marke = $('#mapMode');
-    if (marke) marke.textContent = 'lädt für diese Region…';
-    Forecast.load(mitte.lat, mitte.lng, zoom, ebenen)
-      .then(() => { syncMapAt(currentScrubTime()); Radar.updateLabels?.(); })
-      .catch(() => { if (marke) marke.textContent = 'für diese Region keine Daten'; });
+    ladeRaster(mitte.lat, mitte.lng, zoom, ebenen, sichtbarerBereich());
   }, 600);
+}
+
+/** Raster holen und dabei sichtbar machen, dass gerade geladen wird. */
+function ladeRaster(lat, lon, zoom, ebenen, sicht) {
+  const marke = $('#mapMode');
+  const laden = $('#mapLoading');
+  if (marke) { marke.textContent = 'Vorhersage wird geladen…'; marke.dataset.mode = 'laden'; }
+  if (laden) laden.hidden = false;
+
+  return Forecast.load(lat, lon, zoom, ebenen, sicht)
+    .then(() => { syncMapAt(currentScrubTime()); Radar.updateLabels?.(); })
+    .catch((e) => {
+      if (!marke) return;
+      // Beim Abruflimit den Grund nennen — "keine Daten" wäre irreführend
+      marke.textContent = /429/.test(e?.message)
+        ? 'Wetterdienst bremst — gleich nochmal versuchen'
+        : 'für diese Region keine Daten';
+      marke.dataset.mode = 'none';
+    })
+    .finally(() => { if (laden) laden.hidden = true; });
 }
 
 /** Beim Ein- oder Ausschalten einer Ebene fehlen unter Umständen die Werte. */
@@ -987,15 +1011,12 @@ function ebenenGeaendert() {
   if (!m) { syncMapAt(currentScrubTime()); return; }
   const mitte = m.getCenter(), zoom = m.getZoom();
   const ebenen = activeLayers();
-  if (Forecast.covers(mitte.lat, mitte.lng, zoom, ebenen)) {
+  const sicht = sichtbarerBereich();
+  if (Forecast.covers(mitte.lat, mitte.lng, zoom, ebenen, sicht)) {
     syncMapAt(currentScrubTime());
     return;
   }
-  const marke = $('#mapMode');
-  if (marke) marke.textContent = 'lädt…';
-  Forecast.load(mitte.lat, mitte.lng, zoom, ebenen)
-    .then(() => syncMapAt(currentScrubTime()))
-    .catch(() => syncMapAt(currentScrubTime()));
+  ladeRaster(mitte.lat, mitte.lng, zoom, ebenen, sicht);
 }
 
 // ══ Rendering: Modellvergleich ═════════════════════════════
@@ -2875,9 +2896,9 @@ async function boot() {
     if (data) renderScrub();
 
     // Flächenvorhersage im Hintergrund nachladen — sie deckt die Zeit ab,
-    // die das Radar nicht mehr schafft.
-    Forecast.load(place.lat, place.lon, Radar.map?.getZoom(), activeLayers())
-      .then(() => { if (data) syncMapAt(buildScrubPoints()[+$('#scrubSlider').value || 0]?.t); })
+    // die das Radar nicht mehr schafft. Dauert ein paar Sekunden, deshalb
+    // sagt die Karte solange an, dass sie noch lädt.
+    ladeRaster(place.lat, place.lon, Radar.map?.getZoom(), activeLayers(), sichtbarerBereich())
       .catch(e => console.warn('Flächenvorhersage:', e));
   } catch (e) {
     console.warn('Radar:', e);

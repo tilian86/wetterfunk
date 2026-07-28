@@ -553,6 +553,28 @@ select#bfModel {
 .map-mode[data-mode="radar"]    { color: var(--good); }
 .map-mode[data-mode="forecast"] { color: var(--warn); }
 .map-mode[data-mode="none"]     { color: var(--ink-faint); }
+.map-mode[data-mode="laden"]    { color: var(--accent); }
+
+/* Ladeanzeige mitten auf der Karte — das Raster braucht ein paar Sekunden,
+   und eine leere Karte sieht sonst aus wie ein Fehler. */
+.map-loading {
+  position: absolute; inset: 0; z-index: 520;
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 11px;
+  background: rgba(10, 16, 26, .42);
+  backdrop-filter: blur(2px); -webkit-backdrop-filter: blur(2px);
+  font-size: 12.5px; font-weight: 600; color: #fff;
+  text-shadow: 0 1px 4px rgba(0,0,0,.6);
+  pointer-events: none;
+}
+.map-loading[hidden] { display: none; }
+.ml-spinner {
+  width: 26px; height: 26px; border-radius: 50%;
+  border: 2.5px solid rgba(255,255,255,.28);
+  border-top-color: #fff;
+  animation: ml-dreh .8s linear infinite;
+}
+@keyframes ml-dreh { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .ml-spinner { animation-duration: 2.4s; } }
 
 .radar-legend {
   position: absolute; left: 9px; bottom: 9px; z-index: 500;

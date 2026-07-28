@@ -41,10 +41,31 @@ const PFLICHT = ['precipitation', 'temperature_2m'];
 /** Raster um den Ort herum laden. `zoom` bestimmt, wie weit es reicht,
     `ebenen` welche Messwerte gebraucht werden — 400 Punkte über fünf Tage
     mit allen Feldern wären zwei Megabyte, das dauert im Mobilfunk zu lang. */
-async function load(lat, lon, zoom = 7, ebenen = null) {
+async function load(lat, lon, zoom = 7, ebenen = null, sicht = null) {
   const stufe = stufeFuer(zoom);
-  const SPAN_LAT = stufe.lat, SPAN_LON = stufe.lon;
-  const lat0 = lat - SPAN_LAT / 2, lon0 = lon - SPAN_LON / 2;
+  /* Das Raster muss den sichtbaren Ausschnitt abdecken, nicht eine feste
+     Spanne um die Mitte — sonst endet die Vorhersage mitten im Bild an einer
+     harten Kante. Etwas Rand, damit kleine Verschiebungen nicht sofort
+     nachladen. */
+  let SPAN_LAT = stufe.lat, SPAN_LON = stufe.lon;
+  if (sicht) {
+    SPAN_LAT = Math.min(80, Math.max(SPAN_LAT, (sicht.north - sicht.south) * 1.3));
+    SPAN_LON = Math.min(150, Math.max(SPAN_LON, (sicht.east - sicht.west) * 1.3));
+  }
+
+  /* Auf ein festes Gitter rasten. 400 Punkte über fünf Tage sind ein teurer
+     Abruf; ohne Rasten erzeugt jede kleine Kartenbewegung eine neue Adresse,
+     der Zwischenspeicher greift nie und das Kontingent von Open-Meteo ist
+     nach ein paar Minuten Herumschieben erschöpft. Gerastet landen benachbarte
+     Ansichten auf derselben Anfrage — und damit im Cache. */
+  const stufeAuf = (v, schritt) => Math.ceil(v / schritt) * schritt;
+  SPAN_LAT = stufeAuf(SPAN_LAT, stufe.lat / 2);
+  SPAN_LON = stufeAuf(SPAN_LON, stufe.lon / 2);
+  const gitterLat = SPAN_LAT / 4, gitterLon = SPAN_LON / 4;
+  const mitteLat = Math.round(lat / gitterLat) * gitterLat;
+  const mitteLon = Math.round(lon / gitterLon) * gitterLon;
+
+  const lat0 = mitteLat - SPAN_LAT / 2, lon0 = mitteLon - SPAN_LON / 2;
   const dLat = SPAN_LAT / (N - 1), dLon = SPAN_LON / (N - 1);
 
   const lats = [], lons = [];
@@ -99,7 +120,7 @@ async function load(lat, lon, zoom = 7, ebenen = null) {
   grid = {
     lat0, lon0, dLat, dLon,
     spanLat: SPAN_LAT, spanLon: SPAN_LON, stufe: stufe.name,
-    mitte: [lat, lon], felder,
+    mitte: [mitteLat, mitteLon], felder,
     times: data[0].hourly.time,
     precip: holen('precipitation'),
     cloud:  holen('cloud_cover'),
@@ -237,18 +258,27 @@ function frame(h, ebenen = new Set(['regen', 'wolken'])) {
   return canvas;
 }
 
-/** Ist ein Punkt noch vom geladenen Raster abgedeckt — mit den nötigen Werten? */
-function covers(lat, lon, zoom, ebenen = null) {
+/** Deckt das geladene Raster den Ausschnitt ab — mit den nötigen Werten? */
+function covers(lat, lon, zoom, ebenen = null, sicht = null) {
   if (!grid) return false;
   // Auch die Auflösungsstufe muss passen — sonst bleibt auf der Kugel
   // ein Fleck stehen oder nah dran wird es unnötig grob.
   if (zoom !== undefined && stufeFuer(zoom).name !== grid.stufe) return false;
   // Wurde eine Ebene neu eingeschaltet, fehlt ihr Messfeld noch
   if (ebenen && [...ebenen].some(e => FELDER[e] && !grid.felder.includes(FELDER[e]))) return false;
+
+  const nord = grid.lat0 + grid.spanLat, ost = grid.lon0 + grid.spanLon;
+
+  /* Wenn der sichtbare Ausschnitt bekannt ist, muss er ganz im Raster liegen —
+     sonst bricht die Vorhersage am Bildrand mit einer sichtbaren Kante ab. */
+  if (sicht) {
+    return sicht.south >= grid.lat0 && sicht.north <= nord
+        && sicht.west >= grid.lon0 && sicht.east <= ost;
+  }
   // Etwas Rand lassen, damit nicht bei jeder kleinen Bewegung neu geladen wird
   const randLat = grid.spanLat * 0.18, randLon = grid.spanLon * 0.18;
-  return lat >= grid.lat0 + randLat && lat <= grid.lat0 + grid.spanLat - randLat
-      && lon >= grid.lon0 + randLon && lon <= grid.lon0 + grid.spanLon - randLon;
+  return lat >= grid.lat0 + randLat && lat <= nord - randLat
+      && lon >= grid.lon0 + randLon && lon <= ost - randLon;
 }
 
 /** Messpunkte des Rasters mit Werten — für Beschriftungen auf der Karte. */

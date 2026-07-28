@@ -160,12 +160,15 @@ export default {
         return json({ error: 'Nur Open-Meteo erlaubt' }, 403, origin);
       }
 
-      const res = await fetch(t.toString(), { cf: { cacheTtl: 300, cacheEverything: true } });
+      /* Zwölf Minuten vorhalten: Das Punktraster ist der teuerste Abruf und
+         zählt bei Open-Meteo je Messpunkt aufs Kontingent. Gepuffert teilen
+         sich alle Geräte dieselbe Antwort, statt sie einzeln zu holen. */
+      const res = await fetch(t.toString(), { cf: { cacheTtl: 720, cacheEverything: true } });
       return new Response(await res.text(), {
         status: res.status,
         headers: {
           ...cors(origin), 'content-type': 'application/json',
-          'cache-control': 'public, max-age=300'
+          'cache-control': 'public, max-age=720'
         }
       });
     }
