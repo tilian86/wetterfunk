@@ -266,6 +266,16 @@ function renderDayProgress() {
     ? `${Math.floor(restMin / 60)} Std. ${String(restMin % 60).padStart(2, '0')} Min.`
     : `${restMin} Min.`;
 
+  // Wie lang ist diese Phase insgesamt — und wie verändert sie sich?
+  const gesamtMin = Math.round((bis - seit) / 60000);
+  const dauer = `${Math.floor(gesamtMin / 60)} Std. ${String(gesamtMin % 60).padStart(2, '0')} Min.`;
+
+  const tagesLaenge = (i) => (new Date(d.sunset[i]) - new Date(d.sunrise[i])) / 60000;
+  const heuteLang = tagesLaenge(0);
+  const diff = d.sunrise[1] ? Math.round(tagesLaenge(1) - heuteLang) : 0;
+  const trend = Math.abs(diff) < 1 ? ''
+    : ` · morgen ${diff > 0 ? `${diff} Min. länger` : `${-diff} Min. kürzer`}`;
+
   el.dataset.phase = phase === 'Tag' ? 'tag' : 'nacht';
   el.innerHTML = `
     <span class="dp-head">
@@ -274,7 +284,9 @@ function renderDayProgress() {
       <span class="dp-rest">noch ${rest} bis ${phase === 'Tag' ? 'Sonnenuntergang' : 'Sonnenaufgang'}</span>
     </span>
     <span class="dp-bar"><i style="width:${(anteil * 100).toFixed(1)}%"></i></span>
-    <span class="dp-ends"><span>${hhmm(seit)}</span><span>${hhmm(bis)}</span></span>`;
+    <span class="dp-ends"><span>${hhmm(seit)}</span>
+      <span class="dp-len">${phase === 'Tag' ? 'Tag' : 'Nacht'} dauert ${dauer}${trend}</span>
+      <span>${hhmm(bis)}</span></span>`;
 }
 
 /** Hintergrundstimmung + Statusleistenfarbe. */
@@ -623,7 +635,9 @@ function dayStrip(dayISO) {
     teile.push(hourShade(h.precipitation[k] ?? 0, h.cloud_cover[k] ?? 0, h.is_day[k] === 1));
   }
   const stops = teile.map((c, u) => `${c} ${(u / 24 * 100).toFixed(2)}%, ${c} ${((u + 1) / 24 * 100).toFixed(2)}%`).join(', ');
-  return `<span class="d-strip" style="background:linear-gradient(90deg, ${stops})"></span>`;
+  return `<span class="d-strip" style="background:linear-gradient(90deg, ${stops})">
+    ${[6, 12, 18].map(u => `<i style="left:${(u / 24 * 100).toFixed(2)}%"></i>`).join('')}
+  </span>`;
 }
 
 function renderDaily() {
@@ -654,7 +668,7 @@ function renderDaily() {
       </span>
       <span class="d-temps"><b>${round(max)}°</b> / ${round(min)}°</span>
       ${dayStrip(day)}
-      <span class="d-hours"><i>0</i><i>6</i><i>12</i><i>18</i><i>24</i></span>
+      ${i === 0 ? '<span class="d-hours"><i>0</i><i>6 Uhr</i><i>12</i><i>18</i><i>24</i></span>' : ''}
       ${w ? `<span class="d-detail">${worte} · ${hhmm(w.von)}–${hhmm(w.bis)} · ${dez(mm)} mm</span>` : ''}
     </div>`;
   }).join('');
@@ -698,7 +712,29 @@ function renderSourceList() {
 /** Stützstellen des Zeitstrahls: die ersten drei Stunden im Viertelstundentakt,
     danach stündlich. So lässt sich der Regenbeginn auf die Viertelstunde genau
     ablesen, ohne dass der Regler für fünf Tage unbrauchbar lang wird. */
+/* Ein Regler für alles: links die letzten zwei Stunden echte Radarmessung,
+   in der Mitte das Jetzt, rechts die Vorhersage bis fünf Tage. Vorher gab es
+   zwei Regler, die man nicht gleichzeitig im Blick hatte. */
 function buildScrubPoints() {
+  const vergangen = (Radar.frameTimes?.() || [])
+    .filter(f => f.kind === 'past')
+    .map(f => ({ t: new Date(f.t), fein: true, i: -1, radar: true }));
+
+  return [...vergangen, ...buildFuturePoints()];
+}
+
+/** Wo im Regler liegt das Jetzt? */
+function jetztIndex(punkte = buildScrubPoints()) {
+  const jetzt = Date.now();
+  let best = 0, diff = Infinity;
+  punkte.forEach((p, i) => {
+    const d = Math.abs(p.t.getTime() - jetzt);
+    if (d < diff) { diff = d; best = i; }
+  });
+  return best;
+}
+
+function buildFuturePoints() {
   const h = data.hourly, m = data.minutely_15;
   const jetzt = Date.now();
   const punkte = [];
@@ -732,10 +768,20 @@ function renderScrub() {
   const sl = $('#scrubSlider');
   sl.max = String(punkte.length - 1);
   const anteil = (k) => (k / (punkte.length - 1)) * 100;
+  const nullpunkt = jetztIndex(punkte);
 
-  // Marken: Ende des Feinbereichs und Tagesgrenzen
-  const ticks = [];
-  const letzteFein = punkte.findLastIndex(p => p.fein);
+  /** Zur Stunde gehörender Index in den Stundendaten — auch für die
+      Radarbilder der Vergangenheit, die keine eigenen Modellwerte haben. */
+  const stundeVon = (p) => {
+    if (!p.radar && !p.fein) return p.i;
+    const k = h.time.findIndex(x => new Date(x).getTime() >= p.t.getTime());
+    return Math.max(0, k < 0 ? h.time.length - 1 : (k > 0 ? k - 1 : 0));
+  };
+
+  // Marken: Jetzt, Ende des Feinbereichs, Tagesgrenzen
+  const ticks = [`<span class="tick-now" style="left:${anteil(nullpunkt).toFixed(1)}%"
+    data-label="jetzt"></span>`];
+  const letzteFein = punkte.findLastIndex(p => p.fein && !p.radar);
   if (letzteFein > 0) {
     ticks.push(`<span class="tick-fine" style="left:${anteil(letzteFein).toFixed(1)}%"
       data-label="15-Min-Takt"></span>`);
@@ -749,37 +795,47 @@ function renderScrub() {
   $('#scrubTicks').innerHTML = ticks.join('');
 
   // Regenband über alle Stützstellen
-  const mmVon = (p) => (p.fein ? (m.precipitation[p.i] ?? 0) * 4 : (h.precipitation[p.i] ?? 0));
+  const mmVon = (p) => (p.radar ? (h.precipitation[stundeVon(p)] ?? 0)
+                      : p.fein  ? (m.precipitation[p.i] ?? 0) * 4
+                                : (h.precipitation[p.i] ?? 0));
   const maxMm = Math.max(0.6, ...punkte.map(mmVon));
-  $('#scrubStrip').innerHTML = punkte.map(p => {
+  $('#scrubStrip').innerHTML = punkte.map((p, k) => {
     const mm = mmVon(p);
-    const prob = p.fein ? 0 : (h.precipitation_probability[p.i] ?? 0);
-    const nacht = p.fein ? !m.is_day?.[p.i] : !h.is_day[p.i];
+    const hi = stundeVon(p);
+    const prob = p.fein && !p.radar ? 0 : (h.precipitation_probability[hi] ?? 0);
+    const nacht = p.radar ? !h.is_day[hi] : p.fein ? !m.is_day?.[p.i] : !h.is_day[p.i];
     const hoehe = mm > 0 ? Math.max(9, (mm / maxMm) * 100) : (prob >= 20 ? 5 : 2);
-    return `<i class="${mm > 0 ? 'on' : prob >= 20 ? 'maybe' : ''}${nacht ? ' night' : ''}${p.fein ? ' fine' : ''}"
+    return `<i class="${mm > 0 ? 'on' : prob >= 20 ? 'maybe' : ''}${nacht ? ' night' : ''}${
+      p.fein ? ' fine' : ''}${p.radar ? ' past' : ''}${k === nullpunkt ? ' now' : ''}"
       style="height:${hoehe.toFixed(0)}%"></i>`;
   }).join('');
 
   const paint = () => {
-    const p = punkte[Math.min(+sl.value, punkte.length - 1)];
+    const k = Math.min(+sl.value, punkte.length - 1);
+    const p = punkte[k];
     const t = p.t;
     const heute = t.toDateString() === new Date().toDateString();
     const morgen = t.toDateString() === new Date(Date.now() + 864e5).toDateString();
     const tag = heute ? 'Heute' : morgen ? 'Morgen' : t.toLocaleDateString('de-DE', { weekday: 'long' });
     const minuten = Math.round((t - Date.now()) / 60000);
 
-    $('#scrubWhen').innerHTML = minuten <= 7
-      ? 'jetzt'
+    $('#scrubWhen').innerHTML =
+      p.radar && minuten < -3 ? `${hhmm(t)} Uhr <em>vor ${-minuten} Min. gemessen</em>`
+      : Math.abs(minuten) <= 7 ? 'jetzt'
       : `${tag}, ${hhmm(t)} Uhr${p.fein ? ` <em>in ${minuten} Min.</em>` : ''}`;
+
+    sl.parentElement?.classList.toggle('is-past', k < nullpunkt);
 
     // Feinbereich: echte Viertelstundenwerte, sonst Stundenwerte.
     // Was es nur stündlich gibt, kommt aus der nächstgelegenen Stunde.
-    const hi = p.fein ? Math.max(0, h.time.findIndex(x => new Date(x) >= t) - 1) : p.i;
-    const code = p.fein ? m.weather_code[p.i] : h.weather_code[p.i];
-    const tag_ = p.fein ? (m.is_day?.[p.i] ?? 1) : h.is_day[p.i];
-    const temp = p.fein ? m.temperature_2m[p.i] : h.temperature_2m[p.i];
-    const wind = p.fein ? m.wind_speed_10m[p.i] : h.wind_speed_10m[p.i];
-    const mm = p.fein ? (m.precipitation[p.i] ?? 0) : (h.precipitation[p.i] ?? 0);
+    const hi = stundeVon(p);
+    const echt = !p.radar && p.fein;
+    const code = p.radar ? h.weather_code[hi] : echt ? m.weather_code[p.i] : h.weather_code[p.i];
+    const tag_ = p.radar ? h.is_day[hi] : echt ? (m.is_day?.[p.i] ?? 1) : h.is_day[p.i];
+    const temp = p.radar ? h.temperature_2m[hi] : echt ? m.temperature_2m[p.i] : h.temperature_2m[p.i];
+    const wind = p.radar ? h.wind_speed_10m[hi] : echt ? m.wind_speed_10m[p.i] : h.wind_speed_10m[p.i];
+    const mm = p.radar ? (h.precipitation[hi] ?? 0)
+             : echt ? (m.precipitation[p.i] ?? 0) : (h.precipitation[p.i] ?? 0);
     const prob = h.precipitation_probability[hi] ?? 0;
 
     $('#scrubRead').innerHTML = `
@@ -791,7 +847,7 @@ function renderScrub() {
       <span class="sr-grid">
         <span><em>Gefühlt</em>${round(h.apparent_temperature[hi])}°</span>
         <span><em>Regen</em>${prob}%${mm >= 0.05
-          ? ` · ${mm.toFixed(mm < 1 ? 2 : 1)} mm${p.fein ? '/15min' : ''}` : ''}</span>
+          ? ` · ${dez(mm, mm < 1 ? 2 : 1)} mm${echt ? '/15min' : ''}` : ''}</span>
         <span><em>Wind</em>${round(wind)} km/h</span>
         <span><em>Böen</em>${round(h.wind_gusts_10m[hi])} km/h</span>
         <span><em>Feuchte</em>${round(h.relative_humidity_2m[hi])}%</span>
@@ -799,10 +855,45 @@ function renderScrub() {
       </span>`;
   };
 
-  sl.oninput = () => { paint(); syncMapAt(punkte[+sl.value]?.t); };
-  sl.value = '0';
+  sl.oninput = (e) => {
+    // Zieht der Finger, den Zeitraffer anhalten — mein eigener Takt darf weiter
+    if (e?.isTrusted && spielTimer) toggleZeitraffer();
+    paint();
+    syncMapAt(punkte[+sl.value]?.t);
+  };
+  // Beim Öffnen im Jetzt stehen — nicht am linken Rand in der Vergangenheit
+  sl.value = String(nullpunkt);
   paint();
-  syncMapAt(punkte[0].t);
+  syncMapAt(punkte[nullpunkt].t);
+}
+
+/** Der Abspielknopf lässt die letzten zwei Stunden über die Karte laufen und
+    endet im Jetzt — der Regler wandert sichtbar mit. */
+let spielTimer = null;
+function toggleZeitraffer() {
+  const sl = $('#scrubSlider');
+  const knopf = $('#playBtn');
+  if (spielTimer) {
+    clearInterval(spielTimer); spielTimer = null;
+    knopf?.classList.remove('is-playing');
+    return;
+  }
+  const punkte = buildScrubPoints();
+  const ziel = jetztIndex(punkte);
+  if (ziel <= 0) return;
+
+  knopf?.classList.add('is-playing');
+  let k = 0;
+  const schritt = () => {
+    sl.value = String(k);
+    sl.dispatchEvent(new Event('input'));
+    if (k++ >= ziel) {
+      clearInterval(spielTimer); spielTimer = null;
+      knopf?.classList.remove('is-playing');
+    }
+  };
+  schritt();
+  spielTimer = setInterval(schritt, 420);
 }
 
 // ══ Kartenebenen ═══════════════════════════════════════════
@@ -850,14 +941,22 @@ function syncMapAt(ziel) {
   const label = $('#mapMode');
   if (vorlauf <= 35) {
     Radar.showRadar();
-    if (label) { label.textContent = 'Radarmessung'; label.dataset.mode = 'radar'; }
+    Radar.showAt(ziel instanceof Date ? ziel.getTime() : ziel);
+    Radar.updateLabels();          // sonst greift ein Ebenenwechsel hier nicht
+    if (label) {
+      label.textContent = vorlauf < -3 ? 'Radarmessung · Vergangenheit'
+                        : vorlauf > 7  ? 'Radar-Kurzprognose' : 'Radarmessung · jetzt';
+      label.dataset.mode = 'radar';
+    }
   } else {
     const hi = Forecast.indexFor(ziel);
     const flaechen = new Set([...activeLayers()].filter(x => x !== 'zahlen'));
     const ok = hi >= 0 && (flaechen.size ? Radar.showForecast(hi, flaechen) : true);
     Radar.updateLabels();
     if (label) {
-      const namen = LAYERS.filter(l => activeLayers().has(l.id)).map(l => l.name).join(' + ');
+      // Die Zahlen sind keine Fläche — sie gehören nicht in die Aufzählung
+      const namen = LAYERS.filter(l => l.id !== 'zahlen' && activeLayers().has(l.id))
+        .map(l => l.name).join(' + ') || 'Karte';
       label.textContent = ok ? `${namen} · Vorhersage` : 'Vorhersage nicht geladen';
       label.dataset.mode = ok ? 'forecast' : 'none';
     }
@@ -1589,7 +1688,10 @@ function renderCountdown() {
           <span class="cd-time">${hhmm(e.t)}</span>
           <span class="cd-in" data-t="${e.t.getTime()}">${restZeit(e.t)}</span>
         </div>`).join('')}
-    </div>`;
+    </div>
+    <button class="cd-globus" id="cdGlobus">🌍 Wo ist gerade Tag?</button>`;
+
+  $('#cdGlobus').addEventListener('click', openTerminator);
 
   countdownTimer = setInterval(() => {
     let neuLaden = false;
@@ -1729,10 +1831,59 @@ function openSheet(id) {
   s.hidden = false;
   void s.offsetWidth;              // Reflow erzwingen – requestAnimationFrame feuert
   s.classList.add('open');         // im Hintergrundtab nicht und ließe das Blatt unsichtbar
+  document.body.classList.add('sheet-offen');   // Hintergrund nicht mitscrollen
+  s.querySelector('.sheet')?.scrollTo?.(0, 0);
 }
 function closeSheet(id) {
   const s = $(id); s.classList.remove('open');
-  setTimeout(() => (s.hidden = true), 260);
+  const blatt = s.querySelector('.sheet');
+  if (blatt) blatt.style.transform = '';
+  setTimeout(() => {
+    s.hidden = true;
+    if (!$('.sheet-back.open')) document.body.classList.remove('sheet-offen');
+  }, 260);
+}
+
+/** Nach unten wischen schließt — der Griff sieht danach aus, also soll er es
+    auch können. Nur wenn das Blatt schon ganz oben steht, sonst kollidiert
+    die Geste mit dem Scrollen im Inhalt. */
+function wireSheetGesten() {
+  $$('.sheet-back').forEach(back => {
+    const blatt = back.querySelector('.sheet');
+    if (!blatt) return;
+    let startY = 0, zieht = false;
+
+    blatt.addEventListener('touchstart', (e) => {
+      zieht = blatt.scrollTop <= 0;
+      startY = e.touches[0].clientY;
+    }, { passive: true });
+
+    blatt.addEventListener('touchmove', (e) => {
+      if (!zieht) return;
+      const weg = e.touches[0].clientY - startY;
+      if (weg <= 0) { blatt.style.transform = ''; return; }
+      blatt.style.transition = 'none';
+      blatt.style.transform = `translateY(${weg}px)`;
+    }, { passive: true });
+
+    blatt.addEventListener('touchend', (e) => {
+      if (!zieht) return;
+      const weg = e.changedTouches[0].clientY - startY;
+      blatt.style.transition = '';
+      if (weg > 90) closeSheet('#' + back.id);
+      else blatt.style.transform = '';
+      zieht = false;
+    });
+
+    back.querySelector('.sheet-x')?.addEventListener('click', () => closeSheet('#' + back.id));
+  });
+
+  // Zurücktaste und Esc schließen das oberste Blatt
+  document.addEventListener('keydown', (e) => {
+    if (e.key !== 'Escape') return;
+    const offen = $('.sheet-back.open');
+    if (offen) closeSheet('#' + offen.id);
+  });
 }
 
 function renderSaved() {
@@ -1821,7 +1972,7 @@ async function refresh() {
     // weiter den Stand vom Seitenaufruf.
     if (radarReady) {
       Radar.load()
-        .then(() => syncMapAt(buildScrubPoints()[+$('#scrubSlider').value || 0]?.t))
+        .then(() => renderScrub())     // neue Messzeiten in die Achse übernehmen
         .catch(e => console.warn('Radar:', e));
     }
 
@@ -1858,6 +2009,195 @@ async function useGPS() {
 }
 
 // ══ Sprungleiste ═══════════════════════════════════════════
+/* ── Wo ist gerade Tag? ─────────────────────────────────────
+   Die Grenze zwischen Tag und Nacht heißt Terminator. Sie hängt nur von der
+   Sonnendeklination und der Uhrzeit ab — beides steckt schon in sunAltitude,
+   hier nur der Punkt, über dem die Sonne senkrecht steht. */
+function subsolarPunkt(date = new Date()) {
+  const rad = Math.PI / 180;
+  const d = (date - Date.UTC(2000, 0, 1, 12)) / 86400000;
+  const g = (357.529 + 0.98560028 * d) * rad;
+  const q = (280.459 + 0.98564736 * d) * rad;
+  const L = q + (1.915 * Math.sin(g) + 0.020 * Math.sin(2 * g)) * rad;
+  const e = (23.439 - 0.00000036 * d) * rad;
+  const dec = Math.asin(Math.sin(e) * Math.sin(L)) / rad;
+  const ra = Math.atan2(Math.cos(e) * Math.sin(L), Math.cos(L)) / rad;
+  const gmst = ((18.697374558 + 24.06570982441908 * d) % 24 + 24) % 24;
+  let lon = ra - gmst * 15;
+  lon = ((lon + 540) % 360) - 180;
+  return { lat: dec, lon };
+}
+
+/** Nachtseite als Polygon — eine Punktkette entlang der Grenze, oben oder
+    unten zum Pol geschlossen, je nach Jahreszeit. */
+function nachtPolygon(date = new Date()) {
+  const rad = Math.PI / 180;
+  const sonne = subsolarPunkt(date);
+  const punkte = [];
+  for (let x = -180; x <= 180; x += 2) {
+    const stundenwinkel = (x - sonne.lon) * rad;
+    const lat = Math.atan(-Math.cos(stundenwinkel) / Math.tan(sonne.lat * rad)) / rad;
+    punkte.push([x, Math.max(-89.5, Math.min(89.5, lat))]);
+  }
+  // Im Nordsommer ist die Nacht unten, im Nordwinter oben
+  const polSeite = sonne.lat > 0 ? -90 : 90;
+  const ring = [...punkte, [180, polSeite], [-180, polSeite], punkte[0]];
+  return { type: 'Feature', properties: {}, geometry: { type: 'Polygon', coordinates: [ring] } };
+}
+
+let globusKarte = null, globusTimer = null;
+
+function openTerminator() {
+  const sonne = subsolarPunkt();
+  const hierHell = sunAltitude(new Date(), place.lat, place.lon) > -0.833;
+
+  $('#explainTitle').textContent = 'Wo ist gerade Tag?';
+  $('#explainText').innerHTML = `
+    <div class="globus-wrap"><div id="globusMap"></div></div>
+    <p class="globus-note" id="globusNote"></p>
+    <p class="ds-note">Die Sonne steht in jedem Moment über genau einem Punkt der
+      Erde senkrecht. Von dort aus wird es nach allen Seiten hin später
+      Nachmittag, Abend, Nacht. Die Grenze wandert pro Stunde 15 Längengrade
+      nach Westen — deshalb geht die Sonne im Osten früher auf.</p>`;
+
+  $('#globusNote').innerHTML =
+    `Senkrecht steht die Sonne gerade über <b>${Math.abs(sonne.lat).toFixed(1)}° ${sonne.lat >= 0 ? 'Nord' : 'Süd'}, ` +
+    `${Math.abs(sonne.lon).toFixed(1)}° ${sonne.lon >= 0 ? 'Ost' : 'West'}</b>. ` +
+    `Bei dir in ${place.name} ist es gerade ${hierHell ? 'hell' : 'dunkel'}.`;
+
+  openSheet('#explainSheet');
+  const l = $('#explainLink');
+  if (l) l.hidden = true;
+
+  // Erst nach dem Öffnen bauen — vorher hat der Container keine Größe
+  setTimeout(() => baueGlobus(), 60);
+}
+
+function baueGlobus() {
+  const ziel = document.getElementById('globusMap');
+  if (!ziel || typeof maplibregl === 'undefined') return;
+
+  globusKarte = new maplibregl.Map({
+    container: ziel,
+    style: 'https://tiles.openfreemap.org/styles/dark',   // derselbe Anbieter wie beim Radar
+    center: [place.lon, place.lat],
+    zoom: 0.55,
+    projection: { type: 'globe' },
+    attributionControl: false,
+    interactive: true
+  });
+
+  globusKarte.on('load', () => {
+    globusKarte.addSource('nacht', { type: 'geojson', data: nachtPolygon() });
+    globusKarte.addLayer({ id: 'nacht', type: 'fill', source: 'nacht',
+      paint: { 'fill-color': '#05070f', 'fill-opacity': 0.62 } });
+    globusKarte.addLayer({ id: 'nachtkante', type: 'line', source: 'nacht',
+      paint: { 'line-color': '#ffb35c', 'line-width': 1.4, 'line-opacity': 0.7 } });
+
+    const s = subsolarPunkt();
+    globusKarte.addSource('sonne', { type: 'geojson', data: {
+      type: 'FeatureCollection', features: [
+        { type: 'Feature', properties: { z: '☀️' }, geometry: { type: 'Point', coordinates: [s.lon, s.lat] } },
+        { type: 'Feature', properties: { z: '📍' }, geometry: { type: 'Point', coordinates: [place.lon, place.lat] } }
+      ]}});
+    globusKarte.addLayer({ id: 'sonne', type: 'symbol', source: 'sonne',
+      layout: { 'text-field': ['get', 'z'], 'text-size': 22, 'text-allow-overlap': true } });
+
+    // Alle halbe Minute nachführen, solange das Fenster offen ist
+    clearInterval(globusTimer);
+    globusTimer = setInterval(() => {
+      if (!document.getElementById('globusMap')) {
+        clearInterval(globusTimer);
+        globusKarte?.remove(); globusKarte = null;
+        return;
+      }
+      globusKarte.getSource('nacht')?.setData(nachtPolygon());
+      const n = subsolarPunkt();
+      globusKarte.getSource('sonne')?.setData({
+        type: 'FeatureCollection', features: [
+          { type: 'Feature', properties: { z: '☀️' }, geometry: { type: 'Point', coordinates: [n.lon, n.lat] } },
+          { type: 'Feature', properties: { z: '📍' }, geometry: { type: 'Point', coordinates: [place.lon, place.lat] } }
+        ]});
+    }, 30000);
+  });
+}
+
+/* ── Zeitzonen ──────────────────────────────────────────────
+   Antippen der Uhr zeigt, wie spät es anderswo ist — und ob dort gerade
+   Tag oder Nacht herrscht. */
+/* Mit Koordinaten, damit Tag oder Nacht wirklich gerechnet wird — nach der
+   Uhrzeit zu raten ginge im Winter auf der Südhalbkugel schief. */
+const ZONEN = [
+  { zone: 'Pacific/Auckland',    ort: 'Auckland',    lat: -36.85, lon: 174.76 },
+  { zone: 'Australia/Sydney',    ort: 'Sydney',      lat: -33.87, lon: 151.21 },
+  { zone: 'Asia/Tokyo',          ort: 'Tokio',       lat:  35.68, lon: 139.69 },
+  { zone: 'Asia/Shanghai',       ort: 'Peking',      lat:  39.90, lon: 116.41 },
+  { zone: 'Asia/Kolkata',        ort: 'Delhi',       lat:  28.61, lon:  77.21 },
+  { zone: 'Asia/Dubai',          ort: 'Dubai',       lat:  25.20, lon:  55.27 },
+  { zone: 'Europe/Moscow',       ort: 'Moskau',      lat:  55.75, lon:  37.62 },
+  { zone: 'Europe/Berlin',       ort: 'Berlin',      lat:  52.52, lon:  13.40 },
+  { zone: 'Europe/London',       ort: 'London',      lat:  51.51, lon:  -0.13 },
+  { zone: 'Africa/Lagos',        ort: 'Lagos',       lat:   6.52, lon:   3.38 },
+  { zone: 'America/Sao_Paulo',   ort: 'São Paulo',   lat: -23.55, lon: -46.63 },
+  { zone: 'America/New_York',    ort: 'New York',    lat:  40.71, lon: -74.01 },
+  { zone: 'America/Chicago',     ort: 'Chicago',     lat:  41.88, lon: -87.63 },
+  { zone: 'America/Los_Angeles', ort: 'Los Angeles', lat:  34.05, lon:-118.24 },
+  { zone: 'Pacific/Honolulu',    ort: 'Honolulu',    lat:  21.31, lon:-157.86 }
+];
+
+let zonenTimer = null;
+
+function renderZonen() {
+  const box = $('#zonenListe');
+  if (!box) return;
+  const jetzt = new Date();
+  const heimZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+
+  // Den eigenen Ort mit aufnehmen, falls er nicht ohnehin dabei ist
+  const eigene = place ? [{ zone: heimZone, ort: place.name, lat: place.lat, lon: place.lon, heim: true }] : [];
+  const liste = [...eigene, ...ZONEN.filter(z => z.zone !== heimZone)]
+    .sort((a, b) => b.lon - a.lon);
+
+  box.innerHTML = liste.map(z => {
+    const zeit = jetzt.toLocaleTimeString('de-DE', { timeZone: z.zone, hour: '2-digit', minute: '2-digit' });
+    const datum = jetzt.toLocaleDateString('de-DE', { timeZone: z.zone, weekday: 'short', day: 'numeric', month: 'short' });
+    // Versatz zur eigenen Zeit, in vollen Stunden
+    const diff = Math.round(
+      (new Date(jetzt.toLocaleString('en-US', { timeZone: z.zone })) -
+       new Date(jetzt.toLocaleString('en-US', { timeZone: heimZone }))) / 36e5);
+
+    // Echte Sonnenhöhe statt Uhrzeit-Faustregel
+    const hoehe = sunAltitude(jetzt, z.lat, z.lon);
+    const himmel = hoehe > 6 ? '☀️' : hoehe > -0.833 ? '🌇' : hoehe > -6 ? '🌆' : '🌙';
+
+    return `<div class="tz-row${z.heim ? ' is-here' : ''}">
+      <span class="tz-ort">${z.ort}</span>
+      <span class="tz-sky" title="Sonne ${hoehe.toFixed(0)}° über dem Horizont">${himmel}</span>
+      <span class="tz-zeit">${zeit}</span>
+      <span class="tz-diff">${z.heim ? 'hier' : `${diff >= 0 ? '+' : ''}${diff} Std.`}</span>
+      <span class="tz-datum">${datum}</span>
+    </div>`;
+  }).join('');
+}
+
+function openZonen() {
+  $('#explainTitle').textContent = 'Zeit weltweit';
+  $('#explainText').innerHTML = `
+    <p style="margin:0 0 12px">Die Uhr oben wird einmal beim Start gegen die
+      Serverzeit geprüft — falls das Gerät falsch geht, steht es dort.</p>
+    <div class="tz-liste" id="zonenListe"></div>
+    <p class="ds-note" style="margin-top:12px">Die Sonne wandert in einer Stunde
+      um 15 Längengrade weiter. Wo es später Nachmittag ist, ist es weiter östlich.</p>`;
+  renderZonen();
+  clearInterval(zonenTimer);
+  zonenTimer = setInterval(() => {
+    if ($('#zonenListe')) renderZonen(); else clearInterval(zonenTimer);
+  }, 1000);
+  const l = $('#explainLink');
+  if (l) l.hidden = true;
+  openSheet('#explainSheet');
+}
+
 /* ── Regenwarnung aufs Gerät ────────────────────────────────
    Web Push. Auf dem iPhone geht das nur, wenn die Seite über "Zum
    Home-Bildschirm" installiert wurde — im Safari-Tab fehlt die Schnittstelle. */
@@ -2047,7 +2387,8 @@ async function loadDwdText(lat, lon) {
     $('#dwdRegion').textContent = region.name;
     $('#dwdText').innerHTML = kurz.map(dwdAbsatz).join('');
     $('#dwdFoot').textContent = stand ? `Deutscher Wetterdienst · Stand ${stand}` : 'Deutscher Wetterdienst';
-    $('#dwdMore').hidden = inhalt.length <= 2;
+    $('#dwdMore').hidden = inhalt.length <= 3;
+    Briefing.voiceControls?.($('#dwdVoiceBar'));
     karte.hidden = false;
   } catch (e) {
     console.warn('DWD-Text:', e);
@@ -2077,8 +2418,7 @@ const NAV = [
   { id: 'nav-jetzt',   ziel: '.hero',        name: 'Jetzt' },
   { id: 'nav-stunden', ziel: '.card-hourly', name: 'Stündlich' },
   { id: 'nav-tage',    ziel: '#daily',       name: '10 Tage' },
-  { id: 'nav-radar',   ziel: '.card-radar',  name: 'Radar' },
-  { id: 'nav-zeit',    ziel: '.card-scrub',  name: 'Zeitstrahl' },
+  { id: 'nav-radar',   ziel: '.card-radar',  name: 'Radar & Zeit' },
   { id: 'nav-details', ziel: '#tiles',       name: 'Details' },
   { id: 'nav-sonne',   ziel: '.card-cd',     name: 'Sonne' },
   { id: 'nav-dwd',     ziel: '.card-dwd',    name: 'DWD' },
@@ -2137,6 +2477,21 @@ function wire() {
   $('#gpsBtn').addEventListener('click', useGPS);
   $('#mapFull').addEventListener('click', toggleMapFull);
   $('#dwdMore')?.addEventListener('click', openDwdFull);
+  $('#dwdSpeak')?.addEventListener('click', (e) => {
+    // Überschriften weglassen, sie klingen vorgelesen wie Stolpersteine
+    const zumLesen = dwdVoll.split('\n\n')
+      .filter(a => !(a.length < 42 && a.trim().endsWith(':')))
+      .join(' ');
+    Briefing.speakText?.(zumLesen, e.currentTarget);
+  });
+  wireSheetGesten();
+  $('#playBtn')?.addEventListener('click', toggleZeitraffer);
+  [$('#topClock'), $('#footClock')].forEach(el => {
+    if (!el) return;
+    el.setAttribute('role', 'button');
+    el.tabIndex = 0;
+    el.addEventListener('click', openZonen);
+  });
   $('#pushToggle')?.addEventListener('click', pushUmschalten);
   $('#pushTest')?.addEventListener('click', pushProbe);
   renderPush();
@@ -2222,10 +2577,11 @@ async function boot() {
 
   // Radar erst nach den Wetterdaten – es ist das schwerste Modul
   try {
+    // Regler, Abspielknopf und Zeitanzeige steuert jetzt der gemeinsame
+    // Zeitstrahl in app.js — das Radarmodul bekommt sie nicht mehr.
     Radar.init(place.lat, place.lon, {
-      slider: $('#radarSlider'), play: $('#playBtn'), time: $('#radarTime'),
       legend: $('#radarLegend'), locate: $('#radarLocate'), empty: $('#radarEmpty'),
-      globe: $('#radarGlobe'), ticks: $('#radarTicks'), onMoveEnd: onMapMoved,
+      globe: $('#radarGlobe'), onMoveEnd: onMapMoved,
       currentTime: currentScrubTime,
       labelsOn: () => activeLayers().has('zahlen'),
       onPointTap: showPointDetail,
@@ -2234,7 +2590,11 @@ async function boot() {
     });
     await Radar.load();
     radarReady = true;
-    $('#radarStamp').textContent = 'letzte 2 Std. + Prognose';
+    $('#radarStamp').textContent = 'gemessen + Vorhersage';
+
+    // Der Zeitstrahl entsteht vor dem Radar — jetzt sind die Messzeiten da,
+    // also den linken Teil der Achse nachtragen.
+    if (data) renderScrub();
 
     // Flächenvorhersage im Hintergrund nachladen — sie deckt die Zeit ab,
     // die das Radar nicht mehr schafft.

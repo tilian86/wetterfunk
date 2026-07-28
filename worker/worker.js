@@ -41,7 +41,12 @@ const cors = (origin) => ({
   'Access-Control-Allow-Origin': ALLOWED_ORIGINS.includes(origin) ? origin : ALLOWED_ORIGINS[0],
   'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
   'Access-Control-Allow-Headers': 'content-type',
-  'Access-Control-Max-Age': '86400'
+  'Access-Control-Max-Age': '86400',
+  /* Ohne Vary legt der Browser die Antwort samt Absenderfreigabe im Cache ab.
+     Ruft dann eine andere Adresse denselben Pfad auf, prüft er die alte
+     Freigabe gegen den neuen Absender — und bricht mit "Failed to fetch" ab.
+     Betrifft alles, was ein cache-control mitgibt. */
+  'Vary': 'Origin'
 });
 
 export default {

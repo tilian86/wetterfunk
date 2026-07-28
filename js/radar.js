@@ -206,8 +206,7 @@ const Radar = (() => {
     if (!frames.length) throw new Error('Keine Radardaten');
 
     idx = Math.max(0, past.length - 1);          // aktuellste Messung, nicht die Prognose
-    els.slider.max = String(frames.length - 1);
-    els.slider.value = String(idx);
+    if (els.slider) { els.slider.max = String(frames.length - 1); els.slider.value = String(idx); }
 
     if (ready) mountLayers();
     renderLegend();
@@ -250,18 +249,41 @@ const Radar = (() => {
     if (!frames.length) return;
     idx = (i + frames.length) % frames.length;
     if (ready) updateSharp();
-    els.slider.value = String(idx);
+    if (els.slider) els.slider.value = String(idx);
 
     const f = frames[idx];
     const t = new Date(f.time * 1000);
     const hhmm = t.toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' });
-    els.time.textContent = f.kind === 'now' ? `${hhmm} · Prognose` : hhmm;
-    els.time.classList.toggle('is-forecast', f.kind === 'now');
+    if (els.time) {
+      els.time.textContent = f.kind === 'now' ? `${hhmm} · Prognose` : hhmm;
+      els.time.classList.toggle('is-forecast', f.kind === 'now');
+    }
     checkEchoes();
     onFrame(f);
   }
 
   const step = () => show(idx + 1);
+
+  /** Zeitpunkte aller Radarbilder — daraus baut app.js den gemeinsamen Regler. */
+  const frameTimes = () => frames.map(f => ({ t: f.time * 1000, kind: f.kind }));
+
+  /** Das Bild zeigen, das dem Zeitpunkt am nächsten liegt. */
+  function showAt(zeitMs) {
+    if (!frames.length) return false;
+    let best = 0, diff = Infinity;
+    frames.forEach((f, i) => {
+      const d = Math.abs(f.time * 1000 - zeitMs);
+      if (d < diff) { diff = d; best = i; }
+    });
+    show(best);
+    return true;
+  }
+
+  /** Zeitpunkt der aktuellsten echten Messung. */
+  function lastMeasured() {
+    const letzte = [...frames].reverse().find(f => f.kind === 'past');
+    return letzte ? letzte.time * 1000 : null;
+  }
 
   /** Markiert auf der Leiste, wo die Messung endet und die Prognose beginnt. */
   function renderTicks() {
@@ -276,7 +298,7 @@ const Radar = (() => {
   function play() {
     if (playing || !frames.length) return;
     playing = true;
-    els.play.classList.add('is-playing');
+    els.play?.classList.add('is-playing');
     tick();
   }
 
@@ -292,14 +314,14 @@ const Radar = (() => {
   function pause() {
     playing = false;
     clearTimeout(timer);
-    els.play.classList.remove('is-playing');
+    els.play?.classList.remove('is-playing');
   }
 
   const toggle = () => (playing ? pause() : play());
 
   function wireControls() {
-    els.play.addEventListener('click', toggle);
-    els.slider.addEventListener('input', e => { pause(); show(+e.target.value); });
+    els.play?.addEventListener('click', toggle);
+    els.slider?.addEventListener('input', e => { pause(); show(+e.target.value); });
     els.locate?.addEventListener('click', () => els.onLocate?.());
 
     // Zwischen Standort und Erdkugel hin- und herspringen
@@ -405,5 +427,6 @@ const Radar = (() => {
   }
 
   return { init, load, setCenter, play, pause, toggle, show, isPlaying,
-           showForecast, showRadar, updateLabels, get map() { return map; } };
+           showForecast, showRadar, updateLabels, frameTimes, showAt, lastMeasured,
+           get map() { return map; } };
 })();

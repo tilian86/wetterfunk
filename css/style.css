@@ -340,8 +340,10 @@ svg { fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round
   margin: 14px 0 5px;
 }
 .dwd-text .dwd-h:first-child { margin-top: 0; }
+.dwd-row { display: flex; gap: 10px; margin-top: 13px; }
+.dwd-row .bf-speak { flex: none; }
 .dwd-more {
-  margin-top: 11px; padding: 9px 14px; width: 100%;
+  flex: 1; padding: 9px 14px;
   background: rgba(255,255,255,.06); border: 1px solid var(--card-line);
   border-radius: var(--r-md); color: var(--ink-dim);
   font: 600 13px var(--font); cursor: pointer;
@@ -524,7 +526,20 @@ select#bfModel {
 .radar-locate:active, .radar-globe:active { transform: scale(.9); }
 .radar-globe.on { background: rgba(108,198,255,.28); border-color: rgba(108,198,255,.55); color: var(--accent); }
 
-.radar-ctrl { display: flex; align-items: center; gap: 12px; margin-top: 11px; }
+/* Zeile über dem Regler: Abspielknopf und der gerade gewählte Zeitpunkt */
+.zeit-ctrl { display: flex; align-items: center; gap: 12px; margin-top: 12px; }
+.zeit-when {
+  font-size: 14px; font-weight: 600; color: var(--ink);
+  font-variant-numeric: tabular-nums; min-width: 0;
+}
+.zeit-when em {
+  font-style: normal; font-weight: 400; font-size: 12px;
+  color: var(--ink-faint); margin-left: 5px;
+}
+/* Links vom Jetzt ist gemessen — der Knopf färbt sich um, damit der
+   Unterschied zwischen Messung und Rechnung nicht nur im Text steht. */
+.slider-wrap.is-past input[type="range"]::-webkit-slider-thumb { background: #ffd07a; }
+.slider-wrap.is-past input[type="range"]::-moz-range-thumb { background: #ffd07a; }
 .radar-hint {
   font-size: 11px; line-height: 1.45; color: var(--ink-faint); margin-top: 9px;
 }
@@ -537,8 +552,14 @@ select#bfModel {
 .slider-wrap input[type="range"] { width: 100%; display: block; }
 .slider-ticks { position: absolute; left: 0; right: 0; top: 100%; height: 13px; pointer-events: none; }
 .tick-now {
-  position: absolute; top: -11px; width: 2px; height: 12px; border-radius: 2px;
-  background: var(--accent); opacity: .85; transform: translateX(-1px);
+  position: absolute; top: -13px; width: 2px; height: 15px; border-radius: 2px;
+  background: #fff; transform: translateX(-1px);
+  box-shadow: 0 0 0 1px rgba(0,0,0,.35);
+}
+.tick-now::after {
+  content: attr(data-label); position: absolute; top: 16px; left: 0;
+  transform: translateX(-50%); font-size: 9px; font-weight: 700;
+  color: var(--ink); white-space: nowrap;
 }
 .tick-day {
   position: absolute; top: -9px; width: 1px; height: 8px;
@@ -559,29 +580,25 @@ select#bfModel {
 .play-btn.is-playing .ico-pause { display: block; }
 .play-btn:active { transform: scale(.92); }
 
-/* Beide Zeitregler gleich: dünne Spur, gut greifbarer Knopf.
+/* Der Zeitregler: dünne Spur, gut greifbarer Knopf.
    Die Trefferfläche ist über padding größer als die sichtbare Spur, damit
    man am Handy nicht auf 4 Pixel zielen muss. */
-#radarSlider, #scrubSlider {
+#scrubSlider {
   -webkit-appearance: none; appearance: none;
   height: 26px; padding: 11px 0; margin: 0;
   background: transparent; outline: none; cursor: pointer;
 }
-#radarSlider::-webkit-slider-runnable-track,
 #scrubSlider::-webkit-slider-runnable-track {
   height: 4px; border-radius: 3px; background: var(--card-hi);
 }
-#radarSlider::-moz-range-track,
 #scrubSlider::-moz-range-track {
   height: 4px; border-radius: 3px; background: var(--card-hi);
 }
-#radarSlider::-webkit-slider-thumb,
 #scrubSlider::-webkit-slider-thumb {
   -webkit-appearance: none; width: 19px; height: 19px; border-radius: 50%;
   background: var(--ink); box-shadow: 0 1px 5px rgba(0,0,0,.45);
   margin-top: -7.5px;                 /* mittig zur 4px-Spur */
 }
-#radarSlider::-moz-range-thumb,
 #scrubSlider::-moz-range-thumb {
   width: 19px; height: 19px; border: 0; border-radius: 50%;
   background: var(--ink); box-shadow: 0 1px 5px rgba(0,0,0,.45);
@@ -635,9 +652,10 @@ select#bfModel {
 /* ── Zeitstrahl ───────────────────────────────────────────── */
 .card-scrub .card-sub { color: var(--accent); font-weight: 600; font-size: 13px; }
 
+/* Die Ableseanzeige steht jetzt unter dem Regler, nicht mehr darüber */
 .scrub-read {
   display: grid; grid-template-columns: 58px 1fr; gap: 4px 12px;
-  align-items: center; margin-bottom: 14px;
+  align-items: center; margin-top: 14px;
 }
 .sr-icon { grid-row: 1 / 3; }
 .sr-icon .wx { width: 58px; height: 58px; }
@@ -661,6 +679,11 @@ select#bfModel {
   background: rgba(255,255,255,.1);
 }
 .scrub-strip i.night { background: rgba(255,255,255,.055); }
+/* Gemessene Vergangenheit warm, damit sie sich von der Rechnung abhebt */
+.scrub-strip i.past.on    { background: #ffd07a; }
+.scrub-strip i.past.maybe { background: rgba(255,208,122,.35); }
+.scrub-strip i.past       { background: rgba(255,208,122,.14); }
+.scrub-strip i.now { box-shadow: -1px 0 0 rgba(255,255,255,.85); }
 .scrub-strip i.maybe { background: rgba(108,198,255,.34); }
 .scrub-strip i.on    { background: var(--accent); }
 
@@ -726,15 +749,26 @@ select#bfModel {
 /* Tagesstreifen: eine Farbe je Stunde — gelb Sonne, grau Wolken,
    blau Regen, dunkel Nacht. Sagt mehr als ein Min-Max-Balken. */
 .d-strip {
-  grid-column: 3 / -1; height: 9px; border-radius: 3px;
+  grid-column: 3 / -1; height: 10px; border-radius: 3px;
   margin-top: 3px; box-shadow: inset 0 0 0 1px rgba(0,0,0,.25);
+  position: relative;
 }
+/* Feine Striche bei 6, 12 und 18 Uhr — sonst ist nicht ablesbar,
+   wann im Tag die Farbe wechselt. */
+.d-strip i {
+  position: absolute; top: 0; bottom: 0; width: 1px;
+  background: rgba(0,0,0,.4);
+  box-shadow: 1px 0 0 rgba(255,255,255,.16);
+}
+/* Die Stundenskala steht nur einmal über der Liste */
 .d-hours {
   grid-column: 3 / -1;
   display: flex; justify-content: space-between;
-  font-size: 8.5px; color: var(--ink-faint); opacity: .6; margin-top: 1px;
+  font-size: 8.5px; color: var(--ink-faint); opacity: .75; margin-top: 2px;
 }
 .d-hours i { font-style: normal; }
+.d-hours i:first-child { margin-left: -2px; }
+.d-hours i:last-child { margin-right: -4px; }
 
 /* Regendetails in eine eigene Zeile — nebeneinander lief der Text sonst
    über die Temperaturspalte. */
@@ -954,11 +988,31 @@ select#bfModel {
   transform: translateY(100%); transition: transform .3s cubic-bezier(.32, .72, 0, 1);
 }
 .sheet-back.open .sheet { transform: translateY(0); }
+/* Solange ein Blatt offen ist, darf die Seite dahinter nicht mitscrollen —
+   sonst wandert der Finger im Hintergrund statt im Blatt. */
+body.sheet-offen { overflow: hidden; }
 
+/* Kopfzeile bleibt beim Scrollen stehen — bei langen Texten (etwa dem
+   amtlichen Bericht) war der Schließen-Knopf am Ende sonst unerreichbar. */
+.sheet-top {
+  position: sticky; top: 0; z-index: 2;
+  display: flex; align-items: center;
+  margin: -10px calc(-1 * var(--pad)) 10px;
+  padding: 12px var(--pad) 8px;
+  background: linear-gradient(#182234 78%, rgba(24,34,52,0));
+}
 .sheet-grip {
   width: 38px; height: 4px; border-radius: 3px;
-  background: rgba(255,255,255,.22); margin: 0 auto 14px;
+  background: rgba(255,255,255,.22); margin: 4px auto 0;
 }
+.sheet-x {
+  position: absolute; right: calc(var(--pad) - 4px); top: 6px;
+  width: 32px; height: 32px; border-radius: 50%;
+  display: grid; place-items: center;
+  background: rgba(255,255,255,.08); border: none;
+  color: var(--ink-dim); font-size: 14px; line-height: 1; cursor: pointer;
+}
+.sheet-x:active { transform: scale(.92); }
 .sheet h3 { font-size: 19px; font-weight: 600; margin-bottom: 13px; }
 .sheet-note { font-size: 12.5px; line-height: 1.5; color: var(--ink-dim); margin-bottom: 13px; }
 .sheet-note code {
@@ -1275,6 +1329,42 @@ body.loading .hero-temp, body.loading .hero-desc { opacity: .45; }
   margin: -2px 0 2px;
 }
 .topclock b { color: var(--ink-dim); font-weight: 600; font-size: 14px; }
+.topclock, .foot-clock { cursor: pointer; }
+.topclock::after {
+  content: ' · Zeitzonen'; font-size: 10px; opacity: .55;
+}
+
+/* Tag-Nacht-Kugel */
+.globus-wrap {
+  height: 260px; border-radius: var(--r-md); overflow: hidden;
+  background: #0a1020; margin-bottom: 11px;
+}
+#globusMap { width: 100%; height: 100%; }
+.globus-note { font-size: 12.5px; line-height: 1.55; color: var(--ink-dim); margin: 0 0 12px; }
+.globus-note b { color: var(--ink); }
+
+.cd-globus {
+  width: 100%; margin-top: 13px; padding: 11px;
+  background: rgba(255,255,255,.06); border: 1px solid var(--card-line);
+  border-radius: var(--r-md); color: var(--ink-dim);
+  font: 600 13px var(--font); cursor: pointer;
+}
+.cd-globus:active { transform: scale(.99); }
+
+/* Zeitzonen-Liste */
+.tz-liste { display: grid; gap: 1px; }
+.tz-row {
+  display: grid; grid-template-columns: 1fr 18px 46px 52px; gap: 8px;
+  align-items: baseline; padding: 7px 0; font-size: 13px;
+  border-bottom: 1px solid rgba(255,255,255,.05);
+}
+.tz-row.is-here { background: rgba(108,198,255,.07); }
+.tz-row.is-here .tz-ort { font-weight: 700; color: var(--ink); }
+.tz-ort { color: var(--ink-dim); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tz-sky { font-size: 12px; }
+.tz-zeit { font-variant-numeric: tabular-nums; font-weight: 600; color: var(--ink); text-align: right; }
+.tz-diff { font-size: 10.5px; color: var(--ink-faint); text-align: right; }
+.tz-datum { grid-column: 1 / -1; font-size: 9.5px; color: var(--ink-faint); opacity: .7; margin-top: -5px; }
 
 /* ── Countdown Sonne & Mond ───────────────────────────────── */
 .cd-main {
@@ -1370,7 +1460,11 @@ body.loading .hero-temp, body.loading .hero-desc { opacity: .45; }
 .dp-bar i { display: block; height: 100%; border-radius: 3px; transition: width 1s ease; }
 .day-progress[data-phase="tag"]   .dp-bar i { background: linear-gradient(90deg,#ffd07a,#ffb340); }
 .day-progress[data-phase="nacht"] .dp-bar i { background: linear-gradient(90deg,#5b8dd9,#8f6fd0); }
-.dp-ends { display: flex; justify-content: space-between; font-size: 10px; color: var(--ink-faint); }
+.dp-ends {
+  display: flex; justify-content: space-between; align-items: baseline; gap: 8px;
+  font-size: 10px; color: var(--ink-faint);
+}
+.dp-len { flex: 1; text-align: center; color: var(--ink-dim); font-size: 10.5px; }
 
 /* ── Erklärungen ──────────────────────────────────────────── */
 .tile.has-info { cursor: pointer; }

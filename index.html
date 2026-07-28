@@ -13,10 +13,10 @@
 <meta name="theme-color" content="#0b1220">
 <link rel="apple-touch-icon" href="icons/icon-180.png">
 <link rel="icon" href="icons/icon-192.png">
-<link rel="manifest" href="manifest.webmanifest?v=21">
+<link rel="manifest" href="manifest.webmanifest?v=26">
 
-<link rel="stylesheet" href="vendor/maplibre-gl.css?v=21">
-<link rel="stylesheet" href="css/style.css?v=21">
+<link rel="stylesheet" href="vendor/maplibre-gl.css?v=26">
+<link rel="stylesheet" href="css/style.css?v=26">
 </head>
 <body>
 
@@ -93,12 +93,15 @@
     <p class="confidence" id="confidence"></p>
   </section>
 
-  <!-- ══ REGENRADAR ══ -->
+  <!-- ══ REGENRADAR MIT ZEITSTRAHL ══
+       Karte, Filter und der eine Regler gehören zusammen und müssen gemeinsam
+       auf den Schirm passen — sonst steuert man etwas, das man nicht sieht. -->
   <section class="card card-radar">
     <div class="card-head">
       <h2>Regenradar</h2>
       <span class="card-sub" id="radarStamp"></span>
     </div>
+    <div class="layer-pick" id="layerPick"></div>
     <div class="radar-wrap">
       <div id="map"></div>
       <p class="radar-empty" id="radarEmpty" hidden>Kein Niederschlag im Bild</p>
@@ -115,22 +118,25 @@
         <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M3 12h18"/><path d="M12 3a14 14 0 0 1 0 18a14 14 0 0 1 0-18z"/></svg>
       </button>
     </div>
-    <div class="radar-ctrl">
-      <button class="play-btn" id="playBtn" aria-label="Animation abspielen">
+    <!-- Ein Regler für alles: links Messung, Mitte jetzt, rechts Vorhersage -->
+    <div class="zeit-ctrl">
+      <button class="play-btn" id="playBtn" aria-label="Letzte zwei Stunden abspielen">
         <svg class="ico-play" viewBox="0 0 24 24"><path d="M7 4.5v15l13-7.5z"/></svg>
         <svg class="ico-pause" viewBox="0 0 24 24"><path d="M8 4.5h3.2v15H8zM12.8 4.5H16v15h-3.2z"/></svg>
       </button>
-      <span class="slider-wrap">
-        <input type="range" id="radarSlider" min="0" max="12" value="12" step="1" aria-label="Radar-Zeitpunkt">
-        <span class="slider-ticks" id="radarTicks"></span>
-      </span>
-      <span class="radar-time" id="radarTime">–</span>
+      <span class="zeit-when" id="scrubWhen">jetzt</span>
     </div>
-    <p class="slider-scale"><span>vor 2 Std.</span><span>jetzt</span><span>+30 Min.</span></p>
-    <div class="layer-pick" id="layerPick"></div>
-    <p class="radar-hint">Dieser Regler zeigt die <b>Vergangenheit</b> — echte Radarmessung.
-      Für die Zukunft nimm den <b>Zeitstrahl</b> weiter unten: der steuert dieselbe Karte
-      und reicht fünf Tage voraus.</p>
+    <span class="slider-wrap wide">
+      <input type="range" id="scrubSlider" min="0" max="119" value="0" step="1"
+             aria-label="Zeitpunkt zwischen Messung und Vorhersage">
+      <span class="slider-ticks" id="scrubTicks"></span>
+    </span>
+    <div class="scrub-strip" id="scrubStrip"></div>
+    <p class="slider-scale"><span>◀ gemessen</span><span>jetzt</span><span>Vorhersage ▶</span></p>
+    <div class="scrub-read" id="scrubRead"></div>
+    <p class="radar-hint">Links vom <b>Jetzt</b> siehst du echte Radarmessungen der
+      letzten zwei Stunden, rechts davon die berechnete Vorhersage bis fünf Tage.
+      Der Abspielknopf lässt die Messung durchlaufen.</p>
   </section>
 
   <!-- ══ REGENWARNUNG AUFS GERÄT ══ -->
@@ -148,22 +154,6 @@
       <button class="link-btn" id="pushTest" hidden>Probemeldung</button>
     </div>
     <p class="push-hint" id="pushHint"></p>
-  </section>
-
-  <!-- ══ ZEITSTRAHL ══ -->
-  <section class="card card-scrub">
-    <div class="card-head">
-      <h2>Zeitstrahl</h2>
-      <span class="card-sub" id="scrubWhen">jetzt</span>
-    </div>
-    <div class="scrub-read" id="scrubRead"></div>
-    <span class="slider-wrap wide">
-      <input type="range" id="scrubSlider" min="0" max="119" value="0" step="1" aria-label="Vorhersagezeitpunkt">
-      <span class="slider-ticks" id="scrubTicks"></span>
-    </span>
-    <div class="scrub-strip" id="scrubStrip"></div>
-    <p class="scrub-hint">Steuert auch die Radarkarte oben — bis 30 Minuten die Messung,
-      danach die Flächenvorhersage.</p>
   </section>
 
   <!-- ══ MODELLVERGLEICH ══ -->
@@ -205,7 +195,15 @@
       <span class="card-sub" id="dwdRegion"></span>
     </div>
     <div class="dwd-text" id="dwdText"></div>
-    <button class="dwd-more" id="dwdMore" hidden>Ganzen Bericht lesen</button>
+    <div class="dwd-row">
+      <button class="bf-speak" id="dwdSpeak">
+        <svg viewBox="0 0 24 24" class="ico-speak"><path d="M11 5 6 9H3v6h3l5 4V5z"/><path d="M16.5 8.5a5 5 0 0 1 0 7"/><path d="M19.5 5.5a9 9 0 0 1 0 13"/></svg>
+        <svg viewBox="0 0 24 24" class="ico-stop"><rect x="6" y="6" width="12" height="12" rx="2.5"/></svg>
+        <span data-ruhe="Vorlesen">Vorlesen</span>
+      </button>
+      <button class="dwd-more" id="dwdMore" hidden>Ganzer Bericht</button>
+    </div>
+    <div class="bf-voice" id="dwdVoiceBar"></div>
     <p class="dwd-foot" id="dwdFoot"></p>
   </section>
 
@@ -265,7 +263,10 @@
 <!-- ══ ORTS-DIALOG ══ -->
 <div class="sheet-back" id="placeSheet" hidden>
   <div class="sheet" role="dialog" aria-label="Ort wählen">
-    <div class="sheet-grip"></div>
+    <div class="sheet-top">
+      <div class="sheet-grip"></div>
+      <button class="sheet-x" aria-label="Schließen">✕</button>
+    </div>
     <h3>Ort wählen</h3>
     <div class="search-row">
       <input type="search" id="placeSearch" placeholder="Stadt suchen…" autocomplete="off" enterkeyhint="search">
@@ -283,7 +284,10 @@
 <!-- ══ WEBCAM-DIALOG ══ -->
 <div class="sheet-back" id="camSheet" hidden>
   <div class="sheet" role="dialog" aria-label="Webcam hinzufügen">
-    <div class="sheet-grip"></div>
+    <div class="sheet-top">
+      <div class="sheet-grip"></div>
+      <button class="sheet-x" aria-label="Schließen">✕</button>
+    </div>
     <h3>Webcam hinzufügen</h3>
     <p class="sheet-note">Direkte Bild-Adresse einer öffentlichen Webcam (endet meist auf <code>.jpg</code>). Wird nur auf diesem Gerät gespeichert.</p>
     <label class="field"><span>Name</span><input type="text" id="camName" placeholder="z. B. Neckarfront"></label>
@@ -299,7 +303,10 @@
 <!-- ══ ERKLÄRUNG ══ -->
 <div class="sheet-back" id="explainSheet" hidden>
   <div class="sheet" role="dialog" aria-labelledby="explainTitle">
-    <div class="sheet-grip"></div>
+    <div class="sheet-top">
+      <div class="sheet-grip"></div>
+      <button class="sheet-x" aria-label="Schließen">✕</button>
+    </div>
     <h3 id="explainTitle"></h3>
     <!-- div statt p: die Tagesansicht setzt hier Listen und Tabellen hinein -->
     <div class="explain-text" id="explainText"></div>
@@ -311,7 +318,10 @@
 <!-- ══ MODELL-DIALOG ══ -->
 <div class="sheet-back" id="modelSheet" hidden>
   <div class="sheet" role="dialog" aria-label="Wettermodell wählen">
-    <div class="sheet-grip"></div>
+    <div class="sheet-top">
+      <div class="sheet-grip"></div>
+      <button class="sheet-x" aria-label="Schließen">✕</button>
+    </div>
     <h3>Wettermodell</h3>
     <p class="sheet-note">Welches Rechenmodell soll die stündliche Vorhersage und die Tage liefern?
       <b>Bestes verfügbares</b> wählt automatisch — in Deutschland das hochaufgelöste DWD ICON-D2
@@ -324,7 +334,10 @@
 <!-- ══ BERICHT-EINSTELLUNGEN ══ -->
 <div class="sheet-back" id="bfSheet" hidden>
   <div class="sheet" role="dialog" aria-label="Berichts-Einstellungen">
-    <div class="sheet-grip"></div>
+    <div class="sheet-top">
+      <div class="sheet-grip"></div>
+      <button class="sheet-x" aria-label="Schließen">✕</button>
+    </div>
     <h3>Bericht & Nachrichten</h3>
     <p class="sheet-note">Standardmäßig schreibt die Claude-CLI auf dem Mac die Texte — das läuft
       über das <b>Max-Abo</b> und kostet nichts extra, setzt aber voraus, dass der Mac
@@ -367,12 +380,12 @@
 
 <div class="toast" id="toast" hidden></div>
 
-<script src="vendor/maplibre-gl.js?v=21"></script>
-<script src="js/icons.js?v=21"></script>
-<script src="js/radar.js?v=21"></script>
-<script src="js/forecast.js?v=21"></script>
-<script src="js/briefing.js?v=21"></script>
-<script src="js/news.js?v=21"></script>
-<script src="js/app.js?v=21"></script>
+<script src="vendor/maplibre-gl.js?v=26"></script>
+<script src="js/icons.js?v=26"></script>
+<script src="js/radar.js?v=26"></script>
+<script src="js/forecast.js?v=26"></script>
+<script src="js/briefing.js?v=26"></script>
+<script src="js/news.js?v=26"></script>
+<script src="js/app.js?v=26"></script>
 </body>
 </html>

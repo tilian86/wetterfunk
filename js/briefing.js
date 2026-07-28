@@ -261,7 +261,7 @@ async function generate() {
 }
 
 // ══ Vorlesen ═══════════════════════════════════════════════
-let speaking = false, voice = null, saetze = [], satzNr = 0;
+let speaking = false, voice = null, saetze = [], satzNr = 0, fremdKnopf = null;
 
 /** Apples Spaßstimmen tauchen in der Liste mit auf, taugen aber nicht
     zum Vorlesen — sie kommen ganz ans Ende. */
@@ -344,6 +344,13 @@ function setSpeaking(on) {
   $('#bfSpeak')?.classList.toggle('is-speaking', on);
   const l = $('#bfSpeakLabel');
   if (l) l.textContent = on ? 'Stopp' : 'Vorlesen';
+  // Ein von außen angemeldeter Knopf (etwa am amtlichen Bericht) zeigt denselben Zustand
+  if (fremdKnopf) {
+    fremdKnopf.classList.toggle('is-speaking', on);
+    const t = fremdKnopf.querySelector('span');
+    if (t) t.textContent = on ? 'Stopp' : t.dataset.ruhe || 'Vorlesen';
+    if (!on) fremdKnopf = null;
+  }
 }
 
 // ══ Darstellung ════════════════════════════════════════════
@@ -393,9 +400,10 @@ const RATES = [0.8, 1, 1.2, 1.5];
 
 /** Stimme und Tempo einstellen. Die Liste steht erst bereit, wenn der Browser
     die Stimmen geladen hat — deshalb zusätzlich auf `voiceschanged` hören. */
-function renderVoiceBar() {
-  const bar = $('#bfVoiceBar');
+function renderVoiceBar(ziel) {
+  const bar = ziel || $('#bfVoiceBar');
   if (!bar) return;
+  bar.classList.add('bf-voice');
   const stimmen = germanVoices();
   if (!stimmen.length) { bar.innerHTML = '<span class="bf-hint">Stimmen werden geladen…</span>'; return; }
 
@@ -404,7 +412,7 @@ function renderVoiceBar() {
   bar.innerHTML = `
     <label class="bf-voice-pick">
       <span>Stimme</span>
-      <select id="bfVoice">
+      <select>
         ${stimmen.map(v => `<option value="${v.voiceURI}"${v.voiceURI === aktiv?.voiceURI ? ' selected' : ''}>${v.name.replace(/\s*\(.*?\)/, '')}</option>`).join('')}
       </select>
     </label>
@@ -418,21 +426,26 @@ function renderVoiceBar() {
       und dort eine Premium-Stimme laden. Danach hier auswählen.
     </p>` : ''}`;
 
-  $('#bfVoice').addEventListener('change', (e) => {
+  $('.bf-voice-pick select', bar).addEventListener('change', (e) => {
     store.set(LS.voice, e.target.value);
     voice = pickVoice();
-    if (speaking) { const n = satzNr; stopSpeaking(); satzNr = n; speaking = true; setSpeaking(true); speakNext(); }
+    if (speaking) { const n = satzNr; speechSynthesis.cancel(); satzNr = n; speakNext(); }
+    alleLeisten();
   });
-  $$('#bfVoiceBar .bf-rate button').forEach(b => b.addEventListener('click', () => {
+  $$('.bf-rate button', bar).forEach(b => b.addEventListener('click', () => {
     store.set(LS.rate, Number(b.dataset.rate));
-    $$('#bfVoiceBar .bf-rate button').forEach(x => x.classList.toggle('on', x === b));
     // Neues Tempo greift ab dem laufenden Satz
     if (speaking) { const n = satzNr; speechSynthesis.cancel(); satzNr = n; speakNext(); }
+    alleLeisten();
   }));
 }
 
+/** Es kann mehrere Leisten geben (eigener Bericht, amtlicher Bericht) —
+    eine Änderung muss überall sichtbar werden. */
+const alleLeisten = () => $$('.bf-voice').forEach(b => renderVoiceBar(b));
+
 if ('speechSynthesis' in window) {
-  speechSynthesis.addEventListener?.('voiceschanged', () => { voice = null; renderVoiceBar(); });
+  speechSynthesis.addEventListener?.('voiceschanged', () => { voice = null; alleLeisten(); });
 }
 
 function renderChips() {
@@ -554,5 +567,28 @@ function init(hostApi) {
   document.addEventListener('visibilitychange', () => { if (document.hidden && speaking) stopSpeaking(); });
 }
 
-return { init, ask };   // ask wird auch vom Nachrichten-Modul genutzt
+/* ── Vorlesen von außen ─────────────────────────────────────
+   Auch der amtliche DWD-Bericht soll gesprochen werden können — mit
+   derselben Stimme und demselben Tempo wie der eigene Bericht. */
+function speakText(inhalt, aufKnopf) {
+  if (!('speechSynthesis' in window)) { host?.toast('Vorlesen wird nicht unterstützt.'); return; }
+  if (fremdKnopf === aufKnopf && speaking) { stopSpeaking(); return; }
+
+  speechSynthesis.cancel();
+  voice = pickVoice();
+  saetze = String(inhalt).split(/(?<=[.!?])\s+/).map(s => s.trim()).filter(Boolean);
+  satzNr = 0;
+  fremdKnopf = aufKnopf || null;
+  setSpeaking(true);
+  speakNext();
+
+  clearInterval(speak._wach);
+  speak._wach = setInterval(() => {
+    if (!speaking) { clearInterval(speak._wach); return; }
+    if (speechSynthesis.paused) speechSynthesis.resume();
+  }, 3000);
+}
+
+return { init, ask, speakText, voiceControls: renderVoiceBar, isSpeaking: () => speaking };
+// ask wird auch vom Nachrichten-Modul genutzt
 })();
