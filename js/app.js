@@ -2039,17 +2039,37 @@ function renderSky() {
 }
 
 // ══ Webcams ════════════════════════════════════════════════
-/** Kameras der Umgebung. Die großen Portale liefern ihre Bilder nur per
-    JavaScript hinter einem Zustimmungsdialog aus — die lassen sich nicht
-    einbetten, deshalb öffnen diese Einträge die jeweilige Seite. Trägt man
-    eine direkte Bild-Adresse ein, wird sie stattdessen hier angezeigt. */
+/* Kameras, deren Bild sich direkt einbetten lässt — jeweils beim Betreiber
+   selbst abgerufen, nicht über ein Portal. Die großen Wetterportale liefern
+   ihre Bilder nur per JavaScript hinter einem Zustimmungsdialog aus; die
+   stehen deshalb weiterhin als Verweis darunter. */
+const CAM_FEST = [
+  { name: 'Tübingen · Marktplatz',
+    url: 'https://www.tuebingen.de/camera/webcam_marktplatz.jpg',
+    quelle: 'https://www.tuebingen.de/webcam.html', ort: 'Rathaus, Blick über den Markt' },
+  { name: 'Tübingen · Markt (Silberburg)',
+    url: 'https://www.tuemarkt.de/webcam/marktplatz-tuebingen.jpg',
+    quelle: 'https://www.tuemarkt.de/Erleben/Webcam_Marktplatz.html', ort: 'zweite Perspektive' },
+  { name: 'Burg Hohenzollern',
+    url: 'https://www.c-mor.de/burg-hohenzollern/hohenzollern-webcam-live.jpg',
+    quelle: 'https://www.zollerblick.de/', ort: '23 km südlich' },
+  { name: 'Buchkopfturm · Oppenau',
+    url: 'https://www.foto-webcam.eu/webcam/buchkopfturm/current/640.jpg',
+    quelle: 'https://www.foto-webcam.eu/webcam/buchkopfturm/',
+    ort: 'Schwarzwald, 65 km westlich', pflichtQuelle: true },
+  { name: 'Bad Peterstal · Windbeutelbaron',
+    url: 'https://www.foto-webcam.eu/webcam/windbeutelbaron/current/640.jpg',
+    quelle: 'https://www.foto-webcam.eu/webcam/windbeutelbaron/',
+    ort: 'Schwarzwald, 62 km westlich', pflichtQuelle: true },
+  { name: 'Brendturm · Furtwangen',
+    url: 'https://panodata.panomax.com/cams/519/preview_og.jpg',
+    quelle: 'https://brendturm.panomax.com/', ort: 'Schwarzwald, 83 km südwestlich' }
+];
+
+/** Portale ohne einbettbares Bild — als Verweis. */
 const CAM_PRESETS = [
-  { name: 'Tübingen · Neckarfront', page: 'https://www.tuebingen-info.de/de/webcam',
-    hint: 'Blick von der Touristinformation auf Neckarbrücke und Stiftskirche' },
   { name: 'Region · Kachelmann', page: 'https://kachelmannwetter.com/de/webcams/tuebingen',
     hint: 'Kameras im Umkreis, mit Zeitraffer' },
-  { name: 'Reutlingen', page: 'https://www.reutlingen.de/webcam',
-    hint: 'Stadtmitte' },
   { name: 'Region · Übersicht', page: 'https://www.wetteronline.de/webcam/tuebingen',
     hint: 'Alle Kameras im Umkreis bei WetterOnline' }
 ];
@@ -2069,24 +2089,46 @@ function renderCams() {
           <svg class="cl-arrow" viewBox="0 0 24 24"><path d="M7 17 17 7M9 7h8v8"/></svg>
         </a>`).join('')}
     </div>
-    <p class="cam-note">Diese Anbieter lassen sich nicht direkt einbetten — die Einträge öffnen
-      die jeweilige Seite. Wer eine Kamera mit direkter Bild-Adresse kennt (endet auf
+    <p class="cam-note">Diese Portale lassen sich nicht einbetten — die Einträge öffnen
+      die jeweilige Seite. Wer eine weitere Kamera mit direkter Bild-Adresse kennt (endet auf
       <code>.jpg</code>), trägt sie über <b>＋ Hinzufügen</b> ein und sieht das Bild dann hier.</p>`;
 
-  if (!cams.length) { box.innerHTML = presets; return; }
+  // Bei jedem Rendern eine neue Adresse, sonst zeigt der Zwischenspeicher
+  // stundenlang dasselbe Bild.
   const bust = Date.now();
-  box.innerHTML = cams.map((c, i) => `
+  const bild = (url) => `${url}${url.includes('?') ? '&' : '?'}_=${bust}`;
+
+  const feste = CAM_FEST.map(c => `
+    <figure class="cam">
+      <a class="cam-img" href="${c.quelle}" target="_blank" rel="noopener noreferrer">
+        <img src="${bild(c.url)}" alt="${c.name}" loading="lazy"
+             onerror="this.closest('.cam').classList.add('cam-err')">
+        <span class="cam-err-msg">Bild gerade nicht abrufbar</span>
+      </a>
+      <figcaption>
+        <span class="cam-name">${c.name}</span>
+        <span class="cam-ort">${c.ort}${c.pflichtQuelle ? ' · foto-webcam.eu' : ''}</span>
+      </figcaption>
+    </figure>`).join('');
+
+  const eigene = cams.map((c, i) => `
     <figure class="cam" data-i="${i}">
       <div class="cam-img">
-        <img src="${c.url}${c.url.includes('?') ? '&' : '?'}_=${bust}" alt="${c.name}" loading="lazy"
+        <img src="${bild(c.url)}" alt="${c.name}" loading="lazy"
              referrerpolicy="no-referrer"
              onerror="this.closest('.cam').classList.add('cam-err')">
         <span class="cam-err-msg">Bild nicht abrufbar</span>
       </div>
-      <figcaption>${c.name}<button class="cam-del" data-i="${i}" aria-label="Entfernen">✕</button></figcaption>
-    </figure>`).join('') + presets;
+      <figcaption>
+        <span class="cam-name">${c.name}</span>
+        <button class="cam-del" data-i="${i}" aria-label="Entfernen">✕</button>
+      </figcaption>
+    </figure>`).join('');
 
-  $$('.cam-del', box).forEach(b => b.addEventListener('click', () => {
+  box.innerHTML = feste + eigene + presets;
+
+  $$('.cam-del', box).forEach(b => b.addEventListener('click', (e) => {
+    e.preventDefault();
     const list = getCams(); list.splice(+b.dataset.i, 1);
     store.set(LS.cams, list); renderCams(); renderCamManage();
   }));
