@@ -35,10 +35,10 @@
 <meta name="theme-color" content="#0b1220">
 <link rel="apple-touch-icon" href="icons/icon-180.png">
 <link rel="icon" href="icons/icon-192.png">
-<link rel="manifest" href="manifest.webmanifest?v=67">
+<link rel="manifest" href="manifest.webmanifest?v=68">
 
-<link rel="stylesheet" href="vendor/maplibre-gl.css?v=67">
-<link rel="stylesheet" href="css/style.css?v=67">
+<link rel="stylesheet" href="vendor/maplibre-gl.css?v=68">
+<link rel="stylesheet" href="css/style.css?v=68">
 </head>
 <body>
 
@@ -226,13 +226,17 @@
       die Temperatur.</p>
   </section>
 
-  <!-- ══ SONNE & MOND ══ -->
+  <!-- ══ SONNE & MOND ══
+       Alles zum Sonnen- und Mondstand an einer Stelle. Vorher war es über
+       drei Abschnitte verteilt: Countdown hier, Sonnenbogen und Lichtphasen
+       bei den Detailkacheln — mit denselben Zeiten mehrfach. -->
   <section class="card card-cd">
     <div class="card-head">
       <h2>Sonne &amp; Mond</h2>
       <span class="card-sub">als Nächstes</span>
     </div>
     <div id="countdown"></div>
+    <div id="sonneDetail"></div>
   </section>
 
   <!-- ══ HIMMELSEREIGNISSE ══ -->
@@ -490,12 +494,12 @@
 
 <div class="toast" id="toast" hidden></div>
 
-<script src="vendor/maplibre-gl.js?v=67"></script>
-<script src="js/icons.js?v=67"></script>
-<script src="js/radar.js?v=67"></script>
-<script src="js/forecast.js?v=67"></script>
-<script src="js/briefing.js?v=67"></script>
-<script src="js/news.js?v=67"></script>
-<script src="js/app.js?v=67"></script>
+<script src="vendor/maplibre-gl.js?v=68"></script>
+<script src="js/icons.js?v=68"></script>
+<script src="js/radar.js?v=68"></script>
+<script src="js/forecast.js?v=68"></script>
+<script src="js/briefing.js?v=68"></script>
+<script src="js/news.js?v=68"></script>
+<script src="js/app.js?v=68"></script>
 </body>
 </html>

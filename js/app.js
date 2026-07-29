@@ -1933,6 +1933,100 @@ function openDaySheet(i) {
   openSheet('#explainSheet');
 }
 
+
+/* Sonnenbogen, Lichtphasen und Mond — gehören zum Countdown darüber und
+   standen vorher als eigene Kacheln weiter unten, mit denselben Zeiten. */
+function renderSonneDetail() {
+  const ziel = $('#sonneDetail');
+  if (!ziel || !place || !data?.daily) return;
+  const d = data.daily;
+  const sr = new Date(d.sunrise[0]), ss = new Date(d.sunset[0]);
+  const now = Date.now();
+  const dayProg = clamp((now - sr) / (ss - sr), 0, 1);
+  const sunH = Math.floor((d.sunshine_duration?.[0] ?? 0) / 3600);
+  const minutenTag = Math.round((ss - sr) / 60000);
+  const dayLen = `${Math.floor(minutenTag / 60)} Std. ${minutenTag % 60} Min.`;
+  const teile = [];
+
+  // Höchststand: wichtig für Schatten, UV und Fotografie.
+  // solarNoon liefert { zeit, hoehe } — nicht das Datum selbst.
+  const mittagInfo = solarNoon(new Date(), place.lat, place.lon);
+  const mittag = mittagInfo.zeit;
+  const hoechststand = mittagInfo.hoehe;
+  const jetztWinkel = sunAltitude(new Date(), place.lat, place.lon);
+  teile.push(`<div class="sm-block has-info" data-info="sonne" role="button" tabindex="0">
+    <span class="sm-titel">Sonnenstand<i class="t-q">?</i></span>
+    <div class="sun-arc">
+      <svg viewBox="0 0 200 74">
+        <path class="arc-bg" d="M${ARC.x0} ${ARC.y} A ${ARC.rx} ${ARC.ry} 0 0 1 ${ARC.x1} ${ARC.y}"/>
+        <path class="arc-fg" d="M${ARC.x0} ${ARC.y} A ${ARC.rx} ${ARC.ry} 0 0 1 ${ARC.x1} ${ARC.y}"
+              style="--p:${dayProg};--len:${ARC.len.toFixed(1)}"/>
+        <line class="arc-ground" x1="4" y1="${ARC.y}" x2="196" y2="${ARC.y}"/>
+        <!-- Höchststand: Scheitel des Bogens, dort steht die Sonne am steilsten -->
+        <line class="arc-noon" x1="${ARC.cx}" y1="${ARC.y}" x2="${ARC.cx}" y2="${(ARC.y - ARC.ry).toFixed(1)}"/>
+        <circle class="arc-noon-dot" cx="${ARC.cx}" cy="${(ARC.y - ARC.ry).toFixed(1)}" r="2.6"/>
+        <circle class="arc-sun" r="5.5"
+          cx="${(ARC.cx - ARC.rx * Math.cos(Math.PI * dayProg)).toFixed(1)}"
+          cy="${(ARC.y - ARC.ry * Math.sin(Math.PI * dayProg)).toFixed(1)}"/>
+      </svg>
+      <div class="arc-times">
+        <span>↑ ${hhmm(sr)}</span>
+        <span class="arc-mittag">☀ ${hhmm(mittag)}<i>${hoechststand.toFixed(0)}°</i></span>
+        <span>↓ ${hhmm(ss)}</span>
+      </div>
+    </div>
+    <span class="t-jetztwinkel">${jetztWinkel > -0.833
+      ? `Jetzt <b>${jetztWinkel.toFixed(0)}°</b> über dem Horizont — ${winkelWort(jetztWinkel)}`
+      : `Sonne unter dem Horizont (<b>${jetztWinkel.toFixed(0)}°</b>)`}</span>
+    <span class="t-sub">${sunH} Std. Sonnenschein erwartet · Tag ${dayLen}</span>
+  </div>`);
+
+  // Goldene und blaue Stunde, Dämmerung
+  const ev = sunEvents(new Date(), place.lat, place.lon);
+  const z = (t) => (t ? hhmm(t) : '–');
+  const jetztAlt = sunAltitude(new Date(), place.lat, place.lon);
+  const phase = jetztAlt > 6 ? 'Tag' : jetztAlt > -0.833 ? 'Goldene Stunde'
+    : jetztAlt > -6 ? 'Blaue Stunde' : jetztAlt > -18 ? 'Dämmerung' : 'Nacht';
+
+  teile.push(`<div class="sm-block has-info" data-info="licht" role="button" tabindex="0">
+    <span class="sm-titel">Licht &amp; Dämmerung<i class="t-q">?</i></span>
+    <span class="t-value">${phase} <em>${jetztAlt.toFixed(0)}° Sonnenhöhe</em></span>
+    <div class="light-rows">
+      <div class="lrow"><span class="ld gold"></span><span>Goldene Stunde früh</span><b>${z(ev.aufgang)}–${z(ev.goldenEndeMorgen)}</b></div>
+      <div class="lrow"><span class="ld gold"></span><span>Goldene Stunde abends</span><b>${z(ev.goldenStartAbend)}–${z(ev.untergang)}</b></div>
+      <div class="lrow"><span class="ld blau"></span><span>Blaue Stunde abends</span><b>${z(ev.untergang)}–${z(ev.blaueStundeEndeAbend)}</b></div>
+      <div class="lrow"><span class="ld nacht"></span><span>Astronomische Nacht</span><b>ab ${z(ev.astroNacht)}</b></div>
+    </div>
+  </div>`);
+
+  // Mond
+  const mp = moonPhase();
+  const mt = moonTimes(new Date(), place.lat, place.lon);
+  const bel = Math.round(mp.beleuchtet * 100);
+  // Schattenkante: bei zunehmendem Mond von links, bei abnehmendem von rechts
+  const zunehmend = mp.anteil < 0.5;
+  const versatz = (1 - Math.abs(mp.beleuchtet * 2 - 1)) * 100;
+  teile.push(`<div class="sm-block has-info" data-info="mond" role="button" tabindex="0">
+    <span class="sm-titel">Mond<i class="t-q">?</i></span>
+    <div class="moon-row">
+      <span class="moon-disc">
+        <span class="moon-shadow" style="
+          transform: translateX(${(zunehmend ? -1 : 1) * (100 - versatz) * 0.42}%);
+          opacity:${bel > 96 ? 0 : 1}"></span>
+      </span>
+      <span class="moon-val"><b>${bel}%</b><i>beleuchtet</i></span>
+    </div>
+    <span class="t-sub">${mp.name}${mt.auf ? ` · ↑ ${hhmm(mt.auf)}` : ''}${mt.unter ? ` ↓ ${hhmm(mt.unter)}` : ''}<br>
+      <b class="t-plain">${naechsteMondMarke()}</b></span>
+  </div>`);
+
+
+  ziel.innerHTML = teile.join('');
+  $$('.sm-block.has-info', ziel).forEach(b => {
+    b.onclick = () => openExplain(b.dataset.info);
+  });
+}
+
 function renderTiles(air) {
   const c = data.current, h = data.hourly, d = data.daily;
   const i = nowIndex(h.time);
@@ -1972,80 +2066,6 @@ function renderTiles(air) {
   const sunH = Math.floor((d.sunshine_duration?.[0] ?? 0) / 3600);
   const minutenTag = Math.round((ss - sr) / 60000);
   const dayLen = `${Math.floor(minutenTag / 60)} Std. ${minutenTag % 60} Min.`;
-  // Höchststand: wichtig für Schatten, UV und Fotografie.
-  // solarNoon liefert { zeit, hoehe } — nicht das Datum selbst.
-  const mittagInfo = solarNoon(new Date(), place.lat, place.lon);
-  const mittag = mittagInfo.zeit;
-  const hoechststand = mittagInfo.hoehe;
-  const jetztWinkel = sunAltitude(new Date(), place.lat, place.lon);
-  out.push(`<div class="tile t-wide has-info" data-info="sonne" role="button" tabindex="0">
-    <span class="t-label">Sonne<i class="t-q">?</i></span>
-    <div class="sun-arc">
-      <svg viewBox="0 0 200 74">
-        <path class="arc-bg" d="M${ARC.x0} ${ARC.y} A ${ARC.rx} ${ARC.ry} 0 0 1 ${ARC.x1} ${ARC.y}"/>
-        <path class="arc-fg" d="M${ARC.x0} ${ARC.y} A ${ARC.rx} ${ARC.ry} 0 0 1 ${ARC.x1} ${ARC.y}"
-              style="--p:${dayProg};--len:${ARC.len.toFixed(1)}"/>
-        <line class="arc-ground" x1="4" y1="${ARC.y}" x2="196" y2="${ARC.y}"/>
-        <!-- Höchststand: Scheitel des Bogens, dort steht die Sonne am steilsten -->
-        <line class="arc-noon" x1="${ARC.cx}" y1="${ARC.y}" x2="${ARC.cx}" y2="${(ARC.y - ARC.ry).toFixed(1)}"/>
-        <circle class="arc-noon-dot" cx="${ARC.cx}" cy="${(ARC.y - ARC.ry).toFixed(1)}" r="2.6"/>
-        <circle class="arc-sun" r="5.5"
-          cx="${(ARC.cx - ARC.rx * Math.cos(Math.PI * dayProg)).toFixed(1)}"
-          cy="${(ARC.y - ARC.ry * Math.sin(Math.PI * dayProg)).toFixed(1)}"/>
-      </svg>
-      <div class="arc-times">
-        <span>↑ ${hhmm(sr)}</span>
-        <span class="arc-mittag">☀ ${hhmm(mittag)}<i>${hoechststand.toFixed(0)}°</i></span>
-        <span>↓ ${hhmm(ss)}</span>
-      </div>
-    </div>
-    <span class="t-jetztwinkel">${jetztWinkel > -0.833
-      ? `Jetzt <b>${jetztWinkel.toFixed(0)}°</b> über dem Horizont — ${winkelWort(jetztWinkel)}`
-      : `Sonne unter dem Horizont (<b>${jetztWinkel.toFixed(0)}°</b>)`}</span>
-    <span class="t-sub">${sunH} Std. Sonnenschein erwartet · Tag ${dayLen}</span>
-  </div>`);
-
-  // Goldene und blaue Stunde, Dämmerung
-  const ev = sunEvents(new Date(), place.lat, place.lon);
-  const z = (t) => (t ? hhmm(t) : '–');
-  const jetztAlt = sunAltitude(new Date(), place.lat, place.lon);
-  const phase = jetztAlt > 6 ? 'Tag' : jetztAlt > -0.833 ? 'Goldene Stunde'
-    : jetztAlt > -6 ? 'Blaue Stunde' : jetztAlt > -18 ? 'Dämmerung' : 'Nacht';
-
-  out.push(`<div class="tile t-wide has-info" data-info="licht" role="button" tabindex="0">
-    <span class="t-label">Licht &amp; Dämmerung<i class="t-q">?</i></span>
-    <span class="t-value">${phase} <em>${jetztAlt.toFixed(0)}° Sonnenhöhe</em></span>
-    <div class="light-rows">
-      <div class="lrow"><span class="ld gold"></span><span>Goldene Stunde früh</span><b>${z(ev.aufgang)}–${z(ev.goldenEndeMorgen)}</b></div>
-      <div class="lrow"><span class="ld gold"></span><span>Goldene Stunde abends</span><b>${z(ev.goldenStartAbend)}–${z(ev.untergang)}</b></div>
-      <div class="lrow"><span class="ld blau"></span><span>Blaue Stunde abends</span><b>${z(ev.untergang)}–${z(ev.blaueStundeEndeAbend)}</b></div>
-      <div class="lrow"><span class="ld sonne"></span><span>Sonnenhöchststand</span><b>${z(mittag)} · ${hoechststand.toFixed(0)}°</b></div>
-      <div class="lrow"><span class="ld nacht"></span><span>Astronomische Nacht</span><b>ab ${z(ev.astroNacht)}</b></div>
-    </div>
-    ${sonnenuntergangTipp(ev)}
-  </div>`);
-
-  // Mond
-  const mp = moonPhase();
-  const mt = moonTimes(new Date(), place.lat, place.lon);
-  const bel = Math.round(mp.beleuchtet * 100);
-  // Schattenkante: bei zunehmendem Mond von links, bei abnehmendem von rechts
-  const zunehmend = mp.anteil < 0.5;
-  const versatz = (1 - Math.abs(mp.beleuchtet * 2 - 1)) * 100;
-  out.push(`<div class="tile has-info" data-info="mond" role="button" tabindex="0">
-    <span class="t-label">Mond<i class="t-q">?</i></span>
-    <div class="moon-row">
-      <span class="moon-disc">
-        <span class="moon-shadow" style="
-          transform: translateX(${(zunehmend ? -1 : 1) * (100 - versatz) * 0.42}%);
-          opacity:${bel > 96 ? 0 : 1}"></span>
-      </span>
-      <span class="moon-val"><b>${bel}%</b><i>beleuchtet</i></span>
-    </div>
-    <span class="t-sub">${mp.name}${mt.auf ? ` · ↑ ${hhmm(mt.auf)}` : ''}${mt.unter ? ` ↓ ${hhmm(mt.unter)}` : ''}<br>
-      <b class="t-plain">${naechsteMondMarke()}</b></span>
-  </div>`);
-
   // Luftdruck
   out.push(tile('Luftdruck', round(c.pressure_msl), 'hPa auf Meereshöhe', '', '', 'druck'));
 
@@ -2523,6 +2543,7 @@ async function refresh() {
     renderTiles(aq);
     renderLayerPicker();
     renderCountdown();
+    renderSonneDetail();
     renderSky();
     renderCams();
 
