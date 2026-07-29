@@ -4,7 +4,7 @@
 
 // Bei jeder Auslieferung hochzählen — sonst behalten Geräte die alte
 // Programmhülle im Cache und sehen Korrekturen nicht.
-const VERSION = 'wetterfunk-v75';
+const VERSION = 'wetterfunk-v76';
 const SHELL = [
   './',
   './index.html',
@@ -59,9 +59,9 @@ self.addEventListener('fetch', (e) => {
   );
 });
 
-/* ── Regenwarnungen ─────────────────────────────────────────
-   Der Worker schickt eine kurze Meldung, wenn Regen aufzieht.
-   Ohne diesen Empfänger zeigt iOS nur eine leere Standardmeldung. */
+/* ── Meldungen vom Worker ───────────────────────────────────
+   Regen, amtliche Warnungen und Himmelstermine. Ohne diesen Empfänger
+   zeigt iOS nur eine leere Standardmeldung. */
 self.addEventListener('push', (e) => {
   let d = { titel: 'Wetterfunk', text: 'Es zieht Regen auf.' };
   try { if (e.data) d = { ...d, ...e.data.json() }; } catch {}
@@ -70,7 +70,10 @@ self.addEventListener('push', (e) => {
     body: d.text,
     icon: './icons/icon-192.png',
     badge: './icons/icon-192.png',
-    tag: d.art === 'test' ? 'wf-test' : 'wf-regen',   // ersetzt die vorige Meldung
+    /* Jede Art bekommt eine eigene Kennung. Mit einer gemeinsamen ersetzte
+       jede Meldung die vorige — ein Sonnenaufgang hätte eine noch offene
+       Unwetterwarnung vom Bildschirm geschoben. */
+    tag: d.tag || `wf-${d.art || 'regen'}`,
     renotify: true,
     data: { url: './' }
   }));

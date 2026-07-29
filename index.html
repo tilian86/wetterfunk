@@ -35,10 +35,10 @@
 <meta name="theme-color" content="#0b1220">
 <link rel="apple-touch-icon" href="icons/icon-180.png">
 <link rel="icon" href="icons/icon-192.png">
-<link rel="manifest" href="manifest.webmanifest?v=75">
+<link rel="manifest" href="manifest.webmanifest?v=76">
 
-<link rel="stylesheet" href="vendor/maplibre-gl.css?v=75">
-<link rel="stylesheet" href="css/style.css?v=75">
+<link rel="stylesheet" href="vendor/maplibre-gl.css?v=76">
+<link rel="stylesheet" href="css/style.css?v=76">
 </head>
 <body>
 
@@ -340,6 +340,42 @@
         </span>
       </label>
     </div>
+
+    <p class="pa-gruppe">Sonne und Mond — jeweils rund 15 Minuten vorher</p>
+    <div class="push-arten">
+      <label class="pa-zeile">
+        <input type="checkbox" id="artAufgang">
+        <span class="pa-text">
+          <b>Sonnenaufgang</b>
+          <i>Im Sommer ist das kurz vor sechs. Wenn dein Telefon nachts stumm ist,
+             kommt die Meldung erst, wenn du es entsperrst.</i>
+        </span>
+      </label>
+      <label class="pa-zeile">
+        <input type="checkbox" id="artHoechststand">
+        <span class="pa-text">
+          <b>Höchststand der Sonne</b>
+          <i>Mit dem Winkel. Dann sind die Schatten am kürzesten und die
+             UV-Strahlung am stärksten — nicht unbedingt die heißeste Stunde.</i>
+        </span>
+      </label>
+      <label class="pa-zeile">
+        <input type="checkbox" id="artUntergang">
+        <span class="pa-text">
+          <b>Goldene Stunde und Sonnenuntergang</b>
+          <i>Die Meldung kommt zum Beginn der goldenen Stunde, nicht zum Untergang —
+             dann lohnt es sich loszugehen. Die Untergangszeit steht dabei.</i>
+        </span>
+      </label>
+      <label class="pa-zeile">
+        <input type="checkbox" id="artMond">
+        <span class="pa-text">
+          <b>Mondaufgang</b>
+          <i>Mit Phase und beleuchtetem Anteil. Der Mond geht jeden Tag später
+             auf — bei Vollmond kurz nach Sonnenuntergang.</i>
+        </span>
+      </label>
+    </div>
     <div class="push-row">
       <button class="push-btn" id="pushToggle">Einschalten</button>
       <button class="link-btn" id="pushTest" hidden>Probemeldung</button>
@@ -515,12 +551,12 @@
 
 <div class="toast" id="toast" hidden></div>
 
-<script src="vendor/maplibre-gl.js?v=75"></script>
-<script src="js/icons.js?v=75"></script>
-<script src="js/radar.js?v=75"></script>
-<script src="js/forecast.js?v=75"></script>
-<script src="js/briefing.js?v=75"></script>
-<script src="js/news.js?v=75"></script>
-<script src="js/app.js?v=75"></script>
+<script src="vendor/maplibre-gl.js?v=76"></script>
+<script src="js/icons.js?v=76"></script>
+<script src="js/radar.js?v=76"></script>
+<script src="js/forecast.js?v=76"></script>
+<script src="js/briefing.js?v=76"></script>
+<script src="js/news.js?v=76"></script>
+<script src="js/app.js?v=76"></script>
 </body>
 </html>

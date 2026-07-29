@@ -4300,10 +4300,22 @@ const pushMoeglich = () => 'serviceWorker' in navigator && 'PushManager' in wind
 
 /** Welche Meldungen sollen kommen — lokal gemerkt, damit die Kästchen
     beim nächsten Öffnen noch stimmen. */
-const pushArten = () => ({
-  regen: store.get('wf.artRegen', true),
-  warnungen: store.get('wf.artWarn', true)
-});
+const PUSH_ARTEN = [
+  ['regen',        'wf.artRegen', '#artRegen',        true,  'Regen'],
+  ['warnungen',    'wf.artWarn',  '#artWarnungen',    true,  'Warnungen'],
+  ['aufgang',      'wf.artAuf',   '#artAufgang',      false, 'Aufgang'],
+  ['hoechststand', 'wf.artHoch',  '#artHoechststand', false, 'Höchststand'],
+  ['untergang',    'wf.artUnter', '#artUntergang',    false, 'Untergang'],
+  ['mondaufgang',  'wf.artMond',  '#artMond',         false, 'Mond']
+];
+const pushArten = () => Object.fromEntries(
+  PUSH_ARTEN.map(([name, key, , vor]) => [name, store.get(key, vor)]));
+const nichtsGewaehlt = () => !Object.values(pushArten()).some(Boolean);
+/** Zeitzone des Geräts — der Worker formuliert die Uhrzeiten damit. */
+const geraeteZone = () => {
+  try { return Intl.DateTimeFormat().resolvedOptions().timeZone || 'Europe/Berlin'; }
+  catch { return 'Europe/Berlin'; }
+};
 const alsAppInstalliert = () => window.matchMedia('(display-mode: standalone)').matches
   || window.navigator.standalone === true;
 
@@ -4337,20 +4349,23 @@ async function renderPush() {
     fetch(`${pushProxy()}/push/an`, {
       method: 'POST', headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ abo: abo.toJSON(), lat: place.lat, lon: place.lon,
-                                ort: place.name, kreis: place.county, arten: pushArten() })
+                                ort: place.name, kreis: place.county, arten: pushArten(), tz: geraeteZone() })
     }).catch(() => {});
   }
 
   const arten = pushArten();
-  $('#artRegen').checked = arten.regen;
-  $('#artWarnungen').checked = arten.warnungen;
+  PUSH_ARTEN.forEach(([name, , sel]) => {
+    const el = $(sel);
+    if (el) el.checked = arten[name];
+  });
 
-  const gewaehlt = [arten.regen && 'Regen', arten.warnungen && 'Warnungen']
-    .filter(Boolean).join(' + ');
+  // Bei mehr als drei Häkchen wird die Aufzählung länger als die Zeile
+  const namen = PUSH_ARTEN.filter(([n]) => arten[n]).map(([, , , , kurz]) => kurz);
+  const gewaehlt = namen.length > 3 ? `${namen.length} Arten` : namen.join(' + ');
   $('#pushState').textContent = an ? (gewaehlt || 'nichts gewählt') : 'aus';
   $('#pushToggle').textContent = an ? 'Ausschalten' : 'Einschalten';
   $('#pushToggle').classList.toggle('on', an);
-  $('#pushToggle').disabled = !an && !arten.regen && !arten.warnungen;
+  $('#pushToggle').disabled = !an && nichtsGewaehlt();
   $('#pushTest').hidden = !an;
   // Läuft die Warnung, schrumpft die Karte — dann gibt es nichts mehr zu tun
   karte.classList.toggle('is-on', an);
@@ -4404,7 +4419,7 @@ async function pushUmschalten() {
       method: 'POST', headers: { 'content-type': 'application/json' },
       body: JSON.stringify({
         abo: abo.toJSON(), lat: place.lat, lon: place.lon,
-        ort: place.name, kreis: place.county, arten: pushArten()
+        ort: place.name, kreis: place.county, arten: pushArten(), tz: geraeteZone()
       })
     });
     if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || `Server ${res.status}`);
@@ -4604,11 +4619,11 @@ function wire() {
   });
   $('#pushToggle')?.addEventListener('click', pushUmschalten);
   // Häkchen wirken sofort — auch bei bereits laufendem Abo
-  [['#artRegen', 'wf.artRegen'], ['#artWarnungen', 'wf.artWarn']].forEach(([sel, key]) => {
+  PUSH_ARTEN.forEach(([, key, sel]) => {
     $(sel)?.addEventListener('change', (e) => {
       store.set(key, e.target.checked);
       renderPush();
-      if (!e.target.checked && !pushArten().regen && !pushArten().warnungen) {
+      if (!e.target.checked && nichtsGewaehlt()) {
         toast('Ohne Auswahl kommen keine Meldungen.', 3000);
       }
     });
