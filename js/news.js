@@ -28,6 +28,18 @@ const LEVEL_ORDER = ['lokal', 'regional', 'bundesweit', 'weltweit'];
 
 const LS = { count: 'wf.newsN', cache: 'wf.newsCache' };
 
+/* Titel und Adressen kommen direkt aus fremden Feeds, die Einordnung aus dem
+   Modell — beides muss entschärft werden, bevor es ins Seitengerüst geht. */
+const esc = (s) => String(s ?? '')
+  .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+  .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+
+/** Nur http(s) zulassen — javascript:-Adressen wären sonst anklickbarer Code. */
+const sicherLink = (u) => {
+  try { const x = new URL(u); return /^https?:$/.test(x.protocol) ? x.href : '#'; }
+  catch { return '#'; }
+};
+
 let host = null, items = [], busy = false;
 
 const $ = (s, r = document) => r.querySelector(s);
@@ -186,15 +198,15 @@ const grouped = () => LEVEL_ORDER
 
 function render(lage, failed, via) {
   $('#newsResult').innerHTML = `
-    <p class="news-lage">${lage}</p>
+    <p class="news-lage">${esc(lage)}</p>
     ${grouped().map(g => `
       <div class="news-group">
         <h3 class="news-level">${LEVEL_LABEL[g.lv]}</h3>
         ${g.list.map(m => `
-          <a class="news-item" href="${m.src.link}" target="_blank" rel="noopener noreferrer">
-            <span class="news-title">${m.titel}</span>
-            <span class="news-kern">${m.kern}</span>
-            <span class="news-meta"><b>${m.relevanz}</b> · ${m.src.source}${
+          <a class="news-item" href="${esc(sicherLink(m.src.link))}" target="_blank" rel="noopener noreferrer">
+            <span class="news-title">${esc(m.titel)}</span>
+            <span class="news-kern">${esc(m.kern)}</span>
+            <span class="news-meta"><b>${esc(m.relevanz)}</b> · ${esc(m.src.source)}${
               m.src.at ? ' · ' + new Date(m.src.at).toLocaleString('de-DE', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }) : ''}</span>
           </a>`).join('')}
       </div>`).join('')}

@@ -6,6 +6,28 @@
 <title>Wetterfunk</title>
 <meta name="description" content="Wetter, Regenradar und Webcams – ohne Tracker.">
 
+<!-- Sicherheitsrichtlinie: Skripte dürfen nur aus dieser Quelle kommen, und
+     Verbindungen nur zu den Diensten, die die App wirklich braucht. Sollte
+     doch einmal fremder Text als Code im Seiteninhalt landen, läuft er nicht. -->
+<meta http-equiv="Content-Security-Policy" content="
+  default-src 'self';
+  script-src 'self' 'unsafe-eval';
+  style-src 'self' 'unsafe-inline';
+  img-src 'self' data: blob: https:;
+  media-src 'self' blob:;
+  font-src 'self' data:;
+  worker-src 'self' blob:;
+  connect-src 'self' blob:
+    https://api.open-meteo.com https://air-quality-api.open-meteo.com
+    https://geocoding-api.open-meteo.com https://nominatim.openstreetmap.org
+    https://api.brightsky.dev https://api.rainviewer.com https://tilecache.rainviewer.com
+    https://tiles.openfreemap.org https://maps.dwd.de https://www.dwd.de
+    https://wetterfunk.florian-s-thiel.workers.dev https://api.anthropic.com;
+  frame-src 'none';
+  object-src 'none';
+  base-uri 'self';
+  form-action 'none'">
+
 <!-- iOS Homescreen -->
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
@@ -13,10 +35,10 @@
 <meta name="theme-color" content="#0b1220">
 <link rel="apple-touch-icon" href="icons/icon-180.png">
 <link rel="icon" href="icons/icon-192.png">
-<link rel="manifest" href="manifest.webmanifest?v=63">
+<link rel="manifest" href="manifest.webmanifest?v=65">
 
-<link rel="stylesheet" href="vendor/maplibre-gl.css?v=63">
-<link rel="stylesheet" href="css/style.css?v=63">
+<link rel="stylesheet" href="vendor/maplibre-gl.css?v=65">
+<link rel="stylesheet" href="css/style.css?v=65">
 </head>
 <body>
 
@@ -468,12 +490,12 @@
 
 <div class="toast" id="toast" hidden></div>
 
-<script src="vendor/maplibre-gl.js?v=63"></script>
-<script src="js/icons.js?v=63"></script>
-<script src="js/radar.js?v=63"></script>
-<script src="js/forecast.js?v=63"></script>
-<script src="js/briefing.js?v=63"></script>
-<script src="js/news.js?v=63"></script>
-<script src="js/app.js?v=63"></script>
+<script src="vendor/maplibre-gl.js?v=65"></script>
+<script src="js/icons.js?v=65"></script>
+<script src="js/radar.js?v=65"></script>
+<script src="js/forecast.js?v=65"></script>
+<script src="js/briefing.js?v=65"></script>
+<script src="js/news.js?v=65"></script>
+<script src="js/app.js?v=65"></script>
 </body>
 </html>

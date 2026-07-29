@@ -62,8 +62,12 @@ export default {
     if (request.method === 'OPTIONS') {
       return new Response(null, { status: 204, headers: cors(origin) });
     }
-    if (origin && !ALLOWED_ORIGINS.includes(origin)) {
-      return json({ error: 'Origin nicht erlaubt' }, 403, origin);
+    /* Absender MUSS bekannt sein — auch wenn gar keiner mitgeschickt wird.
+       Vorher stand hier `if (origin && …)`: Fehlt der Kopf ganz, griff die
+       Prüfung nicht. Browser senden ihn immer, Skripte und curl nicht — damit
+       standen alle Endpunkte offen, auch die kostenpflichtigen. */
+    if (!ALLOWED_ORIGINS.includes(origin)) {
+      return json({ error: 'Nicht erlaubt' }, 403, origin);
     }
 
     // ── RSS-Feed weiterreichen ───────────────────────────────
@@ -106,7 +110,11 @@ export default {
       try { req = await request.json(); } catch { return json({ error: 'Ungültige Anfrage' }, 400, origin); }
       const { text, stimme, tempo, passwort } = req || {};
 
-      if (passwort !== env.TTS_PASSWORT) {
+      // Höchstens 40 Kennwortversuche und Abrufe je Stunde und Adresse
+      if (await zuVieleAnfragen(env, request, 'tts', 40, 3600)) {
+        return json({ error: 'Zu viele Anfragen — später nochmal' }, 429, origin);
+      }
+      if (!gleich(passwort, env.TTS_PASSWORT)) {
         return json({ error: 'Falsches Kennwort' }, 401, origin);
       }
       if (!text || typeof text !== 'string') {
@@ -275,6 +283,15 @@ export default {
       if (typeof lat !== 'number' || typeof lon !== 'number') {
         return json({ error: 'Standort fehlt' }, 400, origin);
       }
+      /* Nur die echten Push-Dienste der Hersteller. Ohne diese Prüfung könnte
+         jemand eine beliebige Adresse eintragen und den Worker Anfragen an
+         fremde Server schicken lassen. */
+      if (!istPushDienst(abo.endpoint)) {
+        return json({ error: 'Unbekannter Push-Dienst' }, 400, origin);
+      }
+      if (await zuVieleAnfragen(env, request, 'push', 20, 3600)) {
+        return json({ error: 'Zu viele Anmeldungen' }, 429, origin);
+      }
 
       // Beim Ortswechsel wird derselbe Eintrag überschrieben. Den Zeitpunkt
       // der letzten Meldung übernehmen, sonst käme sofort wieder eine.
@@ -329,10 +346,18 @@ export default {
         return json({ error: 'Bridge ist im Worker nicht konfiguriert' }, 500, origin);
       }
 
+      // Der Mac ist privat und das Kontingent begrenzt: 30 Berichte je Stunde
+      if (await zuVieleAnfragen(env, request, 'ai', 30, 3600)) {
+        return json({ error: 'Zu viele Anfragen — später nochmal' }, 429, origin);
+      }
+
       let req;
       try { req = await request.json(); } catch { return json({ error: 'Ungültige Anfrage' }, 400, origin); }
       if (!req?.system || !req?.user) {
         return json({ error: 'system und user werden gebraucht' }, 400, origin);
+      }
+      if (String(req.system).length + String(req.user).length > 30000) {
+        return json({ error: 'Anfrage zu lang' }, 413, origin);
       }
 
       const base = env.BRIDGE_URL.replace(/\/+$/, '');
@@ -647,6 +672,42 @@ function json(obj, status, origin, cache) {
       ...(cache ? { 'cache-control': cache } : {})
     }
   });
+}
+
+/* ── Ratenbegrenzung ────────────────────────────────────────
+   Für alles, was Geld kostet oder den privaten Mac belastet. Gezählt wird je
+   Absenderadresse in Zeitfenstern; ohne das könnte ein Skript in Minuten das
+   Guthaben leerlaufen lassen oder Kennwörter durchprobieren. */
+async function zuVieleAnfragen(env, request, bereich, grenze, fensterSek) {
+  const ip = request.headers.get('cf-connecting-ip') || 'unbekannt';
+  const fenster = Math.floor(Date.now() / (fensterSek * 1000));
+  const key = `rl:${bereich}:${fenster}:${ip}`;
+  try {
+    const stand = Number(await env.WF_PUSH.get(key)) || 0;
+    if (stand >= grenze) return true;
+    // Der Eintrag verfällt von selbst — kein Aufräumen nötig
+    await env.WF_PUSH.put(key, String(stand + 1), { expirationTtl: Math.max(60, fensterSek * 2) });
+    return false;
+  } catch {
+    return false;        // Zähler kaputt? Dann lieber durchlassen als sperren
+  }
+}
+
+/** Nur die echten Push-Dienste der Hersteller. */
+function istPushDienst(endpoint) {
+  try {
+    const h = new URL(endpoint).hostname;
+    return /(^|\.)(push\.apple\.com|googleapis\.com|mozilla\.com|windows\.com|microsoft\.com)$/.test(h);
+  } catch { return false; }
+}
+
+/** Vergleich in gleichbleibender Zeit — erschwert das Erraten Zeichen für Zeichen. */
+function gleich(a, b) {
+  const x = String(a || ''), y = String(b || '');
+  if (x.length !== y.length) return false;
+  let diff = 0;
+  for (let i = 0; i < x.length; i++) diff |= x.charCodeAt(i) ^ y.charCodeAt(i);
+  return diff === 0;
 }
 
 /** Kurzer Inhaltsschlüssel für den Audio-Zwischenspeicher. */

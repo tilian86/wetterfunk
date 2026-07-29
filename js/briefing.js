@@ -44,6 +44,12 @@ const route = () => store.get(LS.route, 'mac');
 const apiKey = () => store.get(LS.key, '');
 const API_URL = 'https://api.anthropic.com/v1/messages';
 
+/* Die Modellantwort verarbeitet DWD-Texte und Nachrichten — dort könnte
+   eingeschleuster Code stehen. Vor dem Einsetzen ins Seitengerüst entschärfen. */
+const esc = (s) => String(s ?? '')
+  .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+  .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+
 let host = null;      // Zustand aus app.js
 let text = '';        // letzter Bericht
 let busy = false;
@@ -278,6 +284,7 @@ const KI_STIMMEN = [
 ];
 
 let audioAus = null;          // laufende Wiedergabe
+let kiAbbruch = null;         // hält das stückweise Vorlesen an
 
 const kiAktiv = () => !!store.get(LS.ttsPass, '') && store.get(LS.nutzeKI, true);
 
@@ -342,46 +349,109 @@ async function kiFreischalten() {
   }
 }
 
-/** Ganzen Text am Stück von der KI sprechen lassen. */
+/* Text in sprechbare Häppchen teilen. Das erste ist bewusst kurz: Die
+   Erzeugung dauert etwa so lange wie der Text lang ist, und was zählt, ist
+   die Zeit bis zum ersten Ton. Danach größere Stücke — die sind schon
+   unterwegs, während das erste noch läuft. */
+function inHaeppchen(inhalt) {
+  const saetze = String(inhalt).split(/(?<=[.!?])\s+/).filter(Boolean);
+  const teile = [];
+  let puffer = '';
+  for (const satz of saetze) {
+    const ziel = teile.length === 0 ? 140 : 420;
+    if (puffer && (puffer + ' ' + satz).length > ziel) { teile.push(puffer); puffer = satz; }
+    else puffer = puffer ? `${puffer} ${satz}` : satz;
+  }
+  if (puffer) teile.push(puffer);
+  return teile;
+}
+
+/** Ein Häppchen holen. Gibt eine Adresse auf das fertige Audio zurück. */
+async function holeAudio(stueck) {
+  const res = await fetch(`${proxyUrl()}/tts`, {
+    method: 'POST', headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({
+      text: stueck,
+      stimme: store.get(LS.kiStimme, 'eve'),
+      // Serverseitig höchstens 1,5× — schneller regelt der Abspieler
+      tempo: Math.min(1.5, store.get(LS.rate, 1)),
+      passwort: store.get(LS.ttsPass, '')
+    })
+  });
+  if (res.status === 401) { const e = new Error('kennwort'); e.code = 401; throw e; }
+  if (!res.ok) {
+    const d = await res.json().catch(() => ({}));
+    throw new Error(d.error || `Fehler ${res.status}`);
+  }
+  return URL.createObjectURL(await res.blob());
+}
+
+/* Der ganze Bericht auf einmal dauert mehrere Sekunden, bis der erste Ton
+   kommt. Deshalb stückweise: Das erste Häppchen wird abgespielt, während die
+   nächsten schon unterwegs sind. */
 async function speakKI(inhalt, aufKnopf) {
   stopSpeaking();
   fremdKnopf = aufKnopf || null;
-  setSpeaking(true);
+  setSpeaking(true, 'lädt');
+
+  const stuecke = inHaeppchen(inhalt);
+  const geladen = new Array(stuecke.length).fill(null);
+  let abgebrochen = false;
+  kiAbbruch = () => { abgebrochen = true; };
+
+  // Vorauslesen: höchstens zwei Häppchen gleichzeitig unterwegs
+  let naechstesZuHolen = 0;
+  let gespieltBis = 0;
+  const nachladen = () => {
+    while (naechstesZuHolen < stuecke.length && naechstesZuHolen < 2 + gespieltBis) {
+      const n = naechstesZuHolen++;
+      geladen[n] = holeAudio(stuecke[n]).catch(e => ({ fehler: e }));
+    }
+  };
+  nachladen();
 
   try {
-    const res = await fetch(`${proxyUrl()}/tts`, {
-      method: 'POST', headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({
-        text: inhalt,
-        stimme: store.get(LS.kiStimme, 'eve'),
-        tempo: store.get(LS.rate, 1),
-        passwort: store.get(LS.ttsPass, '')
-      })
-    });
+    for (let n = 0; n < stuecke.length; n++) {
+      if (abgebrochen) return;
+      const ergebnis = await geladen[n];
+      if (abgebrochen) return;
+      if (ergebnis?.fehler) throw ergebnis.fehler;
 
-    if (res.status === 401) {
+      setSpeaking(true);                       // ab jetzt läuft Ton
+      await spieleAb(ergebnis);
+      URL.revokeObjectURL(ergebnis);
+      gespieltBis = n + 1;
+      nachladen();
+    }
+    setSpeaking(false);
+  } catch (e) {
+    if (abgebrochen) return;
+    if (e?.code === 401) {
       store.set(LS.ttsPass, '');
       host?.toast('Kennwort abgelaufen — bitte neu freischalten.', 4000);
-      setSpeaking(false); alleLeisten();
-      return;
+      alleLeisten();
+    } else {
+      console.warn('KI-Stimme:', e);
+      host?.toast(`Sprachausgabe: ${e.message}`.slice(0, 130), 4000);
     }
-    if (!res.ok) {
-      const d = await res.json().catch(() => ({}));
-      host?.toast(`Sprachausgabe: ${d.error || res.status}`.slice(0, 130), 4500);
-      setSpeaking(false);
-      return;
-    }
-
-    const url = URL.createObjectURL(await res.blob());
-    audioAus = new Audio(url);
-    audioAus.onended = () => { setSpeaking(false); URL.revokeObjectURL(url); audioAus = null; };
-    audioAus.onerror = () => { setSpeaking(false); host?.toast('Konnte nicht abspielen.'); };
-    await audioAus.play();
-  } catch (e) {
-    console.warn('KI-Stimme:', e);
-    host?.toast('Sprachausgabe nicht erreichbar.', 3500);
     setSpeaking(false);
+  } finally {
+    kiAbbruch = null;
   }
+}
+
+/** Ein Häppchen abspielen und warten, bis es zu Ende ist. */
+function spieleAb(url) {
+  return new Promise((fertig, fehler) => {
+    audioAus = new Audio(url);
+    // Über 1,5× regelt der Abspieler nach; ohne preservesPitch klingt es piepsig
+    const wunsch = store.get(LS.rate, 1);
+    audioAus.preservesPitch = true;
+    audioAus.playbackRate = wunsch > 1.5 ? wunsch / 1.5 : 1;
+    audioAus.onended = () => fertig();
+    audioAus.onerror = () => fehler(new Error('Konnte nicht abspielen'));
+    audioAus.play().catch(fehler);
+  });
 }
 
 /** Apples Spaßstimmen tauchen in der Liste mit auf, taugen aber nicht
@@ -462,20 +532,22 @@ function stopSpeaking() {
   speaking = false;
   clearInterval(speak._wach);
   try { speechSynthesis.cancel(); } catch {}
+  if (kiAbbruch) { kiAbbruch(); kiAbbruch = null; }
   if (audioAus) { audioAus.pause(); audioAus.currentTime = 0; audioAus = null; }
   setSpeaking(false);
 }
 
-function setSpeaking(on) {
+function setSpeaking(on, zustand = null) {
   speaking = on;
+  const laden = zustand === 'lädt';
   $('#bfSpeak')?.classList.toggle('is-speaking', on);
   const l = $('#bfSpeakLabel');
-  if (l) l.textContent = on ? 'Stopp' : 'Vorlesen';
+  if (l) l.textContent = laden ? 'Stimme lädt…' : on ? 'Stopp' : 'Vorlesen';
   // Ein von außen angemeldeter Knopf (etwa am amtlichen Bericht) zeigt denselben Zustand
   if (fremdKnopf) {
     fremdKnopf.classList.toggle('is-speaking', on);
     const t = fremdKnopf.querySelector('span');
-    if (t) t.textContent = on ? 'Stopp' : t.dataset.ruhe || 'Vorlesen';
+    if (t) t.textContent = laden ? 'Stimme lädt…' : on ? 'Stopp' : (t.dataset.ruhe || 'Vorlesen');
     if (!on) fremdKnopf = null;
   }
 }
@@ -506,7 +578,7 @@ function renderResult(model, out) {
   const box = $('#bfResult');
 
   box.innerHTML = `
-    <p class="bf-text">${text.replace(/\n+/g, '</p><p class="bf-text">')}</p>
+    <p class="bf-text">${esc(text).replace(/\n+/g, '</p><p class="bf-text">')}</p>
     <div class="bf-actions">
       <button class="bf-speak" id="bfSpeak">
         <svg viewBox="0 0 24 24" class="ico-speak"><path d="M11 5 6 9H3v6h3l5 4V5z"/><path d="M16.5 8.5a5 5 0 0 1 0 7"/><path d="M19.5 5.5a9 9 0 0 1 0 13"/></svg>
@@ -523,7 +595,7 @@ function renderResult(model, out) {
   box.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
 }
 
-const RATES = [0.8, 1, 1.2, 1.5];
+const RATES = [0.8, 1, 1.2, 1.5, 2];
 
 /** Stimme und Tempo einstellen. Die Liste steht erst bereit, wenn der Browser
     die Stimmen geladen hat — deshalb zusätzlich auf `voiceschanged` hören. */
@@ -547,7 +619,7 @@ function renderVoiceBar(ziel) {
               ? ' selected' : ''}>${s.name}</option>`).join('')}
         </optgroup>` : ''}
         <optgroup label="Systemstimmen">
-        ${stimmen.map(v => `<option value="${v.voiceURI}"${
+        ${stimmen.map(v => `<option value="${esc(v.voiceURI)}"${
           v.voiceURI === aktiv?.voiceURI && !(kiAn && store.get(LS.nutzeKI, true))
             ? ' selected' : ''}>${v.name.replace(/\s*\(.*?\)/, '')}</option>`).join('')}
         </optgroup>
