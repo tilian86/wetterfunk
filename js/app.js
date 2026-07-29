@@ -55,6 +55,13 @@ const $$ = (s, r = document) => [...r.querySelectorAll(s)];
 const clamp = (v, a, b) => Math.min(b, Math.max(a, v));
 const round = (v) => (v === null || v === undefined || Number.isNaN(v) ? null : Math.round(v));
 /** Zahl mit deutschem Komma — 0,6 statt 0.6. */
+/* Fremdtext, der ins Seitengerüst geht, muss entschärft werden: DWD-Meldungen,
+   Nachrichten, Ortsnamen und Modellantworten kommen von außen. Ohne das könnte
+   dort stehender Code im Browser ausgeführt werden. */
+const esc = (s) => String(s ?? '')
+  .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+  .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+
 const dez = (v, n = 1) => (v == null ? "–" : v.toFixed(n).replace(".", ","));
 
 const store = {
@@ -439,14 +446,14 @@ function renderWarnings(raw) {
       <summary>
         <svg class="warn-ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3.5 1.8 21h20.4L12 3.5z"/><path d="M12 10v5" stroke-width="2"/><circle cx="12" cy="18" r="1.1" fill="currentColor" stroke="none"/></svg>
         <span class="warn-txt">
-          <b>${w.event || stufeVon(w)}</b>
-          <i>${w.regionName} · bis ${hhmm(w.end)}</i>
+          <b>${esc(w.event || stufeVon(w))}</b>
+          <i>${esc(w.regionName)} · bis ${hhmm(w.end)}</i>
         </span>
         <svg class="warn-chev" viewBox="0 0 24 24"><path d="M6 9l6 6 6-6"/></svg>
       </summary>
       <div class="warn-body">
-        <p>${w.description || ''}</p>
-        ${w.instruction ? `<p class="warn-instr">${w.instruction}</p>` : ''}
+        <p>${esc(w.description)}</p>
+        ${w.instruction ? `<p class="warn-instr">${esc(w.instruction)}</p>` : ''}
         <p class="warn-src">${stufeVon(w)} · Deutscher Wetterdienst</p>
       </div>
     </details>`).join('');
@@ -2245,13 +2252,13 @@ function renderCams() {
   const eigene = cams.map((c, i) => `
     <figure class="cam" data-i="${i}">
       <div class="cam-img">
-        <img src="${bild(c.url)}" alt="${c.name}" loading="lazy"
+        <img src="${esc(bild(c.url))}" alt="${esc(c.name)}" loading="lazy"
              referrerpolicy="no-referrer"
              onerror="this.closest('.cam').classList.add('cam-err')">
         <span class="cam-err-msg">Bild nicht abrufbar</span>
       </div>
       <figcaption>
-        <span class="cam-name">${c.name}</span>
+        <span class="cam-name">${esc(c.name)}</span>
         <button class="cam-del" data-i="${i}" aria-label="Entfernen">✕</button>
       </figcaption>
     </figure>`).join('');
@@ -2523,7 +2530,7 @@ function zeigeOrtsFrage(p, km) {
   el.className = 'orts-frage';
   el.id = 'ortsFrage';
   el.innerHTML = `
-    <span class="of-text">Du scheinst in <b>${p.name}</b> zu sein —
+    <span class="of-text">Du scheinst in <b>${esc(p.name)}</b> zu sein —
       ${km} km von ${place.name} entfernt. Wetter dort anzeigen?</span>
     <span class="of-knoepfe">
       <button class="of-ja">Ja, wechseln</button>
@@ -3048,7 +3055,7 @@ function renderStationen(zeilen) {
 
     return `<div class="st-zeile">
       <span class="st-ort">
-        <b>${s.station_name}</b>
+        <b>${esc(s.station_name)}</b>
         <i>${s.height != null ? `${Math.round(s.height)} m` : ''}${
              s.height != null && km ? ' · ' : ''}${km ? `${km} km entfernt` : ''}</i>
       </span>
@@ -3404,8 +3411,8 @@ async function loadDwdText(lat, lon) {
 
 /** Kurze Absätze, die mit Doppelpunkt enden, sind im DWD-Text Überschriften. */
 const dwdAbsatz = (a) => (a.length < 42 && a.trim().endsWith(':')
-  ? `<p class="dwd-h">${a.replace(/:$/, '')}</p>`
-  : `<p>${a}</p>`);
+  ? `<p class="dwd-h">${esc(a.replace(/:$/, ''))}</p>`
+  : `<p>${esc(a)}</p>`);
 
 function openDwdFull() {
   $('#explainTitle').textContent = `Amtlicher Bericht · ${$('#dwdRegion').textContent}`;
