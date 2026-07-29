@@ -1908,3 +1908,15 @@ body.map-full > *:not(.card-radar):not(.sky):not(.topbar):not(.toast) { visibili
 }
 .kw-ab { background: rgba(255,255,255,.06); color: var(--ink-dim); border-color: var(--card-line); }
 .kw-ok { background: var(--accent); color: #04121f; }
+
+/* Detailansicht einer einzelnen Stunde */
+.sh-kopf { display: flex; align-items: center; gap: 14px; margin-bottom: 16px; }
+.sh-icon { flex: none; }
+.sh-icon .wx { width: 62px; height: 62px; }
+.sh-haupt { display: grid; gap: 1px; }
+.sh-haupt b { font-size: 36px; font-weight: 300; letter-spacing: -.03em; color: var(--ink); }
+.sh-haupt i { font-style: normal; font-size: 14px; color: var(--ink-dim); }
+
+/* Stunden sind antippbar */
+.hcol[data-i] { cursor: pointer; }
+.hcol[data-i]:active { background: rgba(255,255,255,.07); }
