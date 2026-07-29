@@ -163,7 +163,8 @@ function loadForecast(lat, lon) {
     hourly: [
       'temperature_2m', 'apparent_temperature', 'precipitation_probability', 'precipitation',
       'weather_code', 'wind_speed_10m', 'wind_gusts_10m', 'uv_index', 'is_day',
-      'relative_humidity_2m', 'dew_point_2m', 'visibility', 'cloud_cover'
+      'relative_humidity_2m', 'dew_point_2m', 'visibility', 'cloud_cover',
+      'sunshine_duration'
     ].join(','),
     daily: [
       'weather_code', 'temperature_2m_max', 'temperature_2m_min', 'sunrise', 'sunset',
@@ -1844,6 +1845,9 @@ function openStundeSheet(i) {
   const uv = h.uv_index?.[i];
   const sicht = h.visibility?.[i];
   const tags = h.is_day[i] === 1;
+  // Sonnenscheindauer kommt in Sekunden je Stunde
+  const sonneMin = h.sunshine_duration?.[i] != null
+    ? Math.round(h.sunshine_duration[i] / 60) : null;
 
   // Wie sich die Temperatur zur Stunde davor entwickelt
   const vorher = i > 0 ? h.temperature_2m[i - 1] : null;
@@ -1868,6 +1872,12 @@ function openStundeSheet(i) {
       <dt>Wind</dt><dd>${round(wind)} km/h${boe >= wind + 5 ? `, Böen ${round(boe)} km/h` : ''}
         <i>${windWorte(wind)}</i></dd>
       ${wolken != null ? `<dt>Bewölkung</dt><dd>${round(wolken)} %<i>${wolkenWort(wolken)}</i></dd>` : ''}
+      ${sonneMin != null ? `<dt>Sonne</dt><dd>${sonneMin === 0 ? 'keine'
+        : sonneMin >= 58 ? 'die ganze Stunde' : `${sonneMin} von 60 Minuten`}<i>${
+        sonneMin === 0 ? (tags ? 'durchgehend bedeckt' : 'die Sonne steht unter dem Horizont')
+        : sonneMin >= 58 ? 'ungetrübt'
+        : sonneMin >= 30 ? 'überwiegend sonnig, zwischendurch Wolken'
+        : 'meist bewölkt, kurze Aufheiterungen'}</i></dd>` : ''}
       ${feuchte != null ? `<dt>Luftfeuchte</dt><dd>${round(feuchte)} %${
         taupunkt != null ? `<i>Taupunkt ${round(taupunkt)}° — ${taupunktWort(taupunkt)}</i>` : ''}</dd>` : ''}
       ${uv != null && tags ? `<dt>UV-Index</dt><dd>${dez(uv)}<i>${
