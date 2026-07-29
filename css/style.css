@@ -2130,3 +2130,9 @@ body.ar-offen { overflow: hidden; }
    allein. Ohne diese Zeile blieb der Griff der letzten Berührung stehen. */
 #bogenGriff[hidden] { display: none; }
 .hint-gruen { color: var(--good); font-weight: 600; }
+
+/* Überschrift innerhalb der Meldungsliste — trennt Wetter von Himmelsterminen */
+.pa-gruppe {
+  margin: 16px 0 8px; font-size: 11px; font-weight: 700;
+  letter-spacing: .08em; text-transform: uppercase; color: var(--ink-faint);
+}

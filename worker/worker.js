@@ -25,6 +25,7 @@
 */
 
 import { sendPush } from './push.js';
+import { sonnenTermine, mondTermine, mondPhase } from './himmel.js';
 
 // Nur diese Absender dürfen den Worker nutzen.
 const ALLOWED_ORIGINS = [
@@ -276,7 +277,7 @@ export default {
     if (url.pathname === '/push/an' && request.method === 'POST') {
       let req;
       try { req = await request.json(); } catch { return json({ error: 'Ungültige Anfrage' }, 400, origin); }
-      const { abo, lat, lon, ort, kreis, arten } = req || {};
+      const { abo, lat, lon, ort, kreis, arten, tz } = req || {};
       if (!abo?.endpoint || !abo?.keys?.p256dh || !abo?.keys?.auth) {
         return json({ error: 'Unvollständiges Abo' }, 400, origin);
       }
@@ -301,15 +302,24 @@ export default {
         abo, lat, lon,
         ort: String(ort || '').slice(0, 60),
         kreis: String(kreis || '').slice(0, 80),
-        // Was gemeldet werden soll — beides an, wenn nichts angegeben ist
+        /* Zeitzone des Geräts — ohne sie stünde in der Meldung die
+           Weltzeit. Nur ein Name aus der Zeitzonendatenbank ist erlaubt. */
+        tz: /^[A-Za-z_+-]+\/[A-Za-z_+\-\/]+$/.test(String(tz || '')) ? tz : 'Europe/Berlin',
+        // Was gemeldet werden soll. Regen und Warnungen sind voreingestellt,
+        // die Himmelstermine nicht — die will nicht jeder täglich.
         arten: {
           regen: arten?.regen !== false,
-          warnungen: arten?.warnungen !== false
+          warnungen: arten?.warnungen !== false,
+          aufgang: arten?.aufgang === true,
+          hoechststand: arten?.hoechststand === true,
+          untergang: arten?.untergang === true,
+          mondaufgang: arten?.mondaufgang === true
         },
         seit: alt?.seit || Date.now(),
         zuletzt: alt?.zuletzt || 0,
         gemeldet: alt?.gemeldet || null,
-        warnGemeldet: alt?.warnGemeldet || []
+        warnGemeldet: alt?.warnGemeldet || [],
+        himmelGemeldet: alt?.himmelGemeldet || []
       }));
       return json({ ok: true }, 200, origin);
     }
@@ -439,16 +449,24 @@ async function regenPruefen(env) {
       if (arten.warnungen && warnungen) {
         meldung = warnungMelden(warnungen, eintrag);
       }
+      /* Himmelstermine vor dem Regen: Ein Sonnenaufgang lässt sich nicht
+         nachholen, eine Regenmeldung schon — die gilt für zwei Stunden. */
+      if (!meldung) meldung = himmelMelden(eintrag);
       if (!meldung && arten.regen) {
         const lage = await regenLage(eintrag.lat, eintrag.lon);
         if (lage) meldung = entscheide(lage, eintrag);
       }
       if (!meldung) continue;
-      // Warnungen dürfen die Ruhefrist durchbrechen — bei Unwetter zählt Zeit
-      if (meldung.art !== 'warnung' && Date.now() - (eintrag.zuletzt || 0) < MIN_ABSTAND) continue;
+      /* Warnungen dürfen die Ruhefrist durchbrechen — bei Unwetter zählt
+         Zeit. Himmelstermine ebenfalls: Sie kommen höchstens einmal am Tag
+         und wären zwanzig Minuten später wertlos. */
+      if (meldung.art !== 'warnung' && meldung.art !== 'himmel'
+          && Date.now() - (eintrag.zuletzt || 0) < MIN_ABSTAND) continue;
 
       const status = await sendPush(eintrag.abo, JSON.stringify({
-        titel: meldung.titel, text: meldung.text, art: meldung.art
+        titel: meldung.titel, text: meldung.text, art: meldung.art,
+        // Eigene Kennung je Termin, damit sich die Meldungen nicht ersetzen
+        tag: meldung.tag || `wf-${meldung.art}`
       }), env);
 
       // 404/410 heißt: Gerät hat das Abo verworfen
@@ -461,6 +479,8 @@ async function regenPruefen(env) {
         if (meldung.art === 'warnung') {
           // Kennungen der gemeldeten Warnungen merken, höchstens 40 Stück
           eintrag.warnGemeldet = [...(eintrag.warnGemeldet || []), ...meldung.kennungen].slice(-40);
+        } else if (meldung.art === 'himmel') {
+          eintrag.himmelGemeldet = [...(eintrag.himmelGemeldet || []), meldung.merker].slice(-12);
         } else {
           eintrag.gemeldet = meldung.merker;
         }
@@ -508,6 +528,85 @@ const glatt = (s) => String(s || '').toLowerCase()
   .replace(/[^a-z0-9]+/g, ' ').trim();
 
 /** Gibt es eine neue Warnung für diesen Ort? */
+/* ── Sonne und Mond ────────────────────────────────────────
+   Der Zeitplan läuft alle 15 Minuten. Gemeldet wird deshalb nicht der
+   Augenblick selbst, sondern ein kurzer Vorlauf: Wer weiß, dass die Sonne
+   in einer Viertelstunde untergeht, kann noch losgehen. Wer es im selben
+   Moment erfährt, hat nichts davon.
+
+   Jeder Termin wird höchstens einmal gemeldet — gemerkt wird er über
+   Datum und Art, nicht über die Uhrzeit. So bleibt die Sperre bestehen,
+   auch wenn die Rechnung beim nächsten Lauf eine Minute anders ausfällt. */
+const VORLAUF_MIN = 5;      // näher dran lohnt die Meldung nicht mehr
+const VORLAUF_MAX = 22;     // ein Lauf mehr als der Abstand des Zeitplans
+
+function himmelMelden(eintrag) {
+  const arten = eintrag.arten || {};
+  if (!arten.aufgang && !arten.hoechststand && !arten.untergang && !arten.mondaufgang) {
+    return null;
+  }
+  const jetzt = new Date();
+  const von = new Date(jetzt.getTime() - 5 * 60000);
+  const tz = eintrag.tz || 'Europe/Berlin';
+
+  const sonne = sonnenTermine(von, eintrag.lat, eintrag.lon, 3);
+  const mond = arten.mondaufgang ? mondTermine(von, eintrag.lat, eintrag.lon, 3) : [];
+  const untergang = sonne.find(e => e.art === 'untergang');
+
+  /* Die goldene Stunde vertritt den Sonnenuntergang: Ab da fällt das Licht
+     flach ein — das ist der Zeitpunkt, zu dem man draußen sein will, nicht
+     der Untergang selbst. Fehlt sie (Polartag), tut es der Untergang. */
+  const kandidaten = [];
+  for (const e of sonne) {
+    if (e.art === 'aufgang' && arten.aufgang) {
+      kandidaten.push({ ...e, titel: 'Sonnenaufgang',
+        text: (t) => `Um ${t} geht die Sonne auf${eintrag.ort ? ` in ${eintrag.ort}` : ''}.` });
+    }
+    if (e.art === 'hoechststand' && arten.hoechststand) {
+      kandidaten.push({ ...e, titel: 'Sonnenhöchststand',
+        text: (t) => `Um ${t} steht die Sonne mit ${Math.round(e.hoehe)}° am höchsten — `
+          + `kürzeste Schatten und stärkste UV-Strahlung des Tages.` });
+    }
+    if (e.art === 'gold' && arten.untergang) {
+      kandidaten.push({ ...e, art: 'abend', titel: 'Goldene Stunde',
+        text: (t) => `Ab ${t} fällt das Licht flach ein`
+          + (untergang ? `, Sonnenuntergang um ${uhrzeit(untergang.t, tz)}.` : '.') });
+    }
+  }
+  /* Der Untergang trägt dieselbe Kennung wie die goldene Stunde und belegt
+     damit denselben Tagesplatz. Sonst käme abends beides — erst um 20:00
+     das Licht, dann um 20:45 noch einmal der Untergang. Gemeldet wird der
+     frühere Termin; fehlt die goldene Stunde (Polartag), bleibt dieser. */
+  if (arten.untergang && untergang) {
+    kandidaten.push({ ...untergang, art: 'abend', titel: 'Sonnenuntergang',
+      text: (t) => `Um ${t} geht die Sonne unter.` });
+  }
+  for (const e of mond) {
+    const p = mondPhase(e.t);
+    kandidaten.push({ ...e, titel: 'Mondaufgang',
+      text: (t) => `Um ${t} geht der Mond auf — ${p.name}, `
+        + `${Math.round(p.beleuchtet * 100)} % beleuchtet.` });
+  }
+
+  const gemeldet = eintrag.himmelGemeldet || [];
+  for (const k of kandidaten.sort((a, b) => a.t - b.t)) {
+    const min = (k.t - jetzt) / 60000;
+    if (min < VORLAUF_MIN || min > VORLAUF_MAX) continue;
+    const merker = `${tagSchluessel(k.t, tz)}:${k.art}`;
+    if (gemeldet.includes(merker)) continue;
+    return { art: 'himmel', merker, tag: `wf-${k.art}`,
+             titel: k.titel, text: k.text(uhrzeit(k.t, tz)) };
+  }
+  return null;
+}
+
+const uhrzeit = (d, tz) => new Intl.DateTimeFormat('de-DE',
+  { hour: '2-digit', minute: '2-digit', timeZone: tz }).format(d);
+
+/** Datum am Ort des Empfängers — Grundlage für „einmal am Tag". */
+const tagSchluessel = (d, tz) => new Intl.DateTimeFormat('sv-SE',
+  { year: 'numeric', month: '2-digit', day: '2-digit', timeZone: tz }).format(d);
+
 function warnungMelden(daten, eintrag) {
   const ziele = [glatt(eintrag.ort), glatt(eintrag.kreis)].filter(Boolean);
   if (!ziele.length) return null;
