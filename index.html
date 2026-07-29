@@ -35,10 +35,10 @@
 <meta name="theme-color" content="#0b1220">
 <link rel="apple-touch-icon" href="icons/icon-180.png">
 <link rel="icon" href="icons/icon-192.png">
-<link rel="manifest" href="manifest.webmanifest?v=70">
+<link rel="manifest" href="manifest.webmanifest?v=71">
 
-<link rel="stylesheet" href="vendor/maplibre-gl.css?v=70">
-<link rel="stylesheet" href="css/style.css?v=70">
+<link rel="stylesheet" href="vendor/maplibre-gl.css?v=71">
+<link rel="stylesheet" href="css/style.css?v=71">
 </head>
 <body>
 
@@ -238,6 +238,25 @@
     <div id="countdown"></div>
     <div id="sonneDetail"></div>
   </section>
+
+  <!-- ══ SONNENBAHN DURCH DIE KAMERA ══
+       Zeigt im Kamerabild, wo die Sonne heute entlangläuft — hilfreich, um
+       zu sehen, ob ein Platz mittags Schatten hat oder wo sie untergeht. -->
+  <div class="ar-back" id="arBack" hidden>
+    <video id="arVideo" playsinline muted></video>
+    <canvas id="arCanvas"></canvas>
+    <div class="ar-kopf">
+      <span class="ar-ort" id="arOrt"></span>
+      <button class="ar-zu" id="arZu" aria-label="Schließen">✕</button>
+    </div>
+    <div class="ar-fuss">
+      <p class="ar-hinweis" id="arHinweis">Halte das Gerät hoch und drehe dich langsam.</p>
+      <div class="ar-regler">
+        <input type="range" id="arZeit" min="0" max="1440" step="5" aria-label="Uhrzeit">
+        <span class="ar-zeitwert" id="arZeitwert">jetzt</span>
+      </div>
+    </div>
+  </div>
 
   <!-- ══ HIMMELSEREIGNISSE ══ -->
   <section class="card card-sky" hidden>
@@ -494,12 +513,12 @@
 
 <div class="toast" id="toast" hidden></div>
 
-<script src="vendor/maplibre-gl.js?v=70"></script>
-<script src="js/icons.js?v=70"></script>
-<script src="js/radar.js?v=70"></script>
-<script src="js/forecast.js?v=70"></script>
-<script src="js/briefing.js?v=70"></script>
-<script src="js/news.js?v=70"></script>
-<script src="js/app.js?v=70"></script>
+<script src="vendor/maplibre-gl.js?v=71"></script>
+<script src="js/icons.js?v=71"></script>
+<script src="js/radar.js?v=71"></script>
+<script src="js/forecast.js?v=71"></script>
+<script src="js/briefing.js?v=71"></script>
+<script src="js/news.js?v=71"></script>
+<script src="js/app.js?v=71"></script>
 </body>
 </html>

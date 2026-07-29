@@ -1944,6 +1944,212 @@ function openDaySheet(i) {
 }
 
 
+/* ── Sonnenbahn im Kamerabild ───────────────────────────────
+   Das Gerät weiß, wohin es zeigt (Kompass und Neigung), und wir wissen, wo
+   die Sonne steht. Beides zusammen ergibt: die Bahn ins Livebild gezeichnet.
+   Damit sieht man vor Ort, ob ein Platz mittags Schatten hat oder hinter
+   welchem Haus die Sonne untergeht. */
+let arLauf = null, arStream = null, arVersatz = null;
+
+async function arStarten() {
+  const back = $('#arBack');
+  if (!back || !place) return;
+
+  // iOS gibt die Lagesensoren erst nach ausdrücklicher Erlaubnis frei,
+  // und nur direkt aus einer Nutzergeste heraus.
+  let lageOk = true;
+  try {
+    if (typeof DeviceOrientationEvent?.requestPermission === 'function') {
+      lageOk = (await DeviceOrientationEvent.requestPermission()) === 'granted';
+    }
+  } catch { lageOk = false; }
+
+  try {
+    arStream = await navigator.mediaDevices.getUserMedia({
+      video: { facingMode: { ideal: 'environment' } }, audio: false
+    });
+  } catch (e) {
+    toast(e?.name === 'NotAllowedError'
+      ? 'Ohne Kamerazugriff geht die Ansicht nicht.'
+      : 'Kamera nicht verfügbar.', 4000);
+    return;
+  }
+
+  const video = $('#arVideo');
+  video.srcObject = arStream;
+  await video.play().catch(() => {});
+
+  back.hidden = false;
+  document.body.classList.add('ar-offen');
+  $('#arOrt').textContent = `${place.name} · ${new Date().toLocaleDateString('de-DE',
+    { day: 'numeric', month: 'long' })}`;
+  $('#arHinweis').textContent = lageOk
+    ? 'Halte das Gerät hoch und drehe dich langsam.'
+    : 'Ohne Lagesensor wird die Bahn nur grob gezeigt — Richtung von Hand suchen.';
+
+  const zeitRegler = $('#arZeit');
+  zeitRegler.value = String(new Date().getHours() * 60 + new Date().getMinutes());
+  arVersatz = null;
+  zeitRegler.oninput = () => { arVersatz = Number(zeitRegler.value); arZeitText(); };
+  arZeitText();
+
+  starteLage();
+  arZeichnen();
+}
+
+function arZeitText() {
+  const el = $('#arZeitwert');
+  if (!el) return;
+  if (arVersatz == null) { el.textContent = 'jetzt'; return; }
+  const h = Math.floor(arVersatz / 60), m = arVersatz % 60;
+  el.textContent = `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')} Uhr`;
+}
+
+/** Ausrichtung des Geräts: Kompassrichtung und Neigung nach oben. */
+let arLage = { richtung: null, neigung: 0 };
+
+function starteLage() {
+  const auf = (e) => {
+    // Safari liefert die Kompassrichtung direkt, andere rechnen aus alpha
+    const kompass = e.webkitCompassHeading != null
+      ? e.webkitCompassHeading
+      : (e.absolute && e.alpha != null ? (360 - e.alpha) % 360 : null);
+    if (kompass != null) arLage.richtung = kompass;
+    if (e.beta != null) arLage.neigung = e.beta - 90;   // 0 = waagerecht nach vorn
+  };
+  window.addEventListener('deviceorientationabsolute', auf, true);
+  window.addEventListener('deviceorientation', auf, true);
+}
+
+function arBeenden() {
+  const back = $('#arBack');
+  if (back) back.hidden = true;
+  document.body.classList.remove('ar-offen');
+  cancelAnimationFrame(arLauf);
+  arLauf = null;
+  if (arStream) { arStream.getTracks().forEach(t => t.stop()); arStream = null; }
+}
+
+/* Zeichnet die Bahn. Die Kamera hat etwa 65° Blickwinkel in der Breite —
+   daraus ergibt sich, wie viele Pixel ein Grad am Himmel misst. */
+function arZeichnen() {
+  const cv = $('#arCanvas');
+  const back = $('#arBack');
+  if (!cv || back?.hidden) return;
+
+  const b = back.getBoundingClientRect();
+  const dpr = Math.min(2, window.devicePixelRatio || 1);
+  if (cv.width !== Math.round(b.width * dpr)) {
+    cv.width = Math.round(b.width * dpr);
+    cv.height = Math.round(b.height * dpr);
+  }
+  const g = cv.getContext('2d');
+  g.setTransform(dpr, 0, 0, dpr, 0, 0);
+  g.clearRect(0, 0, b.width, b.height);
+
+  const proGrad = b.width / 65;
+  const blick = arLage.richtung;
+  const mitteY = b.height / 2 + arLage.neigung * proGrad;
+
+  /* Bildposition eines Himmelspunkts. null, wenn er hinter einem liegt. */
+  const punkt = (azimut, hoehe) => {
+    if (blick == null) return null;
+    let ab = azimut - blick;
+    while (ab > 180) ab -= 360;
+    while (ab < -180) ab += 360;
+    if (Math.abs(ab) > 70) return null;
+    return [b.width / 2 + ab * proGrad, mitteY - hoehe * proGrad];
+  };
+
+  const tagStart = new Date(); tagStart.setHours(0, 0, 0, 0);
+  const bahn = [];
+  for (let m = 0; m <= 1440; m += 10) {
+    const t = new Date(tagStart.getTime() + m * 60000);
+    const hoehe = sunAltitude(t, place.lat, place.lon);
+    const azi = sunAzimut(t, place.lat, place.lon);
+    bahn.push({ t, m, hoehe, azi, p: punkt(azi, hoehe) });
+  }
+
+  // Horizontlinie als Bezug
+  if (blick != null) {
+    g.strokeStyle = 'rgba(255,255,255,.25)';
+    g.lineWidth = 1;
+    g.beginPath(); g.moveTo(0, mitteY); g.lineTo(b.width, mitteY); g.stroke();
+    g.fillStyle = 'rgba(255,255,255,.5)';
+    g.font = '11px -apple-system, sans-serif';
+    g.fillText('Horizont', 10, mitteY - 6);
+  }
+
+  // Die Bahn: über dem Horizont kräftig, darunter gestrichelt
+  const zeichneBahn = (ueber) => {
+    g.beginPath();
+    let offen = false;
+    for (const s of bahn) {
+      if (!s.p || (s.hoehe > 0) !== ueber) { offen = false; continue; }
+      if (!offen) { g.moveTo(s.p[0], s.p[1]); offen = true; }
+      else g.lineTo(s.p[0], s.p[1]);
+    }
+    g.strokeStyle = ueber ? '#ffd60a' : 'rgba(255,214,10,.32)';
+    g.lineWidth = ueber ? 4 : 2.5;
+    g.setLineDash(ueber ? [] : [7, 7]);
+    g.lineCap = 'round';
+    g.stroke();
+    g.setLineDash([]);
+  };
+  zeichneBahn(false);
+  zeichneBahn(true);
+
+  // Stundenpunkte
+  g.font = '600 11px -apple-system, sans-serif';
+  g.textAlign = 'center';
+  for (const s of bahn) {
+    if (s.m % 60 || !s.p || s.hoehe < -2) continue;
+    g.beginPath(); g.arc(s.p[0], s.p[1], 10, 0, Math.PI * 2);
+    g.fillStyle = 'rgba(255,214,10,.92)'; g.fill();
+    g.fillStyle = '#1a1400';
+    g.fillText(String(s.m / 60), s.p[0], s.p[1] + 4);
+  }
+
+  // Die Sonne zum gewählten Zeitpunkt
+  const zeit = arVersatz == null ? new Date() : new Date(tagStart.getTime() + arVersatz * 60000);
+  const sHoehe = sunAltitude(zeit, place.lat, place.lon);
+  const sAzi = sunAzimut(zeit, place.lat, place.lon);
+  const sp = punkt(sAzi, sHoehe);
+  if (sp) {
+    const schein = g.createRadialGradient(sp[0], sp[1], 4, sp[0], sp[1], 46);
+    schein.addColorStop(0, 'rgba(255,220,90,.55)');
+    schein.addColorStop(1, 'rgba(255,190,60,0)');
+    g.fillStyle = schein;
+    g.beginPath(); g.arc(sp[0], sp[1], 46, 0, Math.PI * 2); g.fill();
+
+    g.beginPath(); g.arc(sp[0], sp[1], 17, 0, Math.PI * 2);
+    g.fillStyle = sHoehe > 0 ? '#ff9d2e' : 'rgba(255,157,46,.45)';
+    g.fill();
+
+    g.fillStyle = '#fff';
+    g.font = '600 12px -apple-system, sans-serif';
+    g.fillText(`${sHoehe.toFixed(0)}° · ${sAzi.toFixed(0)}°`, sp[0], sp[1] + 38);
+  }
+
+  // Wenn nichts im Bild ist, in welche Richtung man sich drehen muss
+  if (blick != null && !sp) {
+    let ab = sAzi - blick;
+    while (ab > 180) ab -= 360;
+    while (ab < -180) ab += 360;
+    g.fillStyle = 'rgba(255,255,255,.9)';
+    g.font = '600 15px -apple-system, sans-serif';
+    g.fillText(ab > 0 ? 'Sonne ist rechts →' : '← Sonne ist links',
+      b.width / 2, b.height / 2);
+  }
+  if (blick == null) {
+    g.fillStyle = 'rgba(255,255,255,.75)';
+    g.font = '13px -apple-system, sans-serif';
+    g.fillText('Kompass nicht verfügbar', b.width / 2, b.height / 2);
+  }
+
+  arLauf = requestAnimationFrame(arZeichnen);
+}
+
 /* ── Sonnenuhr: der ganze Tag als Ring ──────────────────────
    Ein Halbbogen zeigt nur den hellen Teil. Der Ring fasst 24 Stunden: außen
    die Sonne mit allen Dämmerungsstufen, innen der Mond, in der Mitte die
@@ -2358,9 +2564,13 @@ function renderCountdown() {
           <span class="cd-in" data-t="${e.t.getTime()}">${restZeit(e.t)}</span>
         </div>`).join('')}
     </div>
-    <button class="cd-globus" id="cdGlobus">🌍 Wo ist gerade Tag?</button>`;
+    <div class="cd-knoepfe">
+      <button class="cd-globus" id="cdGlobus">🌍 Wo ist gerade Tag?</button>
+      <button class="cd-globus" id="cdAR">📷 Sonnenbahn im Bild</button>
+    </div>`;
 
   $('#cdGlobus').addEventListener('click', openTerminator);
+  $('#cdAR').addEventListener('click', arStarten);
 
   countdownTimer = setInterval(() => {
     let neuLaden = false;
@@ -3781,6 +3991,7 @@ function wire() {
   });
   $('#installBtn')?.addEventListener('click', installAnstossen);
   $('#radarLegend')?.addEventListener('click', openEbenenHilfe);
+  $('#arZu')?.addEventListener('click', arBeenden);
   $('#shareBtn')?.addEventListener('click', wetterTeilen);
   $('#impressumBtn')?.addEventListener('click', openImpressum);
   $('#datenschutzBtn')?.addEventListener('click', openDatenschutz);
