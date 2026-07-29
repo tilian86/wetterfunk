@@ -2401,7 +2401,8 @@ function arZeichnen() {
 
     g.fillStyle = 'rgba(255,255,255,.92)';
     g.font = '600 11px -apple-system, sans-serif';
-    g.fillText(`Mond ${mNow.hoehe.toFixed(0)}°`, mp[0], mp[1] + 30);
+    g.fillText(mNow.hoehe > 0.5 ? `Mond ${mNow.hoehe.toFixed(0)}°` : 'Mond am Horizont',
+      mp[0], mp[1] + 30);
   }
 
   // Wenn nichts im Bild ist, in welche Richtung man sich drehen muss
@@ -2869,6 +2870,10 @@ function bogenAbfahrenBinden() {
 /* Umschalter zwischen Ringuhr und Bogen. Der Wunsch bleibt gespeichert —
    wer lieber den Bogen sieht, soll ihn nicht jedes Mal neu suchen. */
 let sonneAnsicht = 'uhr';
+let sonneHoeheAnpassen = () => {};
+addEventListener('resize', () => sonneHoeheAnpassen());
+addEventListener('orientationchange', () => setTimeout(() => sonneHoeheAnpassen(), 300));
+
 function sonneAnsichtBinden() {
   sonneAnsicht = store.get('wf.sonneAnsicht', 'uhr');
   const buehne = $('#svBuehne');
@@ -2890,6 +2895,8 @@ function sonneAnsichtBinden() {
   $$('.sv-tab').forEach(t => {
     t.onclick = (e) => { e.stopPropagation(); setzen(t.dataset.view); };
   });
+  // Beim Drehen des Geräts ändert sich die Breite und damit die Höhe des Rings
+  sonneHoeheAnpassen = () => { if (document.body.contains(buehne)) setzen(sonneAnsicht); };
 
   // Wischen zum Wechseln — aber nicht dort, wo der Finger den Bogen abfährt
   let startX = null, startY = null;
