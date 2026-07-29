@@ -1937,3 +1937,38 @@ body.map-full > *:not(.card-radar):not(.sky):not(.topbar):not(.toast) { visibili
 .sm-block .t-value em { font-style: normal; font-size: 12.5px; color: var(--ink-faint); margin-left: 6px; }
 .sm-block .t-sub { font-size: 11.5px; color: var(--ink-faint); line-height: 1.5; }
 .sm-block .moon-row { display: flex; align-items: center; gap: 14px; }
+
+/* ── Sonnenuhr: 24 Stunden als Ring ───────────────────────── */
+.uhr-wrap {
+  position: relative; width: 100%; max-width: 300px;
+  margin: 6px auto 4px; aspect-ratio: 1;
+}
+.uhr-svg { width: 100%; height: 100%; display: block; overflow: visible; }
+.uhr-svg text {
+  font: 600 8px var(--font); fill: var(--ink-faint);
+  text-anchor: middle; stroke: none;
+}
+.uhr-t6  { text-anchor: start; }
+.uhr-t18 { text-anchor: end; }
+
+.uhr-punkt-aussen {
+  fill: #fff; stroke: rgba(10,16,26,.85); stroke-width: 2;
+  filter: drop-shadow(0 0 5px rgba(255,214,10,.9));
+}
+.uhr-punkt-innen { fill: #e2e8f0; stroke: rgba(10,16,26,.8); stroke-width: 1.4; }
+
+/* Mitte: Uhrzeit und was als Nächstes kommt */
+.uhr-mitte {
+  position: absolute; inset: 0;
+  display: grid; place-content: center; justify-items: center; gap: 2px;
+  text-align: center; pointer-events: none;
+}
+.uhr-zeit {
+  font-size: 30px; font-weight: 300; letter-spacing: -.02em;
+  font-variant-numeric: tabular-nums; color: var(--ink);
+}
+.uhr-datum { font-size: 11px; color: var(--ink-dim); }
+.uhr-next {
+  margin-top: 7px; font-size: 10.5px; line-height: 1.4;
+  color: var(--ink-faint);
+}
