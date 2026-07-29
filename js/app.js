@@ -277,9 +277,12 @@ function renderDayProgress() {
   const gesamtMin = Math.round((bis - seit) / 60000);
   const dauer = `${Math.floor(gesamtMin / 60)} Std. ${String(gesamtMin % 60).padStart(2, '0')} Min.`;
 
+  /* Der Trend muss zu dem passen, was gerade dasteht: Wird der Tag kürzer,
+     wird die Nacht im selben Maß länger. Vorher stand nachts die Änderung
+     der Tageslänge — mit falschem Vorzeichen. */
   const tagesLaenge = (i) => (new Date(d.sunset[i]) - new Date(d.sunrise[i])) / 60000;
-  const heuteLang = tagesLaenge(0);
-  const diff = d.sunrise[1] ? Math.round(tagesLaenge(1) - heuteLang) : 0;
+  const tagDiff = d.sunrise[1] ? Math.round(tagesLaenge(1) - tagesLaenge(0)) : 0;
+  const diff = phase === 'Tag' ? tagDiff : -tagDiff;
   const trend = Math.abs(diff) < 1 ? ''
     : ` · morgen ${diff > 0 ? `${diff} Min. länger` : `${-diff} Min. kürzer`}`;
 
@@ -494,7 +497,7 @@ function renderHourly() {
     const temp = round(h.temperature_2m[i]);
     const rel = (h.temperature_2m[i] - tMin) / span;      // 0..1 für den Verlauf
     const isNow = n === 0 || (items[0].kind === 'sun' && n === 1);
-    return `<div class="hcol${isNow ? ' is-now' : ''}" data-zeit="${x.t}">
+    return `<div class="hcol${isNow ? ' is-now' : ''}" data-zeit="${x.t}" data-i="${i}">
       <span class="h-time">${isNow ? 'Jetzt' : hhmm(x.t)}</span>
       <span class="h-icon">${WX.icon(h.weather_code[i], h.is_day[i])}</span>
       <span class="h-temp" style="--rel:${rel.toFixed(2)}">${temp}°</span>
@@ -1698,6 +1701,10 @@ function wireExplain() {
   $$('#daily .drow').forEach(r => {
     r.onclick = () => openDaySheet(Number(r.dataset.day));
   });
+  // Jede Stunde antippbar — in der Leiste ist nur Platz für drei Werte
+  $$('#hourly .hcol[data-i]').forEach(c => {
+    c.onclick = () => openStundeSheet(Number(c.dataset.i));
+  });
 }
 
 /** Alle Stunden eines Tages als Zeilen — Grundlage der Tagesansicht. */
@@ -1797,6 +1804,84 @@ function showPointDetail(props, lngLat) {
     <p class="ds-note">1 mm bedeutet: ein Liter Wasser pro Quadratmeter.
       Die Werte stammen aus dem Vorhersagemodell, nicht aus dem Radar — je weiter
       in der Zukunft, desto gröber.</p>`;
+  const l = $('#explainLink');
+  if (l) l.hidden = true;
+  openSheet('#explainSheet');
+}
+
+/* Der Taupunkt sagt mehr über die Schwüle als die relative Feuchte: Er misst,
+   wie viel Wasser wirklich in der Luft ist, unabhängig von der Temperatur. */
+function taupunktWort(t) {
+  if (t < 5)  return 'sehr trocken';
+  if (t < 11) return 'trocken';
+  if (t < 16) return 'angenehm';
+  if (t < 18) return 'leicht schwül';
+  if (t < 21) return 'schwül';
+  return 'drückend schwül';
+}
+
+/* Alles, was für eine Stunde bekannt ist. In der Leiste ist nur Platz für
+   Symbol, Temperatur und Regen — der Rest steht hier. */
+function openStundeSheet(i) {
+  const h = data?.hourly;
+  if (!h || i == null || !h.time[i]) return;
+
+  const t = new Date(h.time[i]);
+  const heute = t.toDateString() === new Date().toDateString();
+  const morgen = t.toDateString() === new Date(Date.now() + 864e5).toDateString();
+  const tag = heute ? 'Heute' : morgen ? 'Morgen'
+            : t.toLocaleDateString('de-DE', { weekday: 'long', day: 'numeric', month: 'long' });
+
+  const temp = h.temperature_2m[i];
+  const gefuehlt = h.apparent_temperature?.[i];
+  const mm = h.precipitation[i] ?? 0;
+  const prob = h.precipitation_probability[i] ?? 0;
+  const wind = h.wind_speed_10m[i];
+  const boe = h.wind_gusts_10m[i];
+  const wolken = h.cloud_cover?.[i];
+  const feuchte = h.relative_humidity_2m?.[i];
+  const taupunkt = h.dew_point_2m?.[i];
+  const uv = h.uv_index?.[i];
+  const sicht = h.visibility?.[i];
+  const tags = h.is_day[i] === 1;
+
+  // Wie sich die Temperatur zur Stunde davor entwickelt
+  const vorher = i > 0 ? h.temperature_2m[i - 1] : null;
+  const wandel = vorher == null ? '' : temp - vorher >= 0.8 ? ' steigend'
+               : vorher - temp >= 0.8 ? ' fallend' : ' gleichbleibend';
+
+  $('#explainTitle').textContent = `${tag}, ${hhmm(t)} Uhr`;
+  $('#explainText').innerHTML = `
+    <div class="sh-kopf">
+      <span class="sh-icon">${WX.icon(h.weather_code[i], h.is_day[i])}</span>
+      <span class="sh-haupt">
+        <b>${round(temp)}°</b>
+        <i>${esc(WX.text(h.weather_code[i], h.is_day[i]))}${wandel}</i>
+      </span>
+    </div>
+    <dl class="ds-facts">
+      ${gefuehlt != null ? `<dt>Gefühlt</dt><dd>${round(gefuehlt)}°<i>${
+        gefuehltWarum(temp, gefuehlt, wind, feuchte)}</i></dd>` : ''}
+      <dt>Regen</dt><dd>${mm >= 0.05
+        ? `${dez(mm)} mm — ${rainWords(mm)}<i>Wahrscheinlichkeit ${prob} %</i>`
+        : `keiner erwartet<i>Wahrscheinlichkeit ${prob} %</i>`}</dd>
+      <dt>Wind</dt><dd>${round(wind)} km/h${boe >= wind + 5 ? `, Böen ${round(boe)} km/h` : ''}
+        <i>${windWorte(wind)}</i></dd>
+      ${wolken != null ? `<dt>Bewölkung</dt><dd>${round(wolken)} %<i>${wolkenWort(wolken)}</i></dd>` : ''}
+      ${feuchte != null ? `<dt>Luftfeuchte</dt><dd>${round(feuchte)} %${
+        taupunkt != null ? `<i>Taupunkt ${round(taupunkt)}° — ${taupunktWort(taupunkt)}</i>` : ''}</dd>` : ''}
+      ${uv != null && tags ? `<dt>UV-Index</dt><dd>${dez(uv)}<i>${
+        uv >= 8 ? 'sehr hoch — Mittagssonne meiden' : uv >= 6 ? 'hoch — Sonnenschutz'
+        : uv >= 3 ? 'mäßig' : 'unkritisch'}</i></dd>` : ''}
+      ${sicht != null ? `<dt>Sicht</dt><dd>${sicht >= 20000 ? 'über 20 km' : `${Math.round(sicht / 1000)} km`}<i>${
+        sicht < 1000 ? 'Nebel' : sicht < 4000 ? 'diesig' : sicht < 10000 ? 'leicht trüb' : 'klar'}</i></dd>` : ''}
+      <dt>Tageszeit</dt><dd>${tags ? '☀️ Tag' : '🌙 Nacht'}</dd>
+    </dl>
+    <p class="ds-note">Diese Zahlen stammen aus dem Vorhersagemodell für genau diese
+      Stunde. Je weiter der Zeitpunkt entfernt ist, desto gröber wird die Aussage —
+      für die nächsten Stunden ist sie meist zuverlässig, in fünf Tagen eher eine
+      Tendenz.</p>`;
+
   const l = $('#explainLink');
   if (l) l.hidden = true;
   openSheet('#explainSheet');
