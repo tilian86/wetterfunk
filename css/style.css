@@ -139,9 +139,17 @@ body[data-mood="night"]   .sky-grad { background: linear-gradient(178deg,#1b2647
   padding: 7px 4px; cursor: pointer;
 }
 
-/* Erst auf sehr schmalen Geräten weicht die Namenszeile */
-@media (max-width: 330px) {
+/* Auf dem Telefon zählt der Ortsname mehr als die Namenszeile — die stand
+   dort ohnehin nur klein und steht auch im Impressum. Ohne sie passt
+   „Tübingen" ungekürzt daneben. */
+@media (max-width: 460px) {
   .brand-text i { display: none; }
+  .brand-text b { font-size: 13.5px; }
+  .place-btn { font-size: 16px; gap: 4px; }
+  .topbar { gap: 8px; }
+}
+@media (max-width: 340px) {
+  .brand-text { display: none; }
 }
 .place-btn span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .place-btn .pin { width: 17px; height: 17px; flex: none; opacity: .85; }
@@ -257,8 +265,14 @@ svg { fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round
 .card-head h2 {
   font-size: 12px; font-weight: 700; letter-spacing: .1em;
   text-transform: uppercase; color: var(--ink-faint);
+  min-width: 0;
 }
-.card-sub { font-size: 12px; color: var(--ink-faint); }
+/* Die Zusatzangabe rechts darf nicht umbrechen — „gemessen 12:00 / Uhr"
+   auf zwei Zeilen sah nach Panne aus. Lieber die Überschrift umbrechen. */
+.card-sub {
+  font-size: 12px; color: var(--ink-faint);
+  white-space: nowrap; flex: none;
+}
 .card-sub[data-tone="good"] { color: var(--good); }
 .card-sub[data-tone="ok"]   { color: var(--warn); }
 .card-sub[data-tone="bad"]  { color: var(--bad); }
@@ -1034,6 +1048,11 @@ select#bfModel {
   margin-top: var(--gap);
   display: grid; grid-template-columns: 1fr 1fr; gap: var(--gap);
 }
+/* Bleibt eine Kachel in ihrer Reihe allein — als letzte oder weil danach
+   eine breite Kachel kommt —, füllt sie die Reihe. Sonst klafft daneben
+   ein leeres Feld. */
+.tiles > .tile:last-child:nth-child(odd),
+.tiles > .tile:nth-child(odd):has(+ .t-wide) { grid-column: 1 / -1; }
 
 .tile {
   background: var(--card); border: 1px solid var(--card-line);
@@ -1634,8 +1653,10 @@ body.loading .hero-temp, body.loading .hero-desc { opacity: .45; }
 
 /* Wann losgehen — direkt unter dem Countdown, weil man dort nachschaut */
 .cd-losgehen {
+  /* Kein eigener Abstand nach oben: Der Countdown darüber bringt seinen
+     schon mit, sonst rutscht der Kasten unnötig weit nach unten. */
   display: grid; gap: 3px;
-  margin: 13px 0 0; padding: 12px 14px; border-radius: var(--r-md);
+  margin: 0 0 15px; padding: 12px 14px; border-radius: var(--r-md);
   background: linear-gradient(135deg, rgba(255,190,90,.14), rgba(255,140,80,.07));
   border: 1px solid rgba(255,190,90,.26);
 }
@@ -1830,6 +1851,14 @@ body.loading .hero-temp, body.loading .hero-desc { opacity: .45; }
   -webkit-backdrop-filter: blur(14px) saturate(140%);
 }
 .nav::-webkit-scrollbar { display: none; }
+/* Weiche Kante an beiden Seiten: zeigt, dass die Leiste weitergeht,
+   statt die Reiter einfach abzuschneiden. */
+.nav {
+  -webkit-mask-image: linear-gradient(to right, transparent 0, #000 14px,
+                      #000 calc(100% - 20px), transparent 100%);
+  mask-image: linear-gradient(to right, transparent 0, #000 14px,
+              #000 calc(100% - 20px), transparent 100%);
+}
 .nav-chip {
   flex: none; padding: 6px 13px; border-radius: 30px;
   background: rgba(255,255,255,.07); border: 1px solid transparent;
@@ -1948,8 +1977,10 @@ body.map-full > *:not(.card-radar):not(.sky):not(.topbar):not(.toast) { visibili
   font: 600 8px var(--font); fill: var(--ink-faint);
   text-anchor: middle; stroke: none;
 }
-.uhr-t6  { text-anchor: start; }
-.uhr-t18 { text-anchor: end; }
+.uhr-std {
+  font: 600 10px var(--font); fill: var(--ink-dim);
+  text-anchor: middle; stroke: none;
+}
 
 .uhr-punkt-aussen {
   fill: #fff; stroke: rgba(10,16,26,.85); stroke-width: 2;
@@ -2054,7 +2085,9 @@ body.ar-offen { overflow: hidden; }
   display: flex; flex-direction: column; justify-content: center;
 }
 .bogen-wrap { width: 100%; max-width: 300px; margin: 0 auto; touch-action: pan-y; }
-.bogen-svg { width: 100%; height: auto; display: block; overflow: visible; }
+/* Nicht sichtbar überlaufen lassen: Sonst malt die verborgene Tafel neben
+   dem Ring mit — alle Beschriftungen liegen ohnehin innerhalb. */
+.bogen-svg { width: 100%; height: auto; display: block; overflow: hidden; }
 .bogen-svg text { stroke: none; text-anchor: middle; }
 
 .bg-horizont { stroke: rgba(255,255,255,.42); stroke-width: 1.2; }
@@ -2078,3 +2111,22 @@ body.ar-offen { overflow: hidden; }
   font-variant-numeric: tabular-nums; min-height: 2.6em;
 }
 .bogen-text i { font-style: normal; color: var(--ink-faint); font-size: 11px; }
+
+/* Die globale Regel `svg { stroke: currentColor }` legte sonst einen Rahmen
+   um die Zeichenfläche und einen Strich um die gefüllte Tagfläche. */
+.bogen-svg rect, .bogen-svg [fill^="url"], .bg-marke,
+.bg-mondscheibe, .bg-mondschatten { stroke: none; }
+.bg-mondlinie {
+  stroke: rgba(214,226,240,.6); stroke-width: 1.6;
+  stroke-dasharray: 5 4; stroke-linecap: round;
+}
+.bg-mondscheibe { fill: #e8f0fc; }
+.bg-mondschatten { fill: #101a2c; }
+.bg-griff { transition: none; }
+#bogenGriff.ist-mond .bg-griff { stroke: #e8f0fc; fill: rgba(232,240,252,.2); }
+#bogenGriff.ist-mond .bg-lot { stroke: rgba(232,240,252,.4); }
+
+/* `hidden` ist ein HTML-Attribut — bei SVG-Gruppen wirkt es nicht von
+   allein. Ohne diese Zeile blieb der Griff der letzten Berührung stehen. */
+#bogenGriff[hidden] { display: none; }
+.hint-gruen { color: var(--good); font-weight: 600; }

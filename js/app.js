@@ -848,8 +848,11 @@ function renderScrub() {
     data-label="jetzt"></span>`];
   const letzteFein = punkte.findLastIndex(p => p.fein && !p.radar);
   if (letzteFein > 0) {
+    /* Ohne Schrift: „jetzt", der Wochentag und dieses Etikett lagen auf
+       derselben Linie übereinander. Was der grüne Strich bedeutet, steht
+       jetzt im Erklärsatz unter dem Regler. */
     ticks.push(`<span class="tick-fine" style="left:${anteil(letzteFein).toFixed(1)}%"
-      data-label="15-Min-Takt"></span>`);
+      title="Bis hier im 15-Minuten-Takt"></span>`);
   }
   punkte.forEach((p, k) => {
     if (k > 0 && p.t.getHours() === 0 && p.t.getMinutes() === 0) {
@@ -1481,21 +1484,55 @@ function moonDistance(date = new Date()) {
 }
 
 /** Mondposition (Näherung) — genügt für Auf- und Untergang auf wenige Minuten. */
-function moonAltitude(date, lat, lon) {
+/** Höhe UND Himmelsrichtung des Mondes. Für die Bahn im Kamerabild reicht
+    die Höhe nicht — man muss auch wissen, wo am Horizont er steht.
+
+    Die Bahn des Mondes ist deutlich unruhiger als die der Sonne, weil die
+    Erde an ihr zieht. Die drei größten Störungen sind dabei: Evektion
+    (1,27°), Variation (0,66°) und die jährliche Gleichung (0,19°). Ohne sie
+    läge der Mond bis zu zwei Grad daneben — mit ihnen unter einem Zehntel
+    Grad, und das ist weit genauer als jeder Handykompass. */
+function moonHorizont(date, lat, lon) {
   const rad = Math.PI / 180;
   const d = (date - Date.UTC(2000, 0, 1, 12)) / 86400000;
-  const L = (218.316 + 13.176396 * d) * rad;      // mittlere Länge
-  const M = (134.963 + 13.064993 * d) * rad;      // mittlere Anomalie
+  const L = 218.316 + 13.176396 * d;              // mittlere Länge
+  const M = (134.963 + 13.064993 * d) * rad;      // mittlere Anomalie Mond
+  const Ms = (357.529 + 0.98560028 * d) * rad;    // mittlere Anomalie Sonne
+  const D = (297.850 + 12.190749 * d) * rad;      // Abstand zur Sonne
   const F = (93.272 + 13.229350 * d) * rad;       // Argument der Breite
-  const lam = L + 6.289 * rad * Math.sin(M);
-  const bet = 5.128 * rad * Math.sin(F);
+
+  const lam = (L
+    + 6.289 * Math.sin(M)
+    + 1.274 * Math.sin(2 * D - M)                 // Evektion
+    + 0.658 * Math.sin(2 * D)                     // Variation
+    - 0.186 * Math.sin(Ms)                        // jährliche Gleichung
+    - 0.059 * Math.sin(2 * M - 2 * D)
+    - 0.057 * Math.sin(M - 2 * D + Ms)
+    + 0.053 * Math.sin(M + 2 * D)
+    + 0.046 * Math.sin(2 * D - Ms)
+    + 0.041 * Math.sin(M - Ms)
+    - 0.035 * Math.sin(D)
+    - 0.031 * Math.sin(M + Ms)) * rad;
+
+  const bet = (5.128 * Math.sin(F)
+    + 0.281 * Math.sin(M + F)
+    - 0.278 * Math.sin(F - M)
+    - 0.173 * Math.sin(F - 2 * D)) * rad;
+
   const e = 23.4397 * rad;
   const dec = Math.asin(Math.sin(bet) * Math.cos(e) + Math.cos(bet) * Math.sin(e) * Math.sin(lam));
   const ra = Math.atan2(Math.sin(lam) * Math.cos(e) - Math.tan(bet) * Math.sin(e), Math.cos(lam));
   const gmst = (18.697374558 + 24.06570982441908 * d) % 24;
   const H = ((gmst * 15 + lon) % 360) * rad - ra;
   const la = lat * rad;
-  return Math.asin(Math.sin(la) * Math.sin(dec) + Math.cos(la) * Math.cos(dec) * Math.cos(H)) / rad;
+  const hoehe = Math.asin(Math.sin(la) * Math.sin(dec) + Math.cos(la) * Math.cos(dec) * Math.cos(H)) / rad;
+  const azimut = (Math.atan2(Math.sin(H),
+    Math.cos(H) * Math.sin(la) - Math.tan(dec) * Math.cos(la)) / rad + 180) % 360;
+  return { hoehe, azimut };
+}
+
+function moonAltitude(date, lat, lon) {
+  return moonHorizont(date, lat, lon).hoehe;
 }
 
 /** Auf- und Untergang des Mondes für den laufenden Tag. */
@@ -2019,7 +2056,7 @@ async function arStarten() {
   zeitRegler.oninput = () => { arVersatz = Number(zeitRegler.value); arZeitText(); };
   arZeitText();
 
-  starteLage();
+  starteLage(lageOk);
   arZeichnen();
 }
 
@@ -2086,12 +2123,17 @@ function arHinweisText() {
   if (!el) return;
   const k = arKorrektur();
   const eingemessen = Math.abs(k.azimut) > 0.5 || Math.abs(k.hoehe) > 0.5;
-  el.innerHTML = eingemessen
-    ? `Eingemessen: ${k.azimut > 0 ? '+' : ''}${dez(k.azimut)}° Richtung, ${
-        k.hoehe > 0 ? '+' : ''}${dez(k.hoehe)}° Höhe.`
-    : (arLage.richtung == null
-        ? 'Kompass nicht verfügbar — die Richtung fehlt.'
-        : 'Siehst du die Sonne? Tippe genau darauf, dann sitzt die Bahn richtig.');
+  if (eingemessen) {
+    el.innerHTML = `Eingemessen: ${k.azimut > 0 ? '+' : ''}${dez(k.azimut)}° Richtung, ${
+      k.hoehe > 0 ? '+' : ''}${dez(k.hoehe)}° Höhe. Nochmal tippen misst neu ein.`;
+  } else if (arLage.richtung != null) {
+    el.innerHTML = 'Siehst du Sonne oder Mond? Tippe genau darauf, dann sitzt die Bahn richtig.';
+  } else if (arLageWartet) {
+    el.innerHTML = 'Kompass wird gesucht — dreh dich einmal langsam im Kreis.';
+  } else {
+    el.innerHTML = 'Kompass nicht verfügbar. Unter Einstellungen › Safari › '
+      + 'Bewegung &amp; Ausrichtung erlauben, dann die Ansicht neu öffnen.';
+  }
 }
 
 function arOrtAnzeigen() {
@@ -2113,18 +2155,31 @@ function arZeitText() {
 
 /** Ausrichtung des Geräts: Kompassrichtung und Neigung nach oben. */
 let arLage = { richtung: null, neigung: 0 };
+let arLageAb = null;              // zum Abmelden beim Schließen
+let arLageWartet = false;         // Erlaubnis da, aber noch kein Messwert
+let arLetzterZustand = null;
 
-function starteLage() {
+function starteLage(erlaubt) {
+  if (arLageAb) arLageAb();       // nie zweimal anmelden
+  arLageWartet = erlaubt;
+  arLetzterZustand = null;
   const auf = (e) => {
     // Safari liefert die Kompassrichtung direkt, andere rechnen aus alpha
     const kompass = e.webkitCompassHeading != null
       ? e.webkitCompassHeading
       : (e.absolute && e.alpha != null ? (360 - e.alpha) % 360 : null);
-    if (kompass != null) arLage.richtung = kompass;
+    if (kompass != null) { arLage.richtung = kompass; arLageWartet = false; }
     if (e.beta != null) arLage.neigung = e.beta - 90;   // 0 = waagerecht nach vorn
   };
   window.addEventListener('deviceorientationabsolute', auf, true);
   window.addEventListener('deviceorientation', auf, true);
+  arLageAb = () => {
+    window.removeEventListener('deviceorientationabsolute', auf, true);
+    window.removeEventListener('deviceorientation', auf, true);
+    arLageAb = null;
+  };
+  // Antwortet der Sensor nach fünf Sekunden nicht, ist er wirklich nicht da
+  setTimeout(() => { if (arLage.richtung == null) arLageWartet = false; }, 5000);
 }
 
 function arBeenden() {
@@ -2134,6 +2189,20 @@ function arBeenden() {
   cancelAnimationFrame(arLauf);
   arLauf = null;
   if (arStream) { arStream.getTracks().forEach(t => t.stop()); arStream = null; }
+  if (arLageAb) arLageAb();
+}
+
+/** Abgerundetes Feld — für die Zahlen, die im Kamerabild lesbar bleiben müssen. */
+function rundesFeld(g, x, y, w, h, r) {
+  g.beginPath();
+  if (g.roundRect) g.roundRect(x, y, w, h, r);
+  else {
+    g.moveTo(x + r, y); g.lineTo(x + w - r, y); g.quadraticCurveTo(x + w, y, x + w, y + r);
+    g.lineTo(x + w, y + h - r); g.quadraticCurveTo(x + w, y + h, x + w - r, y + h);
+    g.lineTo(x + r, y + h); g.quadraticCurveTo(x, y + h, x, y + h - r);
+    g.lineTo(x, y + r); g.quadraticCurveTo(x, y, x + r, y);
+  }
+  g.fill();
 }
 
 /* Zeichnet die Bahn. Die Kamera hat etwa 65° Blickwinkel in der Breite —
@@ -2179,15 +2248,84 @@ function arZeichnen() {
     bahn.push({ t, m, hoehe, azi, p: punkt(azi, hoehe) });
   }
 
-  // Horizontlinie als Bezug
+  // Mondbahn desselben Tages — nachts ist sie das Einzige am Himmel
+  const mondBahn = [];
+  for (let m = 0; m <= 1440; m += 10) {
+    const t = new Date(tagStart.getTime() + m * 60000);
+    const mh = moonHorizont(t, ort.lat, ort.lon);
+    mondBahn.push({ t, m, hoehe: mh.hoehe, azi: mh.azimut, p: punkt(mh.azimut, mh.hoehe) });
+  }
+
+  // Kompassband auf dem Horizont — sagt in jeder Lage, wohin man schaut
   if (blick != null) {
-    g.strokeStyle = 'rgba(255,255,255,.25)';
+    g.save();
+    const bandH = 26;
+    g.fillStyle = 'rgba(0,0,0,.34)';
+    g.fillRect(0, mitteY - bandH / 2, b.width, bandH);
+    g.strokeStyle = 'rgba(255,255,255,.32)';
     g.lineWidth = 1;
     g.beginPath(); g.moveTo(0, mitteY); g.lineTo(b.width, mitteY); g.stroke();
+
+    const namen = ['N', 'NO', 'O', 'SO', 'S', 'SW', 'W', 'NW'];
+    g.textAlign = 'center';
+    // Von der Blickrichtung aus in beide Richtungen bis an den Bildrand
+    const spanne = Math.ceil((b.width / 2) / proGrad) + 5;
+    const von = Math.floor((blick - spanne) / 5) * 5;
+    for (let a = von; a <= blick + spanne; a += 5) {
+      const x = b.width / 2 + (a - blick) * proGrad;
+      if (x < -20 || x > b.width + 20) continue;
+      const istRichtung = ((a % 45) + 45) % 45 === 0;
+      const gross = ((a % 15) + 15) % 15 === 0;
+      g.strokeStyle = `rgba(255,255,255,${istRichtung ? '.85' : gross ? '.5' : '.28'})`;
+      g.lineWidth = istRichtung ? 1.6 : 1;
+      g.beginPath();
+      g.moveTo(x, mitteY - (istRichtung ? 9 : gross ? 6 : 3));
+      g.lineTo(x, mitteY + (istRichtung ? 9 : gross ? 6 : 3));
+      g.stroke();
+      if (istRichtung) {
+        const grad = ((a % 360) + 360) % 360;
+        g.fillStyle = 'rgba(255,255,255,.95)';
+        g.font = '700 12px -apple-system, sans-serif';
+        g.fillText(namen[grad / 45], x, mitteY - 13);
+      }
+    }
+
+    // Die genaue Zahl in der Mitte, damit man sie ablesen kann
+    const heading = ((blick % 360) + 360) % 360;
+    const txt = `${heading.toFixed(0)}°`;
+    g.font = '600 13px -apple-system, sans-serif';
+    const bw = g.measureText(txt).width + 16;
+    g.fillStyle = 'rgba(255,255,255,.92)';
+    rundesFeld(g, b.width / 2 - bw / 2, mitteY + 15, bw, 21, 10);
+    g.fillStyle = '#0b1220';
+    g.fillText(txt, b.width / 2, mitteY + 30);
+    g.restore();
+
     g.fillStyle = 'rgba(255,255,255,.5)';
     g.font = '11px -apple-system, sans-serif';
-    g.fillText('Horizont', 10, mitteY - 6);
+    g.textAlign = 'left';
+    g.fillText('Horizont', 10, mitteY - 22);
+    g.textAlign = 'center';
   }
+
+  // Die Mondbahn liegt unter der Sonnenbahn — sie ist die leisere von beiden
+  const zeichneMond = (ueber) => {
+    g.beginPath();
+    let offen = false;
+    for (const s of mondBahn) {
+      if (!s.p || (s.hoehe > 0) !== ueber) { offen = false; continue; }
+      if (!offen) { g.moveTo(s.p[0], s.p[1]); offen = true; }
+      else g.lineTo(s.p[0], s.p[1]);
+    }
+    g.strokeStyle = ueber ? 'rgba(214,226,240,.85)' : 'rgba(214,226,240,.22)';
+    g.lineWidth = ueber ? 2.6 : 1.8;
+    g.setLineDash(ueber ? [] : [6, 8]);
+    g.lineCap = 'round';
+    g.stroke();
+    g.setLineDash([]);
+  };
+  zeichneMond(false);
+  zeichneMond(true);
 
   // Die Bahn: über dem Horizont kräftig, darunter gestrichelt
   const zeichneBahn = (ueber) => {
@@ -2243,6 +2381,29 @@ function arZeichnen() {
   arLetzteSonne = { azi: sAzi, hoehe: sHoehe, bild: sp, proGrad, mitteY,
                     breite: b.width, blick };
 
+  // Der Mond zur selben Zeit, mit der Phase als Schatten auf der Scheibe
+  const mNow = moonHorizont(zeit, ort.lat, ort.lon);
+  const mp = punkt(mNow.azimut, mNow.hoehe);
+  if (mp) {
+    const ph = moonPhase(zeit);
+    const r = 15;
+    g.save();
+    g.beginPath(); g.arc(mp[0], mp[1], r, 0, Math.PI * 2);
+    g.fillStyle = mNow.hoehe > 0 ? 'rgba(232,240,252,.96)' : 'rgba(232,240,252,.4)';
+    g.fill();
+    // Schattenkante: bei zunehmendem Mond von links, sonst von rechts
+    g.clip();
+    const versatz = (ph.anteil < 0.5 ? -1 : 1) * (1 - ph.beleuchtet) * 2 * r;
+    g.beginPath(); g.arc(mp[0] + versatz, mp[1], r, 0, Math.PI * 2);
+    g.fillStyle = mNow.hoehe > 0 ? 'rgba(18,26,40,.82)' : 'rgba(18,26,40,.5)';
+    g.fill();
+    g.restore();
+
+    g.fillStyle = 'rgba(255,255,255,.92)';
+    g.font = '600 11px -apple-system, sans-serif';
+    g.fillText(`Mond ${mNow.hoehe.toFixed(0)}°`, mp[0], mp[1] + 30);
+  }
+
   // Wenn nichts im Bild ist, in welche Richtung man sich drehen muss
   if (blick != null && !sp) {
     let ab = sAzi - blick;
@@ -2256,8 +2417,15 @@ function arZeichnen() {
   if (blick == null) {
     g.fillStyle = 'rgba(255,255,255,.75)';
     g.font = '13px -apple-system, sans-serif';
-    g.fillText('Kompass nicht verfügbar', b.width / 2, b.height / 2);
+    g.fillText(arLageWartet ? 'Kompass wird gesucht…' : 'Kompass nicht verfügbar',
+      b.width / 2, b.height / 2);
   }
+
+  /* Der Hinweis unten wurde früher nur beim Öffnen geschrieben — da hatte der
+     Kompass noch gar nicht geantwortet, und es stand dauerhaft „nicht
+     verfügbar" da. Jetzt zieht er nach, sobald sich der Zustand ändert. */
+  const zustand = blick == null ? (arLageWartet ? 'warten' : 'ohne') : 'da';
+  if (zustand !== arLetzterZustand) { arLetzterZustand = zustand; arHinweisText(); }
 
   arLauf = requestAnimationFrame(arZeichnen);
 }
@@ -2267,7 +2435,12 @@ function arZeichnen() {
    die Sonne mit allen Dämmerungsstufen, innen der Mond, in der Mitte die
    Zeit. Mitternacht unten, Mittag oben — wie eine Uhr, die einmal am Tag
    umläuft statt zweimal. */
-const UHR = { r: 86, ring: 15, innen: 66, mondRing: 9, mitte: 100 };
+const UHR = {
+  r: 74, ring: 13,          // Sonnenring
+  innen: 56, mondRing: 8,   // Mondring
+  marken: 87, zahlen: 96,   // Stundenpunkte und die vier Zahlen darüber
+  mitte: 100
+};
 
 /** Zeit → Winkel. 0 Uhr unten, 12 Uhr oben, im Uhrzeigersinn. */
 function uhrWinkel(datum, tagStart) {
@@ -2379,29 +2552,33 @@ function renderSonnenuhr() {
   const mondJetzt = moonAltitude(jetzt, place.lat, place.lon) > 0;
   const [mx, my] = polar(jetztW, UHR.innen);
 
+  /* Stundenpunkte und die vier Zahlen liegen außen — beide am selben Winkel
+     berechnet, damit keine Zahl auf einem Punkt sitzt. */
   const stundenMarken = Array.from({ length: 24 }, (_, s) => {
+    if (s % 6 === 0) return '';                 // dort steht die Zahl
     const grad = (s / 24) * 360 - 180;
-    const [x, y] = polar(grad, UHR.r + UHR.ring / 2 + 7);
-    const stark = s % 6 === 0;
-    return `<circle cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" r="${stark ? 1.9 : 1}"
-      fill="rgba(255,255,255,${stark ? '.55' : '.22'})"/>`;
+    const [x, y] = polar(grad, UHR.marken);
+    return `<circle cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" r="${s % 3 === 0 ? 1.7 : 1}"
+      fill="rgba(255,255,255,${s % 3 === 0 ? '.4' : '.2'})"/>`;
+  }).join('');
+
+  const stundenZahlen = [0, 6, 12, 18].map(s => {
+    const [x, y] = polar((s / 24) * 360 - 180, UHR.zahlen);
+    return `<text class="uhr-std" x="${x.toFixed(1)}" y="${(y + 3.2).toFixed(1)}">${s}</text>`;
   }).join('');
 
   const naechstes = kommendeSonnenMarke(ev, jetzt);
 
   ziel.innerHTML = `
-    <svg viewBox="0 0 200 200" class="uhr-svg" role="img"
+    <svg viewBox="-8 -8 216 216" class="uhr-svg" role="img"
          aria-label="Tagesverlauf von Sonne und Mond als Ring">
       ${stundenMarken}
+      ${stundenZahlen}
       ${sonneRing}
       ${mondRing}
       <circle class="uhr-punkt-aussen" cx="${sx.toFixed(1)}" cy="${sy.toFixed(1)}" r="5.5"/>
       <circle class="uhr-punkt-innen" cx="${mx.toFixed(1)}" cy="${my.toFixed(1)}" r="3.6"
               opacity="${mondJetzt ? 1 : 0.3}"/>
-      <text class="uhr-t12" x="100" y="9">12</text>
-      <text class="uhr-t0"  x="100" y="197">0</text>
-      <text class="uhr-t6"  x="4"   y="103">6</text>
-      <text class="uhr-t18" x="196" y="103">18</text>
     </svg>
     <div class="uhr-mitte">
       <span class="uhr-zeit">${hhmm(jetzt)}</span>
@@ -2467,20 +2644,82 @@ function renderSonnenbogen() {
   const bahn = sonnenBahn(tagStart, place.lat, place.lon);
   const hell = bahn.filter(p => p.alt > -7);
 
-  // Ausschnitt so wählen, dass der helle Teil den Bogen füllt — im Winter
-  // steht die Sonne nur zwischen Südost und Südwest, im Sommer viel weiter.
-  const azWerte = (hell.length ? hell : bahn).map(p => p.az);
+  /* Der Mond steht dann am Himmel, wenn die Sonne es nicht tut — ohne ihn
+     wäre die Ansicht nachts leer. Anders als die Sonne hält er sich aber
+     nicht an den Kalendertag: Er geht abends auf und morgens wieder unter.
+     Deshalb wird nicht der Tag gezeigt, sondern der eine Bogen, der gerade
+     zählt — der laufende, sonst der nächste. */
+  const mond = (() => {
+    const alle = [];
+    let letzte = null, versatz = 0;
+    for (let m = -840; m <= 1800; m += 4) {
+      const t = new Date(jetzt.getTime() + m * 60000);
+      const mh = moonHorizont(t, place.lat, place.lon);
+      let az = mh.azimut + versatz;
+      if (letzte != null && az - letzte < -180) { versatz += 360; az += 360; }
+      letzte = az;
+      alle.push({ t, alt: mh.hoehe, az });
+    }
+    // Zusammenhängende Abschnitte über dem Horizont heraussuchen
+    const boegen = [];
+    let lauf = null;
+    for (const p of alle) {
+      if (p.alt > -1) { if (!lauf) boegen.push(lauf = []); lauf.push(p); }
+      else lauf = null;
+    }
+    const b = boegen.find(x => x[0].t <= jetzt && x[x.length - 1].t >= jetzt)
+           || boegen.find(x => x[0].t > jetzt) || [];
+    if (!b.length || !hell.length) return b;
+    /* Sonne und Mond wurden ab verschiedenen Zeitpunkten aufgedreht und
+       liegen dadurch womöglich ganze Umdrehungen auseinander. Den Mondbogen
+       als Ganzes auf die Umdrehung der Sonne schieben — nur so passen beide
+       auf dieselbe Skala. */
+    const sonneMitte = (Math.min(...hell.map(p => p.az)) + Math.max(...hell.map(p => p.az))) / 2;
+    const mondMitte = (b[0].az + b[b.length - 1].az) / 2;
+    const k = Math.round((sonneMitte - mondMitte) / 360);
+    return k ? b.map(p => ({ ...p, az: p.az + k * 360 })) : b;
+  })();
+  const mondOben = mond.filter(p => p.alt > 0);
+
+  // Ausschnitt so wählen, dass beide Bahnen hineinpassen — im Winter steht
+  // die Sonne nur zwischen Südost und Südwest, im Sommer viel weiter.
+  const azWerte = [...(hell.length ? hell : bahn), ...mondOben].map(p => p.az);
   const azMin = Math.min(...azWerte) - 12, azMax = Math.max(...azWerte) + 12;
-  const altMax = Math.max(14, Math.max(...bahn.map(p => p.alt)) + 8);
+  const altMax = Math.max(14, Math.max(...bahn.map(p => p.alt),
+                                       ...mondOben.map(p => p.alt)) + 8);
   const altMin = -10;
 
   const X = (az) => BOGEN.padX + (az - azMin) / (azMax - azMin) * (BOGEN.w - 2 * BOGEN.padX);
   const Y = (alt) => BOGEN.horizont - (alt - 0) / (altMax - 0) * (BOGEN.horizont - BOGEN.oben);
-  bogenBahn = bahn;
+  /* Zum Abfahren beide Bahnen als Bildpunkte vorhalten. Der Finger sucht
+     sich die nächstgelegene Stelle — auf der Sonnenbahn tagsüber, auf der
+     Mondbahn nachts. */
+  bogenBahn = [
+    ...hell.map(p => ({ t: p.t, alt: p.alt, az: p.az, art: 'sonne', x: X(p.az), y: Y(p.alt) })),
+    ...mond.map(p => ({ t: p.t, alt: p.alt, az: p.az, art: 'mond', x: X(p.az), y: Y(p.alt) }))
+  ];
   bogenMap = { X, Y, azMin, azMax, altMax, altMin };
 
   const punkte = hell.map(p => `${X(p.az).toFixed(1)},${Y(p.alt).toFixed(1)}`);
   const linie = punkte.length ? `M${punkte.join(' L')}` : '';
+
+  const mondPunkte = mond.map(p => `${X(p.az).toFixed(1)},${Y(p.alt).toFixed(1)}`);
+  const mondLinie = mondPunkte.length > 1 ? `M${mondPunkte.join(' L')}` : '';
+  // Der Mond an seiner jetzigen Stelle, mit der Phase als Schatten darauf
+  const mJetzt = moonHorizont(jetzt, place.lat, place.lon);
+  const mp = moonPhase(jetzt);
+  const mAz = [-720, -360, 0, 360, 720].map(k => mJetzt.azimut + k)
+    .find(a => a >= azMin && a <= azMax);
+  let mondScheibe = '';
+  if (mJetzt.hoehe > -2 && mAz != null) {
+    const cx = X(mAz), cy = Y(mJetzt.hoehe), r = 6.5;
+    const schatten = cx + (mp.anteil < 0.5 ? -1 : 1) * (1 - mp.beleuchtet) * 2 * r;
+    mondScheibe = `
+      <clipPath id="bgMondRund"><circle cx="${cx.toFixed(1)}" cy="${cy.toFixed(1)}" r="${r}"/></clipPath>
+      <circle class="bg-mondscheibe" cx="${cx.toFixed(1)}" cy="${cy.toFixed(1)}" r="${r}"/>
+      <circle class="bg-mondschatten" cx="${schatten.toFixed(1)}" cy="${cy.toFixed(1)}" r="${r}"
+              clip-path="url(#bgMondRund)" opacity="${mp.beleuchtet > 0.97 ? 0 : 1}"/>`;
+  }
   const flaeche = punkte.length
     ? `${linie} L${X(hell[hell.length - 1].az).toFixed(1)},${Y(0).toFixed(1)}
        L${X(hell[0].az).toFixed(1)},${Y(0).toFixed(1)} Z` : '';
@@ -2527,6 +2766,8 @@ function renderSonnenbogen() {
       <line class="bg-horizont" x1="${BOGEN.padX - 8}" y1="${BOGEN.horizont}"
             x2="${BOGEN.w - BOGEN.padX + 8}" y2="${BOGEN.horizont}"/>
       ${richtungen}
+      ${mondLinie ? `<path class="bg-mondlinie" d="${mondLinie.trim()}" fill="none"/>` : ''}
+      ${mondScheibe}
       ${linie ? `<path class="bg-linie" d="${linie}" fill="none"/>` : ''}
       ${marke(auf, hhmm(auf.t))}
       ${marke(unter, hhmm(unter.t))}
@@ -2551,15 +2792,31 @@ function bogenText(p) {
   if (!p) {
     const jetzt = new Date();
     const alt = sunAltitude(jetzt, place.lat, place.lon);
-    el.innerHTML = alt > -0.833
-      ? `Jetzt <b>${alt.toFixed(0)}°</b> hoch ${himmelsrichtung(sunAzimut(jetzt, place.lat, place.lon))}
-         <i>— mit dem Finger über den Bogen fahren</i>`
-      : `Die Sonne steht unter dem Horizont. <i>Mit dem Finger über den Bogen fahren</i>`;
+    /* Ohne Finger nur der Hinweis — wie hoch die Sonne gerade steht, sagt
+       schon die Zeile unter der Ansicht. Zweimal dasselbe liest sich schlecht. */
+    const m = moonHorizont(jetzt, place.lat, place.lon);
+    el.innerHTML = (m.hoehe > 0
+        ? `Mond <b>${m.hoehe.toFixed(0)}°</b> hoch ${himmelsrichtung(m.azimut)}<br>` : '')
+      + `<i>Mit dem Finger über die Bahn fahren — für jede Stelle Uhrzeit, Winkel und Schatten.</i>`;
+    return;
+  }
+  if (p.art === 'mond') {
+    const tag = p.t.toDateString() !== new Date().toDateString()
+      ? p.t.toLocaleDateString('de-DE', { weekday: 'short' }) + ' ' : '';
+    const stand = p.alt < 0.5 ? `am Horizont ${himmelsrichtung(p.az)}`
+                              : `${p.alt.toFixed(0)}° hoch ${himmelsrichtung(p.az)}`;
+    el.innerHTML = `<b>${tag}${hhmm(p.t)}</b> · Mond ${stand}`
+      + `<br><i>${moonPhase(p.t).name}, ${Math.round(moonPhase(p.t).beleuchtet * 100)} % beleuchtet</i>`;
     return;
   }
   const s = schattenText(p.alt);
-  el.innerHTML = `<b>${hhmm(p.t)}</b> · ${p.alt > -0.833 ? `${p.alt.toFixed(0)}° hoch` : 'unter dem Horizont'}
-    ${himmelsrichtung(p.az)}${s ? ` · ${s}` : ''}`;
+  const m = moonHorizont(p.t, place.lat, place.lon);
+  el.innerHTML = `<b>${hhmm(p.t)}</b> · Sonne ${p.alt > -0.833
+      ? `${p.alt.toFixed(0)}° hoch ${himmelsrichtung(p.az)}${s ? ` · ${s}` : ''}`
+      : `unter dem Horizont`}`
+    + (m.hoehe > 0
+        ? `<br><i>Mond ${m.hoehe.toFixed(0)}° hoch ${himmelsrichtung(m.azimut)}</i>`
+        : '');
 }
 
 function bogenAbfahrenBinden() {
@@ -2571,16 +2828,19 @@ function bogenAbfahrenBinden() {
     const b = svg.getBoundingClientRect();
     const t = ev.touches?.[0] || ev.changedTouches?.[0] || ev;
     const x = (t.clientX - b.left) / b.width * BOGEN.w;
-    // Nächstgelegener Punkt der Bahn — der Finger muss nicht genau treffen
+    const y = (t.clientY - b.top) / b.height * BOGEN.h;
+    /* Nächstgelegener Punkt in der Fläche: Der senkrechte Abstand zählt nur
+       halb, damit man nicht ständig auf die andere Bahn springt, wenn beide
+       übereinanderliegen. */
     let beste = null, dist = Infinity;
     for (const p of bogenBahn) {
-      if (p.alt < -7) continue;
-      const d = Math.abs(bogenMap.X(p.az) - x);
+      const d = (p.x - x) ** 2 + ((p.y - y) * 0.5) ** 2;
       if (d < dist) { dist = d; beste = p; }
     }
     if (!beste) return;
-    const px = bogenMap.X(beste.az), py = bogenMap.Y(beste.alt);
+    const px = beste.x, py = beste.y;
     griff.hidden = false;
+    griff.classList.toggle('ist-mond', beste.art === 'mond');
     griff.querySelector('.bg-griff').setAttribute('cx', px.toFixed(1));
     griff.querySelector('.bg-griff').setAttribute('cy', py.toFixed(1));
     const lot = griff.querySelector('.bg-lot');
