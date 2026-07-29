@@ -2177,20 +2177,24 @@ const CAM_FEST = [
   { name: 'Tübingen · Markt (Silberburg)',
     url: 'https://www.tuemarkt.de/webcam/marktplatz-tuebingen.jpg',
     quelle: 'https://www.tuemarkt.de/Erleben/Webcam_Marktplatz.html', ort: 'zweite Perspektive' },
+  { name: 'Ammerbuch · Flugplatz Poltringen',
+    url: 'https://images.bergfex.at/webcams/?id=5720&format=4',
+    quelle: 'https://www.bergfex.de/sommer/schwaebische-alb/webcams/', ort: '11 km westlich' },
+  { name: 'Reutlingen · Marktplatz',
+    url: 'https://images.bergfex.at/webcams/?id=17061&format=4',
+    quelle: 'https://www.reutlingen.de/webcam', ort: '12 km östlich' },
+  { name: 'Reutlingen · Stadthalle',
+    url: 'https://www.reutlingen.de/webcam/stadthalle/showImage.php5',
+    quelle: 'https://www.reutlingen.de/webcam', ort: '12 km östlich' },
+  { name: 'Bronnweiler',
+    url: 'https://images.bergfex.at/webcams/?id=24162&format=4',
+    quelle: 'https://www.bergfex.de/sommer/schwaebische-alb/webcams/', ort: '13 km südöstlich' },
+  { name: 'St. Johann · Alb',
+    url: 'https://images.bergfex.at/webcams/?id=14893&format=4',
+    quelle: 'https://www.bergfex.de/sommer/schwaebische-alb/webcams/', ort: '21 km östlich, Feuerwehrturm' },
   { name: 'Burg Hohenzollern',
     url: 'https://www.c-mor.de/burg-hohenzollern/hohenzollern-webcam-live.jpg',
-    quelle: 'https://www.zollerblick.de/', ort: '23 km südlich' },
-  { name: 'Buchkopfturm · Oppenau',
-    url: 'https://www.foto-webcam.eu/webcam/buchkopfturm/current/640.jpg',
-    quelle: 'https://www.foto-webcam.eu/webcam/buchkopfturm/',
-    ort: 'Schwarzwald, 65 km westlich', pflichtQuelle: true },
-  { name: 'Bad Peterstal · Windbeutelbaron',
-    url: 'https://www.foto-webcam.eu/webcam/windbeutelbaron/current/640.jpg',
-    quelle: 'https://www.foto-webcam.eu/webcam/windbeutelbaron/',
-    ort: 'Schwarzwald, 62 km westlich', pflichtQuelle: true },
-  { name: 'Brendturm · Furtwangen',
-    url: 'https://panodata.panomax.com/cams/519/preview_og.jpg',
-    quelle: 'https://brendturm.panomax.com/', ort: 'Schwarzwald, 83 km südwestlich' }
+    quelle: 'https://www.zollerblick.de/', ort: '23 km südlich' }
 ];
 
 /** Portale ohne einbettbares Bild — als Verweis. */
@@ -2940,21 +2944,19 @@ function losgehenZeile() {
   if (jetzt > unter) return '';                       // heute vorbei
 
   const bis = Math.round((start - jetzt) / 60000);
-  const gehZeit = (minuten) => hhmm(new Date(start - minuten * 60000));
+  const dauer = Math.round((unter - start) / 60000);
 
   /* Kein data-t hier: Der Countdown-Takt schreibt in jedes Element mit diesem
      Attribut die Restzeit und würde den ganzen Block überschreiben. */
   return `<div class="cd-losgehen">
     <span class="cl-kopf">🌅 Für den Sonnenuntergang</span>
     <span class="cl-haupt">${bis > 0
-      ? `Schönes Licht ab <b>${hhmm(start)}</b> — in ${bis > 90
+      ? `Ab <b>${hhmm(start)}</b> dort sein — in ${bis > 90
           ? `${Math.floor(bis / 60)} Std. ${String(bis % 60).padStart(2, '0')} Min.` : `${bis} Min.`}`
-      : `Das gute Licht läuft <b>jetzt gerade</b> — bis ${hhmm(unter)}`}</span>
-    <span class="cl-weg">
-      Bei 20 Min. Weg um <b>${gehZeit(20)}</b> los ·
-      bei 45 Min. um <b>${gehZeit(45)}</b> ·
-      bei einer Stunde um <b>${gehZeit(60)}</b>
-    </span>
+      : `Das gute Licht läuft <b>jetzt gerade</b>`}</span>
+    <span class="cl-weg">Dann beginnt die goldene Stunde: ${dauer} Minuten warmes Licht
+      bis zum Untergang um ${hhmm(unter)}. Danach die blaue Stunde, oft mit den
+      kräftigsten Farben.</span>
   </div>`;
 }
 
