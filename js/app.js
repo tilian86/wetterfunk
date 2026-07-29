@@ -1574,7 +1574,12 @@ const EXPLAIN = {
         + 'bis 50 % heiter, bis 80 % bewölkt, darüber bedeckt. Für Sternenbeobachtung sollte '
         + 'der Wert unter 30 % liegen.' },
   sonne: { titel: 'Sonnenverlauf',
-    text: 'Der Bogen zeigt den Weg der Sonne über den Himmel und wo sie gerade steht. '
+    text: 'Zwei Ansichten desselben Tages, zum Umschalten oder Wischen. Die Ringuhr läuft '
+        + 'einmal in 24 Stunden um, Mitternacht unten, Mittag oben: Der äußere Ring färbt '
+        + 'Nacht, Dämmerung und Tag, der innere zeigt, wann der Mond über dem Horizont steht. '
+        + 'Die Sonnenbahn zeigt dasselbe von der Seite — waagerecht die Himmelsrichtung, '
+        + 'senkrecht der Winkel über dem Horizont. Fährt man mit dem Finger darüber, stehen '
+        + 'zu jeder Stelle Uhrzeit, Winkel, Richtung und Schattenlänge. '
         + 'Die Sonnenscheindauer ist die Zeit ohne verdeckende Wolken — sie ist meist kürzer '
         + 'als die Tageslänge.' },
   licht: { titel: 'Goldene und blaue Stunde',
@@ -1951,6 +1956,20 @@ function openDaySheet(i) {
    welchem Haus die Sonne untergeht. */
 let arLauf = null, arStream = null, arVersatz = null;
 
+/* Der eigene Standort, nicht der eingestellte Ort: Man steht ja vor Ort und
+   will wissen, wo hier die Sonne langläuft. Fällt GPS aus, gilt der Ort aus
+   der App — dann stimmt es nur, wenn man tatsächlich dort ist. */
+let arOrtPos = null;
+
+/* Ausgleich für den Kompass. Handymagnetometer liegen oft 10–20° daneben,
+   und Eisen in der Nähe verzerrt zusätzlich. Wer die Sonne sieht und antippt,
+   sagt dem Gerät, wo sie wirklich steht — der Versatz gilt danach für alle
+   weiteren Messungen. */
+const arKorrektur = () => ({
+  azimut: store.get('wf.arAz', 0),
+  hoehe: store.get('wf.arHo', 0)
+});
+
 async function arStarten() {
   const back = $('#arBack');
   if (!back || !place) return;
@@ -1981,11 +2000,18 @@ async function arStarten() {
 
   back.hidden = false;
   document.body.classList.add('ar-offen');
-  $('#arOrt').textContent = `${place.name} · ${new Date().toLocaleDateString('de-DE',
-    { day: 'numeric', month: 'long' })}`;
-  $('#arHinweis').textContent = lageOk
-    ? 'Halte das Gerät hoch und drehe dich langsam.'
-    : 'Ohne Lagesensor wird die Bahn nur grob gezeigt — Richtung von Hand suchen.';
+  arOrtPos = null;
+  arOrtAnzeigen();
+
+  // Echten Standort holen — die Bahn hängt an Breite und Länge
+  navigator.geolocation?.getCurrentPosition((pos) => {
+    arOrtPos = { lat: pos.coords.latitude, lon: pos.coords.longitude };
+    arOrtAnzeigen();
+  }, () => {}, { enableHighAccuracy: true, timeout: 8000, maximumAge: 3e5 });
+  const k = arKorrektur();
+  $('#arKal').hidden = Math.abs(k.azimut) < 0.5 && Math.abs(k.hoehe) < 0.5;
+  arHinweisText();
+  if (!lageOk) $('#arHinweis').textContent = 'Ohne Lagesensor wird die Bahn nur grob gezeigt.';
 
   const zeitRegler = $('#arZeit');
   zeitRegler.value = String(new Date().getHours() * 60 + new Date().getMinutes());
@@ -1995,6 +2021,86 @@ async function arStarten() {
 
   starteLage();
   arZeichnen();
+}
+
+/** Position, mit der gerechnet wird — GPS wenn vorhanden, sonst der Ort. */
+const arPos = () => arOrtPos || { lat: place.lat, lon: place.lon };
+
+/** Zustand des letzten Bildes — Grundlage für das Einmessen. */
+let arLetzteSonne = null;
+
+/* Einmessen: Der Finger zeigt auf die echte Sonne, die App weiß, wo sie sie
+   vermutet. Die Differenz ist der Fehler von Kompass und Neigungsmesser und
+   wird für alle weiteren Messungen abgezogen. */
+function arEinmessen(e) {
+  if (!arLetzteSonne || arLetzteSonne.blick == null) {
+    toast('Ohne Kompass lässt sich nichts einmessen.', 3500);
+    return;
+  }
+  if (arLetzteSonne.hoehe < -1) {
+    toast('Die Sonne ist unter dem Horizont — einmessen geht nur, wenn du sie siehst.', 4000);
+    return;
+  }
+  const back = $('#arBack');
+  const b = back.getBoundingClientRect();
+  const t = e.touches?.[0] || e.changedTouches?.[0] || e;
+  const x = t.clientX - b.left, y = t.clientY - b.top;
+
+  const { azi, hoehe, proGrad, mitteY, breite } = arLetzteSonne;
+
+  // Bildpunkt zurück in Himmelskoordinaten rechnen
+  const getipptAb = (x - breite / 2) / proGrad;          // Grad neben der Blickmitte
+  const getipptHoehe = (mitteY - y) / proGrad;
+
+  // Wo die App die Sonne vermutet hat
+  let sollAb = azi - arLetzteSonne.blick;
+  while (sollAb > 180) sollAb -= 360;
+  while (sollAb < -180) sollAb += 360;
+
+  const azVersatz = store.get('wf.arAz', 0) + (getipptAb - sollAb);
+  const hoVersatz = store.get('wf.arHo', 0) + (getipptHoehe - hoehe);
+
+  // Über 45° ist es kein Messfehler mehr, sondern ein Fehlgriff
+  if (Math.abs(getipptAb - sollAb) > 45 || Math.abs(getipptHoehe - hoehe) > 45) {
+    toast('Das liegt zu weit auseinander. Drehe dich erst zur Sonne, dann genau darauf tippen.', 4500);
+    return;
+  }
+
+  store.set('wf.arAz', Math.round(azVersatz * 10) / 10);
+  store.set('wf.arHo', Math.round(hoVersatz * 10) / 10);
+  $('#arKal').hidden = false;
+  toast('Eingemessen. Die Bahn sitzt jetzt auf der Sonne.', 3000);
+  arHinweisText();
+}
+
+function arKalibrierungLoeschen() {
+  store.set('wf.arAz', 0);
+  store.set('wf.arHo', 0);
+  $('#arKal').hidden = true;
+  toast('Einmessung zurückgesetzt.');
+  arHinweisText();
+}
+
+function arHinweisText() {
+  const el = $('#arHinweis');
+  if (!el) return;
+  const k = arKorrektur();
+  const eingemessen = Math.abs(k.azimut) > 0.5 || Math.abs(k.hoehe) > 0.5;
+  el.innerHTML = eingemessen
+    ? `Eingemessen: ${k.azimut > 0 ? '+' : ''}${dez(k.azimut)}° Richtung, ${
+        k.hoehe > 0 ? '+' : ''}${dez(k.hoehe)}° Höhe.`
+    : (arLage.richtung == null
+        ? 'Kompass nicht verfügbar — die Richtung fehlt.'
+        : 'Siehst du die Sonne? Tippe genau darauf, dann sitzt die Bahn richtig.');
+}
+
+function arOrtAnzeigen() {
+  const el = $('#arOrt');
+  if (!el) return;
+  const datum = new Date().toLocaleDateString('de-DE', { day: 'numeric', month: 'long' });
+  el.textContent = arOrtPos
+    ? `Dein Standort · ${datum}`
+    : `${place.name} · ${datum}`;
 }
 
 function arZeitText() {
@@ -2048,8 +2154,10 @@ function arZeichnen() {
   g.clearRect(0, 0, b.width, b.height);
 
   const proGrad = b.width / 65;
-  const blick = arLage.richtung;
-  const mitteY = b.height / 2 + arLage.neigung * proGrad;
+  const kor = arKorrektur();
+  // Gemessene Richtung um den beim Antippen gefundenen Versatz bereinigen
+  const blick = arLage.richtung == null ? null : arLage.richtung - kor.azimut;
+  const mitteY = b.height / 2 + (arLage.neigung - kor.hoehe) * proGrad;
 
   /* Bildposition eines Himmelspunkts. null, wenn er hinter einem liegt. */
   const punkt = (azimut, hoehe) => {
@@ -2061,12 +2169,13 @@ function arZeichnen() {
     return [b.width / 2 + ab * proGrad, mitteY - hoehe * proGrad];
   };
 
+  const ort = arPos();
   const tagStart = new Date(); tagStart.setHours(0, 0, 0, 0);
   const bahn = [];
   for (let m = 0; m <= 1440; m += 10) {
     const t = new Date(tagStart.getTime() + m * 60000);
-    const hoehe = sunAltitude(t, place.lat, place.lon);
-    const azi = sunAzimut(t, place.lat, place.lon);
+    const hoehe = sunAltitude(t, ort.lat, ort.lon);
+    const azi = sunAzimut(t, ort.lat, ort.lon);
     bahn.push({ t, m, hoehe, azi, p: punkt(azi, hoehe) });
   }
 
@@ -2112,8 +2221,8 @@ function arZeichnen() {
 
   // Die Sonne zum gewählten Zeitpunkt
   const zeit = arVersatz == null ? new Date() : new Date(tagStart.getTime() + arVersatz * 60000);
-  const sHoehe = sunAltitude(zeit, place.lat, place.lon);
-  const sAzi = sunAzimut(zeit, place.lat, place.lon);
+  const sHoehe = sunAltitude(zeit, ort.lat, ort.lon);
+  const sAzi = sunAzimut(zeit, ort.lat, ort.lon);
   const sp = punkt(sAzi, sHoehe);
   if (sp) {
     const schein = g.createRadialGradient(sp[0], sp[1], 4, sp[0], sp[1], 46);
@@ -2130,6 +2239,9 @@ function arZeichnen() {
     g.font = '600 12px -apple-system, sans-serif';
     g.fillText(`${sHoehe.toFixed(0)}° · ${sAzi.toFixed(0)}°`, sp[0], sp[1] + 38);
   }
+
+  arLetzteSonne = { azi: sAzi, hoehe: sHoehe, bild: sp, proGrad, mitteY,
+                    breite: b.width, blick };
 
   // Wenn nichts im Bild ist, in welche Richtung man sich drehen muss
   if (blick != null && !sp) {
@@ -2312,6 +2424,232 @@ function kommendeSonnenMarke(ev, jetzt) {
   return liste[0] || null;
 }
 
+/* ── Sonnenbahn: derselbe Tag, andere Frage ────────────────────
+   Die Ringuhr beantwortet „wann", der Bogen „wo am Himmel und wie hoch".
+   Waagerecht die Himmelsrichtung, senkrecht der Winkel über dem Horizont.
+   Mit dem Finger abfahrbar: an jeder Stelle stehen Uhrzeit, Winkel,
+   Richtung und Schattenlänge. */
+const BOGEN = { w: 300, h: 172, padX: 18, oben: 16, horizont: 122 };
+
+/** Höhe und Richtung der Sonne, alle vier Minuten über den ganzen Tag.
+    Der Azimut wird fortlaufend gemacht (aufgedreht), damit der Sprung von
+    359° auf 0° in der Polarsonne keine Zacke in die Kurve reißt. */
+function sonnenBahn(tagStart, lat, lon) {
+  const punkte = [];
+  let letzte = null, versatz = 0;
+  for (let m = 0; m <= 1440; m += 4) {
+    const t = new Date(tagStart.getTime() + m * 60000);
+    let az = sunAzimut(t, lat, lon) + versatz;
+    if (letzte != null && az - letzte < -180) { versatz += 360; az += 360; }
+    letzte = az;
+    punkte.push({ t, alt: sunAltitude(t, lat, lon), az });
+  }
+  return punkte;
+}
+
+/** Schattenlänge eines 1,80-m-Menschen. Über 20 m wird die Zahl sinnlos. */
+function schattenText(grad) {
+  if (grad <= 1) return null;
+  const l = 1.8 / Math.tan(grad * Math.PI / 180);
+  if (l > 20) return 'Schatten länger als 20 m';
+  return `Schatten ${dez(l)} m`;
+}
+
+let bogenBahn = null;          // Punkte des aktuellen Tages
+let bogenMap = null;           // Umrechnung Punkt → Bildkoordinate
+
+function renderSonnenbogen() {
+  const ziel = $('#sonnenbogen');
+  if (!ziel || !place) return;
+
+  const jetzt = new Date();
+  const tagStart = new Date(jetzt); tagStart.setHours(0, 0, 0, 0);
+  const bahn = sonnenBahn(tagStart, place.lat, place.lon);
+  const hell = bahn.filter(p => p.alt > -7);
+
+  // Ausschnitt so wählen, dass der helle Teil den Bogen füllt — im Winter
+  // steht die Sonne nur zwischen Südost und Südwest, im Sommer viel weiter.
+  const azWerte = (hell.length ? hell : bahn).map(p => p.az);
+  const azMin = Math.min(...azWerte) - 12, azMax = Math.max(...azWerte) + 12;
+  const altMax = Math.max(14, Math.max(...bahn.map(p => p.alt)) + 8);
+  const altMin = -10;
+
+  const X = (az) => BOGEN.padX + (az - azMin) / (azMax - azMin) * (BOGEN.w - 2 * BOGEN.padX);
+  const Y = (alt) => BOGEN.horizont - (alt - 0) / (altMax - 0) * (BOGEN.horizont - BOGEN.oben);
+  bogenBahn = bahn;
+  bogenMap = { X, Y, azMin, azMax, altMax, altMin };
+
+  const punkte = hell.map(p => `${X(p.az).toFixed(1)},${Y(p.alt).toFixed(1)}`);
+  const linie = punkte.length ? `M${punkte.join(' L')}` : '';
+  const flaeche = punkte.length
+    ? `${linie} L${X(hell[hell.length - 1].az).toFixed(1)},${Y(0).toFixed(1)}
+       L${X(hell[0].az).toFixed(1)},${Y(0).toFixed(1)} Z` : '';
+
+  // Waagerechte Hilfslinien für den Winkel
+  const stufen = [30, 60].filter(g => g < altMax - 4);
+  const gitter = stufen.map(g => `
+    <line class="bg-gitter" x1="${BOGEN.padX}" y1="${Y(g).toFixed(1)}"
+          x2="${BOGEN.w - BOGEN.padX}" y2="${Y(g).toFixed(1)}"/>
+    <text class="bg-gradtext" x="${BOGEN.w - BOGEN.padX + 2}" y="${(Y(g) + 3).toFixed(1)}">${g}°</text>`).join('');
+
+  // Himmelsrichtungen unter dem Horizont
+  const kurz = ['N', 'NO', 'O', 'SO', 'S', 'SW', 'W', 'NW'];
+  let richtungen = '';
+  for (let a = Math.ceil(azMin / 45) * 45; a <= azMax; a += 45) {
+    const x = X(a);
+    richtungen += `<line class="bg-tick" x1="${x.toFixed(1)}" y1="${BOGEN.horizont}"
+      x2="${x.toFixed(1)}" y2="${BOGEN.horizont + 4}"/>
+      <text class="bg-himmel" x="${x.toFixed(1)}" y="${BOGEN.horizont + 15}">${kurz[((a / 45) % 8 + 8) % 8]}</text>`;
+  }
+
+  // Auf-, Untergang und Höchststand als feste Marken
+  const marke = (p, txt) => p ? `
+    <circle class="bg-marke" cx="${X(p.az).toFixed(1)}" cy="${Y(p.alt).toFixed(1)}" r="2.6"/>
+    <text class="bg-markentext" x="${X(p.az).toFixed(1)}" y="${(Y(p.alt) - 7).toFixed(1)}">${txt}</text>` : '';
+  const hoch = bahn.reduce((a, b) => (b.alt > a.alt ? b : a), bahn[0]);
+  const auf = hell.find(p => p.alt > -0.833);
+  const unter = [...hell].reverse().find(p => p.alt > -0.833);
+
+  const jetztP = bahn.reduce((a, b) => (Math.abs(b.t - jetzt) < Math.abs(a.t - jetzt) ? b : a), bahn[0]);
+  const jetztSichtbar = jetztP.alt > -7;
+
+  ziel.innerHTML = `
+    <svg viewBox="0 0 ${BOGEN.w} ${BOGEN.h}" class="bogen-svg" role="img"
+         aria-label="Bahn der Sonne über den Himmel — zum Abfahren antippen">
+      <defs>
+        <linearGradient id="bgFuell" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0" stop-color="#ffd60a" stop-opacity=".28"/>
+          <stop offset="1" stop-color="#ffd60a" stop-opacity=".03"/>
+        </linearGradient>
+      </defs>
+      ${gitter}
+      ${flaeche ? `<path d="${flaeche}" fill="url(#bgFuell)"/>` : ''}
+      <line class="bg-horizont" x1="${BOGEN.padX - 8}" y1="${BOGEN.horizont}"
+            x2="${BOGEN.w - BOGEN.padX + 8}" y2="${BOGEN.horizont}"/>
+      ${richtungen}
+      ${linie ? `<path class="bg-linie" d="${linie}" fill="none"/>` : ''}
+      ${marke(auf, hhmm(auf.t))}
+      ${marke(unter, hhmm(unter.t))}
+      ${marke(hoch, `${hoch.alt.toFixed(0)}°`)}
+      ${jetztSichtbar ? `<circle class="bg-jetzt" cx="${X(jetztP.az).toFixed(1)}"
+            cy="${Y(jetztP.alt).toFixed(1)}" r="5"/>` : ''}
+      <g id="bogenGriff" hidden>
+        <line class="bg-lot" x1="0" y1="0" x2="0" y2="0"/>
+        <circle class="bg-griff" cx="0" cy="0" r="7"/>
+      </g>
+      <rect id="bogenFeld" x="0" y="0" width="${BOGEN.w}" height="${BOGEN.h}" fill="transparent"/>
+    </svg>`;
+
+  bogenText(null);
+  bogenAbfahrenBinden();
+}
+
+/** Zeile unter dem Bogen — ohne Finger der Stand von jetzt. */
+function bogenText(p) {
+  const el = $('#bogenText');
+  if (!el) return;
+  if (!p) {
+    const jetzt = new Date();
+    const alt = sunAltitude(jetzt, place.lat, place.lon);
+    el.innerHTML = alt > -0.833
+      ? `Jetzt <b>${alt.toFixed(0)}°</b> hoch ${himmelsrichtung(sunAzimut(jetzt, place.lat, place.lon))}
+         <i>— mit dem Finger über den Bogen fahren</i>`
+      : `Die Sonne steht unter dem Horizont. <i>Mit dem Finger über den Bogen fahren</i>`;
+    return;
+  }
+  const s = schattenText(p.alt);
+  el.innerHTML = `<b>${hhmm(p.t)}</b> · ${p.alt > -0.833 ? `${p.alt.toFixed(0)}° hoch` : 'unter dem Horizont'}
+    ${himmelsrichtung(p.az)}${s ? ` · ${s}` : ''}`;
+}
+
+function bogenAbfahrenBinden() {
+  const svg = $('#bogenFeld')?.ownerSVGElement;
+  const griff = $('#bogenGriff');
+  if (!svg || !griff || !bogenMap) return;
+
+  const nach = (ev) => {
+    const b = svg.getBoundingClientRect();
+    const t = ev.touches?.[0] || ev.changedTouches?.[0] || ev;
+    const x = (t.clientX - b.left) / b.width * BOGEN.w;
+    // Nächstgelegener Punkt der Bahn — der Finger muss nicht genau treffen
+    let beste = null, dist = Infinity;
+    for (const p of bogenBahn) {
+      if (p.alt < -7) continue;
+      const d = Math.abs(bogenMap.X(p.az) - x);
+      if (d < dist) { dist = d; beste = p; }
+    }
+    if (!beste) return;
+    const px = bogenMap.X(beste.az), py = bogenMap.Y(beste.alt);
+    griff.hidden = false;
+    griff.querySelector('.bg-griff').setAttribute('cx', px.toFixed(1));
+    griff.querySelector('.bg-griff').setAttribute('cy', py.toFixed(1));
+    const lot = griff.querySelector('.bg-lot');
+    lot.setAttribute('x1', px.toFixed(1)); lot.setAttribute('x2', px.toFixed(1));
+    lot.setAttribute('y1', py.toFixed(1)); lot.setAttribute('y2', BOGEN.horizont);
+    bogenText(beste);
+  };
+
+  const los = (ev) => {
+    ev.stopPropagation();
+    ev.preventDefault();
+    nach(ev);
+    const zug = (e) => { e.preventDefault(); nach(e); };
+    const ende = () => {
+      window.removeEventListener('pointermove', zug);
+      window.removeEventListener('pointerup', ende);
+      window.removeEventListener('pointercancel', ende);
+    };
+    window.addEventListener('pointermove', zug);
+    window.addEventListener('pointerup', ende);
+    window.addEventListener('pointercancel', ende);
+  };
+  svg.addEventListener('pointerdown', los);
+}
+
+/* Umschalter zwischen Ringuhr und Bogen. Der Wunsch bleibt gespeichert —
+   wer lieber den Bogen sieht, soll ihn nicht jedes Mal neu suchen. */
+let sonneAnsicht = 'uhr';
+function sonneAnsichtBinden() {
+  sonneAnsicht = store.get('wf.sonneAnsicht', 'uhr');
+  const buehne = $('#svBuehne');
+  if (!buehne) return;
+  const setzen = (v) => {
+    sonneAnsicht = v;
+    store.set('wf.sonneAnsicht', v);
+    buehne.style.transform = v === 'bogen' ? 'translateX(-50%)' : 'translateX(0)';
+    // Das Fenster wächst und schrumpft mit der gezeigten Tafel — sonst
+    // stünde unter dem flachen Bogen die Lücke der runden Uhr.
+    const tafel = buehne.children[v === 'bogen' ? 1 : 0];
+    if (tafel) buehne.parentElement.style.height = tafel.offsetHeight + 'px';
+    $$('.sv-tab').forEach(t => {
+      const an = t.dataset.view === v;
+      t.classList.toggle('is-an', an);
+      t.setAttribute('aria-selected', an ? 'true' : 'false');
+    });
+  };
+  $$('.sv-tab').forEach(t => {
+    t.onclick = (e) => { e.stopPropagation(); setzen(t.dataset.view); };
+  });
+
+  // Wischen zum Wechseln — aber nicht dort, wo der Finger den Bogen abfährt
+  let startX = null, startY = null;
+  buehne.addEventListener('touchstart', (e) => {
+    if (e.target.closest('.bogen-svg')) { startX = null; return; }
+    startX = e.touches[0].clientX; startY = e.touches[0].clientY;
+  }, { passive: true });
+  buehne.addEventListener('touchend', (e) => {
+    if (startX == null) return;
+    const dx = e.changedTouches[0].clientX - startX;
+    const dy = e.changedTouches[0].clientY - startY;
+    if (Math.abs(dx) > 45 && Math.abs(dx) > Math.abs(dy) * 1.5) {
+      setzen(dx < 0 ? 'bogen' : 'uhr');
+    }
+    startX = null;
+  }, { passive: true });
+
+  setzen(sonneAnsicht);
+}
+
 /* Sonnenbogen, Lichtphasen und Mond — gehören zum Countdown darüber und
    standen vorher als eigene Kacheln weiter unten, mit denselben Zeiten. */
 function renderSonneDetail() {
@@ -2335,7 +2673,19 @@ function renderSonneDetail() {
   const azimut = sunAzimut(new Date(), place.lat, place.lon);
   teile.push(`<div class="sm-block has-info" data-info="sonne" role="button" tabindex="0">
     <span class="sm-titel">Sonnenstand<i class="t-q">?</i></span>
-    <div class="uhr-wrap" id="sonnenuhr"></div>
+    <div class="sv-tabs" role="tablist">
+      <button class="sv-tab" data-view="uhr" role="tab">Ringuhr</button>
+      <button class="sv-tab" data-view="bogen" role="tab">Sonnenbahn</button>
+    </div>
+    <div class="sv-fenster">
+      <div class="sv-buehne" id="svBuehne">
+        <div class="sv-panel"><div class="uhr-wrap" id="sonnenuhr"></div></div>
+        <div class="sv-panel">
+          <div class="bogen-wrap" id="sonnenbogen"></div>
+          <p class="bogen-text" id="bogenText"></p>
+        </div>
+      </div>
+    </div>
     <span class="t-jetztwinkel">${jetztWinkel > -0.833
       ? `Jetzt <b>${jetztWinkel.toFixed(0)}°</b> über dem Horizont, ${himmelsrichtung(azimut)} — ${winkelWort(jetztWinkel)}`
       : `Sonne <b>${jetztWinkel.toFixed(0)}°</b> unter dem Horizont`}</span>
@@ -2385,8 +2735,15 @@ function renderSonneDetail() {
 
   ziel.innerHTML = teile.join('');
   renderSonnenuhr();          // braucht den Container aus teile
+  renderSonnenbogen();
+  sonneAnsichtBinden();
   $$('.sm-block.has-info', ziel).forEach(b => {
-    b.onclick = () => openExplain(b.dataset.info);
+    b.onclick = (e) => {
+      // Umschalter und der abfahrbare Bogen sind eigene Bedienelemente —
+      // sie sollen nicht die Erklärung öffnen.
+      if (e.target.closest('.sv-tabs, .bogen-wrap')) return;
+      openExplain(b.dataset.info);
+    };
   });
 }
 
@@ -3992,6 +4349,8 @@ function wire() {
   $('#installBtn')?.addEventListener('click', installAnstossen);
   $('#radarLegend')?.addEventListener('click', openEbenenHilfe);
   $('#arZu')?.addEventListener('click', arBeenden);
+  $('#arKal')?.addEventListener('click', (e) => { e.stopPropagation(); arKalibrierungLoeschen(); });
+  $('#arCanvas')?.addEventListener('click', arEinmessen);
   $('#shareBtn')?.addEventListener('click', wetterTeilen);
   $('#impressumBtn')?.addEventListener('click', openImpressum);
   $('#datenschutzBtn')?.addEventListener('click', openDatenschutz);

@@ -2016,3 +2016,65 @@ body.ar-offen { overflow: hidden; }
   text-align: right; font-variant-numeric: tabular-nums;
   text-shadow: 0 1px 4px rgba(0,0,0,.7);
 }
+
+/* Einmessen: Der Hinweis wird zum Knopf, wenn eine Korrektur aktiv ist */
+.ar-kal {
+  display: block; margin: 0 auto 12px; padding: 7px 14px;
+  background: rgba(255,255,255,.14); border: 1px solid rgba(255,255,255,.3);
+  border-radius: 30px; color: #fff; font: 500 11.5px var(--font); cursor: pointer;
+}
+.ar-kal[hidden] { display: none; }
+#arCanvas { cursor: crosshair; }
+
+/* ── Zwei Ansichten des Sonnenstands: Ringuhr und Bahn ───────── */
+.sv-tabs {
+  display: inline-flex; gap: 2px; margin: 8px auto 2px; padding: 2px;
+  background: rgba(255,255,255,.07); border-radius: 30px;
+}
+.sv-tab {
+  padding: 5px 13px; border: 0; border-radius: 30px; background: transparent;
+  color: var(--ink-dim); font: 500 11.5px var(--font); cursor: pointer;
+}
+.sv-tab.is-an { background: rgba(255,255,255,.16); color: var(--ink); }
+
+/* Zwei gleich breite Tafeln nebeneinander, eine im Bild */
+.sv-fenster {
+  overflow: hidden; margin: 0 -2px;
+  transition: height .32s cubic-bezier(.32,.72,0,1);
+}
+.sv-buehne {
+  display: flex; width: 200%; align-items: flex-start;
+  transition: transform .32s cubic-bezier(.32,.72,0,1);
+}
+.sv-panel { width: 50%; flex: 0 0 50%; padding: 0 2px; }
+
+/* Die Bahn bekommt dieselbe Höhe wie der Ring, damit beim Wischen
+   nichts springt. */
+.sv-panel:last-child {
+  display: flex; flex-direction: column; justify-content: center;
+}
+.bogen-wrap { width: 100%; max-width: 300px; margin: 0 auto; touch-action: pan-y; }
+.bogen-svg { width: 100%; height: auto; display: block; overflow: visible; }
+.bogen-svg text { stroke: none; text-anchor: middle; }
+
+.bg-horizont { stroke: rgba(255,255,255,.42); stroke-width: 1.2; }
+.bg-gitter { stroke: rgba(255,255,255,.12); stroke-width: 1; stroke-dasharray: 3 4; }
+.bg-tick { stroke: rgba(255,255,255,.3); stroke-width: 1; }
+.bg-gradtext { font: 500 8px var(--font); fill: var(--ink-faint); text-anchor: start; }
+.bg-himmel { font: 600 9px var(--font); fill: var(--ink-dim); }
+.bg-linie { stroke: #ffd60a; stroke-width: 2.2; stroke-linecap: round; }
+.bg-marke { fill: rgba(255,255,255,.8); }
+.bg-markentext { font: 600 8.5px var(--font); fill: var(--ink-faint); }
+.bg-jetzt {
+  fill: #fff; stroke: rgba(10,16,26,.85); stroke-width: 1.6;
+  filter: drop-shadow(0 0 6px rgba(255,214,10,.95));
+}
+.bg-griff { fill: rgba(255,255,255,.16); stroke: #fff; stroke-width: 2; }
+.bg-lot { stroke: rgba(255,255,255,.45); stroke-width: 1; stroke-dasharray: 2 3; }
+
+.bogen-text {
+  margin: 8px 0 0; text-align: center;
+  font-size: 12.5px; color: var(--ink); line-height: 1.5;
+  font-variant-numeric: tabular-nums; min-height: 2.6em;
+}
+.bogen-text i { font-style: normal; color: var(--ink-faint); font-size: 11px; }
