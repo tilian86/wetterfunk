@@ -1944,6 +1944,168 @@ function openDaySheet(i) {
 }
 
 
+/* ── Sonnenuhr: der ganze Tag als Ring ──────────────────────
+   Ein Halbbogen zeigt nur den hellen Teil. Der Ring fasst 24 Stunden: außen
+   die Sonne mit allen Dämmerungsstufen, innen der Mond, in der Mitte die
+   Zeit. Mitternacht unten, Mittag oben — wie eine Uhr, die einmal am Tag
+   umläuft statt zweimal. */
+const UHR = { r: 86, ring: 15, innen: 66, mondRing: 9, mitte: 100 };
+
+/** Zeit → Winkel. 0 Uhr unten, 12 Uhr oben, im Uhrzeigersinn. */
+function uhrWinkel(datum, tagStart) {
+  const min = (datum - tagStart) / 60000;
+  return (min / 1440) * 360 - 180;
+}
+
+const polar = (grad, radius) => {
+  const b = (grad - 90) * Math.PI / 180;
+  return [UHR.mitte + radius * Math.cos(b), UHR.mitte + radius * Math.sin(b)];
+};
+
+/** Ringsegment zwischen zwei Winkeln. */
+function segment(von, bis, radius, breite, farbe) {
+  let spanne = bis - von;
+  if (spanne <= 0) spanne += 360;
+  if (spanne >= 359.9) {            // Vollkreis lässt sich nicht als Bogen zeichnen
+    return `<circle cx="${UHR.mitte}" cy="${UHR.mitte}" r="${radius}"
+      fill="none" stroke="${farbe}" stroke-width="${breite}"/>`;
+  }
+  const [x1, y1] = polar(von, radius);
+  const [x2, y2] = polar(von + spanne, radius);
+  const gross = spanne > 180 ? 1 : 0;
+  return `<path d="M${x1.toFixed(2)} ${y1.toFixed(2)} A ${radius} ${radius} 0 ${gross} 1 ${x2.toFixed(2)} ${y2.toFixed(2)}"
+    fill="none" stroke="${farbe}" stroke-width="${breite}" stroke-linecap="butt"/>`;
+}
+
+/** Gradzahl in eine Himmelsrichtung, wie man sie im Alltag nennt. */
+function himmelsrichtung(grad) {
+  const namen = ['Norden', 'Nordosten', 'Osten', 'Südosten',
+                 'Süden', 'Südwesten', 'Westen', 'Nordwesten'];
+  return `im ${namen[Math.round(((grad % 360) + 360) % 360 / 45) % 8]}`;
+}
+
+/** Himmelsrichtung der Sonne — sagt, wo sie auf- und untergeht. */
+function sunAzimut(date, lat, lon) {
+  const rad = Math.PI / 180;
+  const d = (date - Date.UTC(2000, 0, 1, 12)) / 86400000;
+  const g = (357.529 + 0.98560028 * d) * rad;
+  const q = (280.459 + 0.98564736 * d) * rad;
+  const L = q + (1.915 * Math.sin(g) + 0.020 * Math.sin(2 * g)) * rad;
+  const e = (23.439 - 0.00000036 * d) * rad;
+  const dec = Math.asin(Math.sin(e) * Math.sin(L));
+  const ra = Math.atan2(Math.cos(e) * Math.sin(L), Math.cos(L));
+  const gmst = (18.697374558 + 24.06570982441908 * d) % 24;
+  const H = ((gmst * 15 + lon) % 360) * rad - ra;
+  const la = lat * rad;
+  const az = Math.atan2(Math.sin(H), Math.cos(H) * Math.sin(la) - Math.tan(dec) * Math.cos(la));
+  return (az / rad + 180) % 360;
+}
+
+function renderSonnenuhr() {
+  const ziel = $('#sonnenuhr');
+  if (!ziel || !place) return '';
+
+  const jetzt = new Date();
+  const tagStart = new Date(jetzt); tagStart.setHours(0, 0, 0, 0);
+  const ev = sunEvents(jetzt, place.lat, place.lon);
+  const w = (t) => (t ? uhrWinkel(new Date(t), tagStart) : null);
+
+  /* Von Mitternacht aus aufgebaut: Nacht, dann die Dämmerungsstufen hinein
+     in den Tag und wieder heraus. Fehlt eine Marke (Polarsommer), bleibt der
+     darunterliegende Ton stehen. */
+  const stufen = [
+    { bis: w(ev.astroDaemmerung),     farbe: '#141d16' },   // Nacht
+    { bis: w(ev.blaueStundeMorgen),   farbe: '#1b3a6b' },   // astronomische Dämmerung
+    { bis: w(ev.aufgang),             farbe: '#3f7fd4' },   // blaue Stunde
+    { bis: w(ev.goldenEndeMorgen),    farbe: '#ffb347' },   // goldene Stunde
+    { bis: w(ev.goldenStartAbend),    farbe: '#ffd60a' },   // Tag
+    { bis: w(ev.untergang),           farbe: '#ffb347' },
+    { bis: w(ev.blaueStundeEndeAbend), farbe: '#3f7fd4' },
+    { bis: w(ev.astroNacht),          farbe: '#1b3a6b' },
+    { bis: 180,                       farbe: '#141d16' }
+  ].filter(s => s.bis != null);
+
+  let sonneRing = segment(-180, 179.99, UHR.r, UHR.ring, '#141d16');   // Grundton
+  let start = -180;
+  for (const s of stufen) {
+    if (s.bis > start) sonneRing += segment(start, s.bis, UHR.r, UHR.ring, s.farbe);
+    start = s.bis;
+  }
+
+  // Mondring: heller, solange der Mond über dem Horizont steht
+  const mondStufen = [];
+  let vorherOben = moonAltitude(tagStart, place.lat, place.lon) > 0;
+  let abschnitt = -180;
+  for (let m = 10; m <= 1440; m += 10) {
+    const t = new Date(tagStart.getTime() + m * 60000);
+    const oben = moonAltitude(t, place.lat, place.lon) > 0;
+    if (oben !== vorherOben) {
+      mondStufen.push({ von: abschnitt, bis: uhrWinkel(t, tagStart), oben: vorherOben });
+      abschnitt = uhrWinkel(t, tagStart);
+      vorherOben = oben;
+    }
+  }
+  mondStufen.push({ von: abschnitt, bis: 180, oben: vorherOben });
+
+  const mp = moonPhase();
+  let mondRing = '';
+  for (const s of mondStufen) {
+    mondRing += segment(s.von, s.bis, UHR.innen, UHR.mondRing,
+      s.oben ? `rgba(226,232,240,${(0.25 + mp.beleuchtet * 0.6).toFixed(2)})` : 'rgba(255,255,255,.06)');
+  }
+
+  // Zeiger und Marken
+  const jetztW = uhrWinkel(jetzt, tagStart);
+  const [sx, sy] = polar(jetztW, UHR.r);
+  const mt = moonTimes(jetzt, place.lat, place.lon);
+  const mondJetzt = moonAltitude(jetzt, place.lat, place.lon) > 0;
+  const [mx, my] = polar(jetztW, UHR.innen);
+
+  const stundenMarken = Array.from({ length: 24 }, (_, s) => {
+    const grad = (s / 24) * 360 - 180;
+    const [x, y] = polar(grad, UHR.r + UHR.ring / 2 + 7);
+    const stark = s % 6 === 0;
+    return `<circle cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" r="${stark ? 1.9 : 1}"
+      fill="rgba(255,255,255,${stark ? '.55' : '.22'})"/>`;
+  }).join('');
+
+  const naechstes = kommendeSonnenMarke(ev, jetzt);
+
+  ziel.innerHTML = `
+    <svg viewBox="0 0 200 200" class="uhr-svg" role="img"
+         aria-label="Tagesverlauf von Sonne und Mond als Ring">
+      ${stundenMarken}
+      ${sonneRing}
+      ${mondRing}
+      <circle class="uhr-punkt-aussen" cx="${sx.toFixed(1)}" cy="${sy.toFixed(1)}" r="5.5"/>
+      <circle class="uhr-punkt-innen" cx="${mx.toFixed(1)}" cy="${my.toFixed(1)}" r="3.6"
+              opacity="${mondJetzt ? 1 : 0.3}"/>
+      <text class="uhr-t12" x="100" y="9">12</text>
+      <text class="uhr-t0"  x="100" y="197">0</text>
+      <text class="uhr-t6"  x="4"   y="103">6</text>
+      <text class="uhr-t18" x="196" y="103">18</text>
+    </svg>
+    <div class="uhr-mitte">
+      <span class="uhr-zeit">${hhmm(jetzt)}</span>
+      <span class="uhr-datum">${jetzt.toLocaleDateString('de-DE', { weekday: 'short', day: 'numeric', month: 'long' })}</span>
+      ${naechstes ? `<span class="uhr-next">${esc(naechstes.name)}<br>in ${restZeit(naechstes.t)}</span>` : ''}
+    </div>`;
+
+  return { ev, mt, mp };
+}
+
+/** Nächste Sonnenmarke ab jetzt — für die Mitte der Uhr. */
+function kommendeSonnenMarke(ev, jetzt) {
+  const liste = [
+    { name: 'Sonnenaufgang', t: ev.aufgang },
+    { name: 'Höchststand', t: solarNoon(jetzt, place.lat, place.lon).zeit },
+    { name: 'Goldene Stunde', t: ev.goldenStartAbend },
+    { name: 'Sonnenuntergang', t: ev.untergang },
+    { name: 'Blaue Stunde endet', t: ev.blaueStundeEndeAbend }
+  ].filter(x => x.t && new Date(x.t) > jetzt).sort((a, b) => new Date(a.t) - new Date(b.t));
+  return liste[0] || null;
+}
+
 /* Sonnenbogen, Lichtphasen und Mond — gehören zum Countdown darüber und
    standen vorher als eigene Kacheln weiter unten, mit denselben Zeiten. */
 function renderSonneDetail() {
@@ -1964,31 +2126,15 @@ function renderSonneDetail() {
   const mittag = mittagInfo.zeit;
   const hoechststand = mittagInfo.hoehe;
   const jetztWinkel = sunAltitude(new Date(), place.lat, place.lon);
+  const azimut = sunAzimut(new Date(), place.lat, place.lon);
   teile.push(`<div class="sm-block has-info" data-info="sonne" role="button" tabindex="0">
     <span class="sm-titel">Sonnenstand<i class="t-q">?</i></span>
-    <div class="sun-arc">
-      <svg viewBox="0 0 200 74">
-        <path class="arc-bg" d="M${ARC.x0} ${ARC.y} A ${ARC.rx} ${ARC.ry} 0 0 1 ${ARC.x1} ${ARC.y}"/>
-        <path class="arc-fg" d="M${ARC.x0} ${ARC.y} A ${ARC.rx} ${ARC.ry} 0 0 1 ${ARC.x1} ${ARC.y}"
-              style="--p:${dayProg};--len:${ARC.len.toFixed(1)}"/>
-        <line class="arc-ground" x1="4" y1="${ARC.y}" x2="196" y2="${ARC.y}"/>
-        <!-- Höchststand: Scheitel des Bogens, dort steht die Sonne am steilsten -->
-        <line class="arc-noon" x1="${ARC.cx}" y1="${ARC.y}" x2="${ARC.cx}" y2="${(ARC.y - ARC.ry).toFixed(1)}"/>
-        <circle class="arc-noon-dot" cx="${ARC.cx}" cy="${(ARC.y - ARC.ry).toFixed(1)}" r="2.6"/>
-        <circle class="arc-sun" r="5.5"
-          cx="${(ARC.cx - ARC.rx * Math.cos(Math.PI * dayProg)).toFixed(1)}"
-          cy="${(ARC.y - ARC.ry * Math.sin(Math.PI * dayProg)).toFixed(1)}"/>
-      </svg>
-      <div class="arc-times">
-        <span>↑ ${hhmm(sr)}</span>
-        <span class="arc-mittag">☀ ${hhmm(mittag)}<i>${hoechststand.toFixed(0)}°</i></span>
-        <span>↓ ${hhmm(ss)}</span>
-      </div>
-    </div>
+    <div class="uhr-wrap" id="sonnenuhr"></div>
     <span class="t-jetztwinkel">${jetztWinkel > -0.833
-      ? `Jetzt <b>${jetztWinkel.toFixed(0)}°</b> über dem Horizont — ${winkelWort(jetztWinkel)}`
-      : `Sonne unter dem Horizont (<b>${jetztWinkel.toFixed(0)}°</b>)`}</span>
-    <span class="t-sub">${sunH} Std. Sonnenschein erwartet · Tag ${dayLen}</span>
+      ? `Jetzt <b>${jetztWinkel.toFixed(0)}°</b> über dem Horizont, ${himmelsrichtung(azimut)} — ${winkelWort(jetztWinkel)}`
+      : `Sonne <b>${jetztWinkel.toFixed(0)}°</b> unter dem Horizont`}</span>
+    <span class="t-sub">↑ ${hhmm(sr)} · Höchststand ${hhmm(mittag)} bei ${hoechststand.toFixed(0)}° · ↓ ${hhmm(ss)}<br>
+      ${sunH} Std. Sonnenschein erwartet · Tag ${dayLen}</span>
   </div>`);
 
   // Goldene und blaue Stunde, Dämmerung
@@ -2032,6 +2178,7 @@ function renderSonneDetail() {
 
 
   ziel.innerHTML = teile.join('');
+  renderSonnenuhr();          // braucht den Container aus teile
   $$('.sm-block.has-info', ziel).forEach(b => {
     b.onclick = () => openExplain(b.dataset.info);
   });
