@@ -8,6 +8,9 @@
      4. /push/*     Abos für Regenwarnungen; ein Zeitplan prüft alle 15 Minuten,
                     ob bei einem Abonnenten Regen aufzieht, und schickt eine
                     Benachrichtigung aufs Gerät.
+     5. /tts        spricht Text mit einer KI-Stimme (xAI). Der Schlüssel bleibt
+                    hier, der Browser sieht ihn nie; freigeschaltet wird mit
+                    einem Kennwort. Erzeugte Audios liegen im Cache.
 
    Ist der Mac aus, meldet /ai das ehrlich zurück; es gibt bewusst keinen
    kostenpflichtigen Ausweichweg.
@@ -17,6 +20,8 @@
      wrangler secret put BRIDGE_URL      # https://…ts.net
      wrangler secret put BRIDGE_SECRET   # gleiches Geheimnis wie in der Bridge
      wrangler secret put VAPID_PRIVATE   # privater Schlüssel für Web Push
+     wrangler secret put XAI_API_KEY     # für die KI-Stimme (xAI/Grok)
+     wrangler secret put TTS_PASSWORT    # schützt die Stimme vor fremder Nutzung
 */
 
 import { sendPush } from './push.js';
@@ -50,7 +55,7 @@ const cors = (origin) => ({
 });
 
 export default {
-  async fetch(request, env) {
+  async fetch(request, env, ctx) {
     const origin = request.headers.get('Origin') || '';
     const url = new URL(request.url);
 
@@ -85,6 +90,88 @@ export default {
           'cache-control': 'public, max-age=300'
         }
       });
+    }
+
+    /* ── Vorlesen mit KI-Stimme (Grok/xAI) ────────────────────
+       Der Schlüssel bleibt im Worker, der Browser bekommt ihn nie zu sehen.
+       Geschützt durch ein Kennwort, damit nicht jeder, der die Adresse kennt,
+       auf fremde Rechnung sprechen lässt. Erzeugte Audios liegen im
+       Zwischenspeicher: derselbe Bericht kostet nur einmal. */
+    if (url.pathname === '/tts' && request.method === 'POST') {
+      if (!env.XAI_API_KEY || !env.TTS_PASSWORT) {
+        return json({ error: 'Sprachausgabe ist nicht eingerichtet' }, 503, origin);
+      }
+
+      let req;
+      try { req = await request.json(); } catch { return json({ error: 'Ungültige Anfrage' }, 400, origin); }
+      const { text, stimme, tempo, passwort } = req || {};
+
+      if (passwort !== env.TTS_PASSWORT) {
+        return json({ error: 'Falsches Kennwort' }, 401, origin);
+      }
+      if (!text || typeof text !== 'string') {
+        return json({ error: 'Kein Text übergeben' }, 400, origin);
+      }
+      if (text.length > 6000) {
+        return json({ error: 'Text zu lang (höchstens 6000 Zeichen)' }, 413, origin);
+      }
+
+      const wahl = ['ara', 'eve', 'leo', 'rex', 'sal'].includes(stimme) ? stimme : 'eve';
+      const speed = Math.min(1.5, Math.max(0.7, Number(tempo) || 1));
+
+      /* Zwischenspeicher über den Inhalt: Wer denselben Bericht zweimal
+         anhört, löst keinen zweiten Abruf aus. */
+      const kennung = await hashText(`${wahl}|${speed}|${text}`);
+      const cacheSchluessel = new Request(`https://tts.wetterfunk/${kennung}.mp3`);
+      const cache = caches.default;
+      const gespeichert = await cache.match(cacheSchluessel);
+      if (gespeichert) {
+        return new Response(gespeichert.body, {
+          headers: { ...cors(origin), 'content-type': 'audio/mpeg', 'x-wf-cache': 'treffer' }
+        });
+      }
+
+      try {
+        const res = await withTimeout(fetch('https://api.x.ai/v1/tts', {
+          method: 'POST',
+          headers: {
+            'content-type': 'application/json',
+            'authorization': `Bearer ${env.XAI_API_KEY}`
+          },
+          body: JSON.stringify({
+            text, voice_id: wahl, language: 'de', speed,
+            output_format: { codec: 'mp3', sample_rate: 24000, bit_rate: 128000 }
+          })
+        }), 45000);
+
+        if (!res.ok) {
+          const grund = await res.text().catch(() => '');
+          return json({ error: `Sprachdienst antwortet ${res.status}`, detail: grund.slice(0, 200) },
+                      502, origin);
+        }
+
+        /* xAI liefert je nach Fassung rohe Audiobytes oder ein JSON mit
+           Base64 — beides abfangen, sonst spielt der Browser Kauderwelsch. */
+        const typ = String(res.headers.get('content-type') || '').toLowerCase();
+        let audio;
+        if (typ.includes('application/json')) {
+          const d = await res.json();
+          const b64 = String(d?.audio || '').trim();
+          if (!b64) return json({ error: 'Antwort enthielt kein Audio' }, 502, origin);
+          audio = Uint8Array.from(atob(b64), c => c.charCodeAt(0));
+        } else {
+          audio = new Uint8Array(await res.arrayBuffer());
+        }
+
+        const antwort = new Response(audio, {
+          headers: { ...cors(origin), 'content-type': 'audio/mpeg',
+                     'cache-control': 'public, max-age=86400' }
+        });
+        ctx.waitUntil(cache.put(cacheSchluessel, antwort.clone()));
+        return antwort;
+      } catch (e) {
+        return json({ error: `Sprachdienst nicht erreichbar: ${e.message}` }, 504, origin);
+      }
     }
 
     /* ── DWD-Radarbild (1 km) durchreichen ────────────────────
@@ -560,6 +647,14 @@ function json(obj, status, origin, cache) {
       ...(cache ? { 'cache-control': cache } : {})
     }
   });
+}
+
+/** Kurzer Inhaltsschlüssel für den Audio-Zwischenspeicher. */
+async function hashText(s) {
+  const bytes = new TextEncoder().encode(s);
+  const digest = await crypto.subtle.digest("SHA-256", bytes);
+  return [...new Uint8Array(digest)].slice(0, 16)
+    .map(b => b.toString(16).padStart(2, "0")).join("");
 }
 
 function withTimeout(promise, ms) {

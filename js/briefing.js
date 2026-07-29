@@ -30,7 +30,8 @@ const LENGTHS = [
 ];
 
 const LS = { proxy: 'wf.proxy', model: 'wf.model', parts: 'wf.parts', len: 'wf.len',
-             route: 'wf.route', key: 'wf.aikey', voice: 'wf.voice', rate: 'wf.rate' };
+             route: 'wf.route', key: 'wf.aikey', voice: 'wf.voice', rate: 'wf.rate',
+             ttsPass: 'wf.ttsPass', kiStimme: 'wf.kiStimme', nutzeKI: 'wf.nutzeKI' };
 
 /** Adresse des eigenen Cloudflare Workers. */
 const DEFAULT_PROXY = 'https://wetterfunk.florian-s-thiel.workers.dev';
@@ -263,6 +264,126 @@ async function generate() {
 // ══ Vorlesen ═══════════════════════════════════════════════
 let speaking = false, voice = null, saetze = [], satzNr = 0, fremdKnopf = null;
 
+/* ── KI-Stimme ──────────────────────────────────────────────
+   Klingt deutlich natürlicher als die Systemstimmen, kostet aber pro Abruf.
+   Der Schlüssel liegt im eigenen Worker, freigeschaltet wird mit einem
+   Kennwort — sonst könnte jeder, der die Adresse kennt, auf fremde Rechnung
+   sprechen lassen. */
+const KI_STIMMEN = [
+  { id: 'eve', name: 'Eve · weiblich, ruhig' },
+  { id: 'ara', name: 'Ara · weiblich, wach' },
+  { id: 'leo', name: 'Leo · männlich, warm' },
+  { id: 'rex', name: 'Rex · männlich, kräftig' },
+  { id: 'sal', name: 'Sal · neutral' }
+];
+
+let audioAus = null;          // laufende Wiedergabe
+
+const kiAktiv = () => !!store.get(LS.ttsPass, '') && store.get(LS.nutzeKI, true);
+
+/* prompt() blockiert den ganzen Seitenablauf und wird von installierten
+   Web-Apps teils gar nicht angezeigt — deshalb ein eigenes Fenster. */
+function frageKennwort() {
+  return new Promise((fertig) => {
+    const back = document.createElement('div');
+    back.className = 'sheet-back open kw-back';
+    back.innerHTML = `
+      <div class="sheet kw-sheet" role="dialog" aria-label="Kennwort">
+        <div class="sheet-top"><div class="sheet-grip"></div></div>
+        <h3>KI-Stimme freischalten</h3>
+        <p class="sheet-note">Die natürliche Stimme läuft über einen kostenpflichtigen
+          Dienst. Mit dem Kennwort wird sie für dieses Gerät freigeschaltet — einmalig,
+          danach bleibt sie an.</p>
+        <input type="password" class="kw-feld" placeholder="Kennwort" autocomplete="off"
+               enterkeyhint="go" inputmode="text">
+        <div class="kw-knoepfe">
+          <button class="kw-ab">Abbrechen</button>
+          <button class="kw-ok">Freischalten</button>
+        </div>
+      </div>`;
+    document.body.appendChild(back);
+
+    const feld = back.querySelector('.kw-feld');
+    setTimeout(() => feld.focus(), 120);
+
+    const schliessen = (wert) => { back.remove(); fertig(wert); };
+    back.querySelector('.kw-ok').onclick = () => schliessen(feld.value.trim());
+    back.querySelector('.kw-ab').onclick = () => schliessen(null);
+    back.onclick = (e) => { if (e.target === back) schliessen(null); };
+    feld.onkeydown = (e) => { if (e.key === 'Enter') schliessen(feld.value.trim()); };
+  });
+}
+
+async function kiFreischalten() {
+  const eingabe = await frageKennwort();
+  if (!eingabe) return;
+
+  host?.toast('Kennwort wird geprüft…', 1500);
+  try {
+    const res = await fetch(`${proxyUrl()}/tts`, {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ text: 'Wetterfunk ist bereit.', passwort: eingabe, stimme: 'eve' })
+    });
+    if (res.status === 401) { host?.toast('Falsches Kennwort.'); return; }
+    if (!res.ok) {
+      const d = await res.json().catch(() => ({}));
+      host?.toast(`Klappt nicht: ${d.error || res.status}`, 4000);
+      return;
+    }
+    store.set(LS.ttsPass, eingabe);
+    store.set(LS.nutzeKI, true);
+    host?.toast('KI-Stimme freigeschaltet.');
+    alleLeisten();
+    // Gleich einmal hören, dass es geht
+    const blob = await res.blob();
+    new Audio(URL.createObjectURL(blob)).play().catch(() => {});
+  } catch (e) {
+    host?.toast(`Nicht erreichbar: ${e.message}`.slice(0, 120), 4000);
+  }
+}
+
+/** Ganzen Text am Stück von der KI sprechen lassen. */
+async function speakKI(inhalt, aufKnopf) {
+  stopSpeaking();
+  fremdKnopf = aufKnopf || null;
+  setSpeaking(true);
+
+  try {
+    const res = await fetch(`${proxyUrl()}/tts`, {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        text: inhalt,
+        stimme: store.get(LS.kiStimme, 'eve'),
+        tempo: store.get(LS.rate, 1),
+        passwort: store.get(LS.ttsPass, '')
+      })
+    });
+
+    if (res.status === 401) {
+      store.set(LS.ttsPass, '');
+      host?.toast('Kennwort abgelaufen — bitte neu freischalten.', 4000);
+      setSpeaking(false); alleLeisten();
+      return;
+    }
+    if (!res.ok) {
+      const d = await res.json().catch(() => ({}));
+      host?.toast(`Sprachausgabe: ${d.error || res.status}`.slice(0, 130), 4500);
+      setSpeaking(false);
+      return;
+    }
+
+    const url = URL.createObjectURL(await res.blob());
+    audioAus = new Audio(url);
+    audioAus.onended = () => { setSpeaking(false); URL.revokeObjectURL(url); audioAus = null; };
+    audioAus.onerror = () => { setSpeaking(false); host?.toast('Konnte nicht abspielen.'); };
+    await audioAus.play();
+  } catch (e) {
+    console.warn('KI-Stimme:', e);
+    host?.toast('Sprachausgabe nicht erreichbar.', 3500);
+    setSpeaking(false);
+  }
+}
+
 /** Apples Spaßstimmen tauchen in der Liste mit auf, taugen aber nicht
     zum Vorlesen — sie kommen ganz ans Ende. */
 const SPASS = /^(Eddy|Flo|Grandma|Grandpa|Reed|Rocko|Sandy|Shelley|Albert|Jester|Organ|Superstar|Trinoids|Whisper|Wobble|Zarvox|Bahh|Bells|Boing|Bubbles|Cellos)\b/i;
@@ -310,9 +431,11 @@ function speakNext() {
 }
 
 function speak() {
-  if (!('speechSynthesis' in window)) { host.toast('Vorlesen wird nicht unterstützt.'); return; }
   if (!text) return;
   if (speaking) { stopSpeaking(); return; }
+  // Freigeschaltete KI-Stimme hat Vorrang vor der Systemstimme
+  if (kiAktiv()) { speakKI(text, null); return; }
+  if (!('speechSynthesis' in window)) { host.toast('Vorlesen wird nicht unterstützt.'); return; }
 
   speechSynthesis.cancel();
   voice = pickVoice();
@@ -338,7 +461,8 @@ function speak() {
 function stopSpeaking() {
   speaking = false;
   clearInterval(speak._wach);
-  speechSynthesis.cancel();
+  try { speechSynthesis.cancel(); } catch {}
+  if (audioAus) { audioAus.pause(); audioAus.currentTime = 0; audioAus = null; }
   setSpeaking(false);
 }
 
@@ -412,27 +536,54 @@ function renderVoiceBar(ziel) {
 
   const aktiv = pickVoice();
   const tempo = store.get(LS.rate, 1);
+  const kiAn = !!store.get(LS.ttsPass, '');
   bar.innerHTML = `
     <label class="bf-voice-pick">
       <span>Stimme</span>
       <select>
-        ${stimmen.map(v => `<option value="${v.voiceURI}"${v.voiceURI === aktiv?.voiceURI ? ' selected' : ''}>${v.name.replace(/\s*\(.*?\)/, '')}</option>`).join('')}
+        ${kiAn ? `<optgroup label="KI-Stimmen">
+          ${KI_STIMMEN.map(s => `<option value="ki:${s.id}"${
+            store.get(LS.kiStimme, 'eve') === s.id && store.get(LS.nutzeKI, true)
+              ? ' selected' : ''}>${s.name}</option>`).join('')}
+        </optgroup>` : ''}
+        <optgroup label="Systemstimmen">
+        ${stimmen.map(v => `<option value="${v.voiceURI}"${
+          v.voiceURI === aktiv?.voiceURI && !(kiAn && store.get(LS.nutzeKI, true))
+            ? ' selected' : ''}>${v.name.replace(/\s*\(.*?\)/, '')}</option>`).join('')}
+        </optgroup>
       </select>
     </label>
     <div class="bf-rate" role="group" aria-label="Sprechtempo">
       <span>Tempo</span>
       ${RATES.map(r => `<button type="button" data-rate="${r}" class="${r === tempo ? 'on' : ''}">${String(r).replace('.', ',')}×</button>`).join('')}
     </div>
-    ${nurBasisStimmen() ? `<p class="bf-voicehint">
+    ${kiAn
+      ? `<button type="button" class="bf-kiaus">KI-Stimme abmelden</button>`
+      : `<button type="button" class="bf-kian">🎙 KI-Stimme freischalten</button>`}
+    ${nurBasisStimmen() && !kiAn ? `<p class="bf-voicehint">
       Klingt blechern? Es ist die alte Systemstimme. Eine natürliche gibt es gratis:
       <b>Einstellungen → Bedienungshilfen → Gesprochene Inhalte → Stimmen → Deutsch</b>
       und dort eine Premium-Stimme laden. Danach hier auswählen.
     </p>` : ''}`;
 
   $('.bf-voice-pick select', bar).addEventListener('change', (e) => {
-    store.set(LS.voice, e.target.value);
-    voice = pickVoice();
-    if (speaking) { const n = satzNr; speechSynthesis.cancel(); satzNr = n; speakNext(); }
+    const wert = e.target.value;
+    if (wert.startsWith('ki:')) {
+      store.set(LS.nutzeKI, true);
+      store.set(LS.kiStimme, wert.slice(3));
+    } else {
+      store.set(LS.nutzeKI, false);
+      store.set(LS.voice, wert);
+      voice = pickVoice();
+    }
+    if (speaking) stopSpeaking();
+    alleLeisten();
+  });
+  $('.bf-kian', bar)?.addEventListener('click', kiFreischalten);
+  $('.bf-kiaus', bar)?.addEventListener('click', () => {
+    store.set(LS.ttsPass, '');
+    store.set(LS.nutzeKI, false);
+    host?.toast('KI-Stimme abgemeldet.');
     alleLeisten();
   });
   $$('.bf-rate button', bar).forEach(b => b.addEventListener('click', () => {
@@ -574,8 +725,9 @@ function init(hostApi) {
    Auch der amtliche DWD-Bericht soll gesprochen werden können — mit
    derselben Stimme und demselben Tempo wie der eigene Bericht. */
 function speakText(inhalt, aufKnopf) {
-  if (!('speechSynthesis' in window)) { host?.toast('Vorlesen wird nicht unterstützt.'); return; }
   if (fremdKnopf === aufKnopf && speaking) { stopSpeaking(); return; }
+  if (kiAktiv()) { speakKI(String(inhalt), aufKnopf); return; }
+  if (!('speechSynthesis' in window)) { host?.toast('Vorlesen wird nicht unterstützt.'); return; }
 
   speechSynthesis.cancel();
   voice = pickVoice();
