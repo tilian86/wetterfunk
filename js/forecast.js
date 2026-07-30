@@ -332,6 +332,15 @@ function indexFor(date) {
   return best;
 }
 
-return { load, frame, corners, ready, hours, indexFor, covers, points, stufeFuer, series,
+/** Kennung des geladenen Rasters — ändert sich mit Ausschnitt, Auflösung
+    und Feldern. Bilder aus einem anderen Raster dürfen nie wiederverwendet
+    werden: Sie zeigten die falsche Gegend. */
+function stamp() {
+  return grid
+    ? `${grid.mitte.join(',')}|${grid.stufe}|${grid.spanLat}x${grid.spanLon}|${grid.felder.join(',')}`
+    : 'leer';
+}
+
+return { load, frame, corners, ready, hours, indexFor, covers, points, stufeFuer, series, stamp,
          get canvas() { return canvas; } };
 })();
