@@ -404,6 +404,57 @@ const normalize = (s) => (s || '')
   .replace(/\b(stadt|kreis|landkreis|region|verbandsgemeinde|gemeinde|kreisfreie)\b/g, '')
   .replace(/[^a-z]/g, '');
 
+/* Gültigkeitszeitraum einer Warnung. Der DWD schreibt ihn immer mit Datum
+   dazu, und das aus gutem Grund: „bis 19:00" allein lässt offen, ob die
+   Warnung von heute ist oder seit vorgestern im Zwischenspeicher liegt.
+
+   `start` und `end` kommen als Millisekunden. `end` darf fehlen — dann
+   gilt die Warnung bis auf Weiteres. */
+function warnZeitraum(w) {
+  const von = w.start ? new Date(w.start) : null;
+  const bis = w.end ? new Date(w.end) : null;
+  const jetzt = new Date();
+
+  const tagIndex = (d) => {
+    const a = new Date(d); a.setHours(0, 0, 0, 0);
+    const b = new Date(jetzt); b.setHours(0, 0, 0, 0);
+    return Math.round((a - b) / 86400000);
+  };
+  const tagWort = (d) => {
+    const i = tagIndex(d);
+    if (i === 0) return 'heute';
+    if (i === 1) return 'morgen';
+    if (i === -1) return 'gestern';
+    return d.toLocaleDateString('de-DE', { weekday: 'short', day: '2-digit', month: '2-digit' });
+  };
+  const lang = (d) => d.toLocaleDateString('de-DE',
+    { weekday: 'long', day: '2-digit', month: '2-digit', year: 'numeric' });
+
+  const laeuft = (!von || von <= jetzt) && (!bis || bis > jetzt);
+  const vorbei = bis && bis <= jetzt;
+
+  // Kurzform für die Kopfzeile
+  let kurz;
+  if (!von) {
+    kurz = bis ? `bis ${tagWort(bis)} ${hhmm(bis)} Uhr` : 'Zeitraum offen';
+  } else if (!bis) {
+    kurz = `ab ${tagWort(von)} ${hhmm(von)} Uhr — Ende offen`;
+  } else if (tagIndex(von) === tagIndex(bis)) {
+    kurz = `${tagWort(von)} ${hhmm(von)}–${hhmm(bis)} Uhr`;
+  } else {
+    kurz = `${tagWort(von)} ${hhmm(von)} bis ${tagWort(bis)} ${hhmm(bis)} Uhr`;
+  }
+
+  // Langform wie beim DWD, mit Wochentag und Jahr
+  const voll = von && bis
+    ? `Gültig von ${lang(von)}, ${hhmm(von)} Uhr bis ${lang(bis)}, ${hhmm(bis)} Uhr`
+    : von ? `Gültig ab ${lang(von)}, ${hhmm(von)} Uhr — Ende noch offen`
+    : bis ? `Gültig bis ${lang(bis)}, ${hhmm(bis)} Uhr` : 'Zeitraum nicht angegeben';
+
+  const stand = laeuft ? 'läuft' : vorbei ? 'abgelaufen' : 'noch nicht in Kraft';
+  return { kurz, voll, stand, laeuft, vorbei };
+}
+
 function renderWarnings(raw) {
   const box = $('#warnings');
   box.innerHTML = '';
@@ -424,13 +475,20 @@ function renderWarnings(raw) {
   }
   if (!all.length) return;
 
+  /* Abgelaufene Warnungen aussortieren. Der DWD räumt seine Datei zwar
+     selbst auf, aber wenn sie einmal hängt, sollen keine Warnungen von
+     vorgestern als aktuell durchgehen. */
+  const jetztMs = Date.now();
+  const gueltig = all.filter(w => !w.end || w.end > jetztMs);
+
   // Doppelte Meldungen (mehrere Warncells) zusammenfassen
   const seen = new Set();
-  const uniq = all.filter(w => {
+  const uniq = gueltig.filter(w => {
     const k = `${w.type}|${w.level}|${w.event}|${w.start}`;
     if (seen.has(k)) return false;
     seen.add(k); return true;
   }).sort((a, b) => b.level - a.level);
+  if (!uniq.length) return;
 
   /* Die Stufe steckt nicht verlässlich im \`level\`: Für Hitze nutzt der DWD
      eine eigene Skala (50 aufwärts), für Wetterwarnungen 1 bis 4. Die
@@ -445,20 +503,26 @@ function renderWarnings(raw) {
   };
   activeWarnings = uniq;
 
+  const zeit = warnZeitraum;   // kurzer Name für die Vorlage
   box.innerHTML = uniq.map(w => `
     <details class="warn lvl-${w.level}">
       <summary>
         <svg class="warn-ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3.5 1.8 21h20.4L12 3.5z"/><path d="M12 10v5" stroke-width="2"/><circle cx="12" cy="18" r="1.1" fill="currentColor" stroke="none"/></svg>
         <span class="warn-txt">
           <b>${esc(w.event || stufeVon(w))}</b>
-          <i>${esc(w.regionName)} · bis ${hhmm(w.end)}</i>
+          <i>${esc(w.regionName)}</i>
+          <i class="warn-zeit"><em class="wz-${zeit(w).laeuft ? 'an' : 'aus'}">${
+            zeit(w).stand}</em> · ${zeit(w).kurz}</i>
         </span>
         <svg class="warn-chev" viewBox="0 0 24 24"><path d="M6 9l6 6 6-6"/></svg>
       </summary>
       <div class="warn-body">
+        <p class="warn-gueltig">${zeit(w).voll}</p>
         <p>${esc(w.description)}</p>
         ${w.instruction ? `<p class="warn-instr">${esc(w.instruction)}</p>` : ''}
-        <p class="warn-src">${stufeVon(w)} · Deutscher Wetterdienst</p>
+        <p class="warn-src">${stufeVon(w)} · Deutscher Wetterdienst${
+          raw.time ? ` · Warnlage vom ${new Date(raw.time).toLocaleDateString('de-DE',
+            { day: '2-digit', month: '2-digit', year: 'numeric' })}, ${hhmm(raw.time)} Uhr` : ''}</p>
       </div>
     </details>`).join('');
 }
@@ -1636,6 +1700,18 @@ const EXPLAIN = {
         + 'Fotografieren. Die blaue Stunde folgt danach: Die Sonne ist schon unter dem Horizont, '
         + 'der Himmel leuchtet aber noch tiefblau. Danach beginnt die Dämmerung, ab 18 Grad '
         + 'Sonnentiefe die astronomische Nacht — erst dann sind lichtschwache Sterne sichtbar.' },
+  messung: { titel: 'Gerechnet oder gemessen?',
+    text: 'Die große Zahl oben ist ein Modellwert: Der Wetterdienst rechnet ein Gitter '
+        + 'über Deutschland — beim Modell ICON-D2 mit 2 km Maschenweite — und liest den Wert '
+        + 'für deinen Punkt ab. Ein Thermometer steht dort nicht. In der Stadt, im Talkessel '
+        + 'oder auf einer Höhe kann das ein bis zwei Grad danebenliegen.\n\n'
+        + 'Darunter steht, was die nächste echte Wetterstation des DWD zuletzt gemessen hat, '
+        + 'mit Entfernung und Uhrzeit. Die Messung ist die härtere Zahl — sie gilt aber für '
+        + 'den Ort der Station, nicht für deinen. Liegen die beiden weit auseinander, sagt '
+        + 'das meist etwas über den Höhenunterschied oder die Lage.',
+    link: { url: 'https://www.dwd.de/DE/forschung/wettervorhersage/num_modellierung/'
+               + '01_num_vorhersagemodelle/icon_beschreibung.html',
+            text: 'Wie das Modell ICON rechnet (DWD)' } },
   mond: { titel: 'Mondphase',
     text: 'Der Anteil der beleuchteten Mondscheibe. Bei Vollmond ist die Nacht so hell, dass '
         + 'schwache Sterne und Sternschnuppen untergehen; bei Neumond ist der Himmel am dunkelsten. '
@@ -4137,10 +4213,43 @@ async function ladeStationen(lat, lon) {
     if (!zeilen.length) { karte.hidden = true; return; }
     renderStationen(zeilen);
     karte.hidden = false;
+    renderHeroMessung(zeilen[0]);
   } catch (e) {
     console.warn('Stationen:', e.message);
     karte.hidden = true;
+    naechsteStation = null;
+    const el = $('#heroMess'); if (el) el.hidden = true;
   }
+}
+
+/* Die große Zahl oben kommt aus einem Rechenmodell: Der Wetterdienst
+   rechnet ein Gitter über Deutschland und liest den Wert für deinen Punkt
+   ab. Das ist kein Thermometer. In der Stadt, im Tal oder auf dem Berg kann
+   das Modell ein bis zwei Grad danebenliegen.
+
+   Deshalb steht darunter, was die nächste echte DWD-Station gerade gemessen
+   hat — mit Name, Entfernung und Uhrzeit der Messung, damit man beides
+   einordnen kann. Nur für Deutschland: Bright Sky kennt nur DWD-Stationen. */
+let naechsteStation = null;
+
+function renderHeroMessung(erste) {
+  const el = $('#heroMess');
+  if (!el) return;
+  naechsteStation = null;
+  el.hidden = true;
+  if (!erste?.w || erste.w.temperature == null) return;
+
+  const km = erste.station.distance / 1000;
+  const alterMin = (Date.now() - new Date(erste.w.timestamp).getTime()) / 60000;
+  // Zu weit weg oder zu alt sagt nichts mehr über den eigenen Standort aus
+  if (km > 60 || alterMin > 100 || alterMin < -10) return;
+
+  naechsteStation = erste;
+  const t = new Date(erste.w.timestamp);
+  el.innerHTML = `<span class="hm-wert">${dez(erste.w.temperature)}°</span>
+    <span class="hm-txt">gemessen ${hhmm(t)} Uhr · ${esc(erste.station.station_name)}, ${
+      km < 10 ? dez(km) : Math.round(km)} km<i>?</i></span>`;
+  el.hidden = false;
 }
 
 function renderStationen(zeilen) {
@@ -4628,6 +4737,7 @@ function wire() {
     el.tabIndex = 0;
     el.addEventListener('click', openZonen);
   });
+  $('#heroMess')?.addEventListener('click', () => openExplain('messung'));
   $('#pushToggle')?.addEventListener('click', pushUmschalten);
   // Häkchen wirken sofort — auch bei bereits laufendem Abo
   PUSH_ARTEN.forEach(([, key, sel]) => {
