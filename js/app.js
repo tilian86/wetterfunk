@@ -658,21 +658,32 @@ function rainWindow(dayIndex) {
   return { von: a, bis: b, anteil: nass.length / Math.max(1, stunden.length) };
 }
 
-/* Open-Meteo liefert `sunshine_duration` als Tageswert — bei längerer Vorhersage
-   aus einem anderen Modelllauf als die Stundenwerte. Dann stehen "12 Stunden
-   Sonne" neben einem Streifen, der ab Mittag zu ist. Deshalb rechnen wir die
-   Sonnenstunden aus denselben Stundenwerten wie den Streifen: alles aus einer
-   Quelle, in sich stimmig. */
+/* Sonnenstunden immer aus den Stundenwerten summiert — nie aus dem
+   Tageswert. Beides steht in der Antwort, und normalerweise stimmt es
+   überein; bei längerer Vorhersage kann der Tageswert aber aus einem
+   anderen Modelllauf stammen als die Stundenwerte. Dann stünden "12 Stunden
+   Sonne" neben einem Streifen, der ab Mittag zu ist.
+
+   `sunshine_duration` je Stunde ist die gerechnete Zeit mit direkter
+   Einstrahlung über 120 W/m² — das ist die amtliche Definition von
+   Sonnenschein. Ein Ersatzmaß aus der Bewölkung wäre deutlich grober:
+   dünne hohe Wolken lassen die Sonne durch, tiefe nicht. Fehlt das Feld
+   trotzdem, bleibt die Bewölkung als Notbehelf. */
 function sonnenStunden(dayISO) {
   const h = data.hourly;
-  let summe = 0;
+  let sekunden = 0, gefunden = false, ersatz = 0;
   for (let u = 0; u < 24; u++) {
     const k = h.time.indexOf(`${dayISO}T${String(u).padStart(2, '0')}:00`);
-    if (k < 0 || h.is_day[k] !== 1) continue;
-    if ((h.precipitation[k] ?? 0) >= 0.3) continue;      // bei Regen keine Sonne
-    summe += Math.max(0, (100 - (h.cloud_cover[k] ?? 100)) / 100);
+    if (k < 0) continue;
+    if (h.sunshine_duration?.[k] != null) {
+      sekunden += h.sunshine_duration[k];
+      gefunden = true;
+    }
+    if (h.is_day[k] === 1 && (h.precipitation[k] ?? 0) < 0.3) {
+      ersatz += Math.max(0, (100 - (h.cloud_cover[k] ?? 100)) / 100);
+    }
   }
-  return summe;
+  return gefunden ? sekunden / 3600 : ersatz;
 }
 
 /** Farbe einer Tagesstunde für den Verlaufsbalken.
@@ -2926,7 +2937,7 @@ function renderSonneDetail() {
   const sr = new Date(d.sunrise[0]), ss = new Date(d.sunset[0]);
   const now = Date.now();
   const dayProg = clamp((now - sr) / (ss - sr), 0, 1);
-  const sunH = Math.floor((d.sunshine_duration?.[0] ?? 0) / 3600);
+  const sunH = Math.round(sonnenStunden(d.time[0]));
   const minutenTag = Math.round((ss - sr) / 60000);
   const dayLen = `${Math.floor(minutenTag / 60)} Std. ${minutenTag % 60} Min.`;
   const teile = [];
@@ -3050,7 +3061,7 @@ function renderTiles(air) {
   const sr = new Date(d.sunrise[0]), ss = new Date(d.sunset[0]);
   const now = Date.now();
   const dayProg = clamp((now - sr) / (ss - sr), 0, 1);
-  const sunH = Math.floor((d.sunshine_duration?.[0] ?? 0) / 3600);
+  const sunH = Math.round(sonnenStunden(d.time[0]));
   const minutenTag = Math.round((ss - sr) / 60000);
   const dayLen = `${Math.floor(minutenTag / 60)} Std. ${minutenTag % 60} Min.`;
   // Luftdruck
