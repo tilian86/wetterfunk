@@ -2136,3 +2136,43 @@ body.ar-offen { overflow: hidden; }
   margin: 16px 0 8px; font-size: 11px; font-weight: 700;
   letter-spacing: .08em; text-transform: uppercase; color: var(--ink-faint);
 }
+
+/* Gültigkeitszeitraum der Warnung — beim DWD steht er immer dabei, damit
+   man erkennt, ob eine Warnung von heute ist. */
+.warn-zeit {
+  font-size: 11px; color: var(--ink-dim);
+  font-variant-numeric: tabular-nums;
+}
+.warn-zeit em {
+  font-style: normal; font-weight: 700; letter-spacing: .04em;
+  text-transform: uppercase; font-size: 9.5px;
+}
+.wz-an  { color: #ffc978; }
+.wz-aus { color: var(--ink-faint); }
+.warn-gueltig {
+  margin: 0 0 9px; padding-bottom: 9px;
+  border-bottom: 1px solid rgba(255,255,255,.1);
+  font-size: 12px; font-weight: 600; color: var(--ink);
+}
+
+/* Messwert der nächsten DWD-Station unter der gerechneten Zahl */
+.hero-mess {
+  display: inline-flex; align-items: baseline; gap: 8px;
+  margin: 12px auto 0; padding: 7px 13px;
+  background: rgba(255,255,255,.07); border: 1px solid var(--card-line);
+  border-radius: 30px; color: var(--ink-dim);
+  font: 500 12px var(--font); cursor: pointer; text-align: left;
+}
+.hero-mess[hidden] { display: none; }
+.hero-mess:active { opacity: .65; }
+.hm-wert {
+  font-size: 15px; font-weight: 700; color: var(--ink);
+  font-variant-numeric: tabular-nums;
+}
+.hm-txt { line-height: 1.35; }
+.hm-txt i {
+  font-style: normal; display: inline-grid; place-items: center;
+  width: 13px; height: 13px; margin-left: 5px; border-radius: 50%;
+  background: rgba(255,255,255,.14); color: var(--ink-dim);
+  font-size: 9px; font-weight: 700; vertical-align: 1px;
+}
