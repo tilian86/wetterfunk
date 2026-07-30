@@ -5192,6 +5192,18 @@ function registerWorker() {
           }
         });
       });
+
+      /* Übernimmt der neue Dienst, einmal neu laden. Vorher stand hier nur
+         der Hinweis — die Seite lief aber mit dem alten Programm weiter, auf
+         dem iPhone teils tagelang: Eine installierte App startet selten neu.
+         So testete man gemeldete Fehler an einer Fassung, die längst
+         korrigiert war. Die Schutzvariable verhindert eine Schleife. */
+      let neuGeladen = false;
+      navigator.serviceWorker.addEventListener('controllerchange', () => {
+        if (neuGeladen || !navigator.serviceWorker.controller) return;
+        neuGeladen = true;
+        location.reload();
+      });
       // Beim Start und bei Rückkehr auf Aktualisierungen prüfen
       reg.update().catch(() => {});
       document.addEventListener('visibilitychange', () => {

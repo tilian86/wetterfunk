@@ -571,7 +571,11 @@ const Radar = (() => {
      Ebenen-Kombination macht daraus eine einzige Kodierung. */
   const fcBilder = new Map();
   let fcZaehler = 0;                 // damit veraltete Bilder nicht nachträglich landen
-  const fcSchluessel = (h, ebenen) => `${h}|${[...ebenen].sort().join(',')}`;
+  /* Die Rasterkennung gehört in den Schlüssel: Nach Zoomen oder Verschieben
+     lädt die App ein neues Raster mit anderem Ausschnitt. Ein Bild des alten
+     Rasters unter gleicher Stunde wäre sonst ein Treffer — und würde auf die
+     neuen Eckkoordinaten gespannt, also die falsche Gegend zeigen. */
+  const fcSchluessel = (h, ebenen) => `${Forecast.stamp()}|${h}|${[...ebenen].sort().join(',')}`;
   function leereBildSpeicher() {
     // Blob-Adressen belegen Speicher, bis sie ausdrücklich freigegeben werden
     for (const u of fcBilder.values()) { try { URL.revokeObjectURL(u); } catch {} }
