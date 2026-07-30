@@ -23,6 +23,8 @@ const Radar = (() => {
   let els = {};
   let host = 'https://tilecache.rainviewer.com';
   let onFrame = () => {};
+  /** Welches Radarbild gerade sichtbar ist (-1 = keines). */
+  let sichtbaresBild = -1;
   let here = null;
 
   const layerId = (i) => `rv-layer-${i}`;
@@ -183,13 +185,21 @@ const Radar = (() => {
     dwdSichtbar = an;
     if (map?.getLayer('dwd-layer')) map.setPaintProperty('dwd-layer', 'raster-opacity', an ? 0.9 : 0);
     if (els.sharp) els.sharp.hidden = !an;
-    // Wenn das scharfe Bild liegt, das grobe darunter ausblenden
-    frames.forEach((_, n) => {
-      if (map?.getLayer(layerId(n))) {
-        map.setPaintProperty(layerId(n), 'raster-opacity',
-          !fcVisible && n === idx ? (an ? 0 : 0.8) : 0);
+
+    /* Früher lief hier eine Schleife über alle Bilder und setzte bei jedem
+       Schritt dreizehn Deckkraft-Werte neu — dreizehn Neuzeichnungen der
+       Karte je Einzelbild. Das reichte, um die Animation ins Stocken zu
+       bringen. Jetzt wird nur das vorherige aus- und das neue eingeblendet. */
+    const soll = !fcVisible && !an ? idx : -1;
+    if (soll !== sichtbaresBild) {
+      if (sichtbaresBild >= 0 && map?.getLayer(layerId(sichtbaresBild))) {
+        map.setPaintProperty(layerId(sichtbaresBild), 'raster-opacity', 0);
       }
-    });
+      if (soll >= 0 && map?.getLayer(layerId(soll))) {
+        map.setPaintProperty(layerId(soll), 'raster-opacity', 0.8);
+      }
+      sichtbaresBild = soll;
+    }
   }
 
   /** Scharfes DWD-Bild nur zeigen, wenn der aktuellste Messwert gemeint ist
@@ -349,6 +359,7 @@ const Radar = (() => {
   /** Je Frame eine Rasterquelle; umgeschaltet wird über die Deckkraft,
       damit die Animation nicht bei jedem Schritt nachladen muss. */
   function mountLayers() {
+    sichtbaresBild = -1;
     frames.forEach((f, i) => {
       if (map.getLayer(layerId(i))) map.removeLayer(layerId(i));
       if (map.getSource(sourceId(i))) map.removeSource(sourceId(i));
@@ -543,14 +554,56 @@ const Radar = (() => {
   // ── Flächenvorhersage über die Karte legen ───────────────
   /** Ab 30 Minuten reicht das Radar nicht mehr. Dann blenden wir die
       selbst gezeichnete Rastervorhersage ein — gröber, aber über fünf Tage. */
+  /* PNG-Kodierung ist teuer. Beim Abspielen kommt dieselbe Stunde mehrfach
+     dran (vier Viertelstunden-Schritte je Stunde), und beim zweiten Durchlauf
+     ohnehin alles noch einmal. Ein kleiner Zwischenspeicher je Stunde und
+     Ebenen-Kombination macht daraus eine einzige Kodierung. */
+  const fcBilder = new Map();
+  const fcSchluessel = (h, ebenen) => `${h}|${[...ebenen].sort().join(',')}`;
+  function leereBildSpeicher() { fcBilder.clear(); }
+
+  /* Die erste Runde des Abspielens war die zäheste: Dort wird jedes Bild
+     erstmalig kodiert. Deshalb die Stunden, die der Abspielknopf durchläuft,
+     schon vorher in Leerlaufzeiten erzeugen — eine je Aufruf, damit nichts
+     hakt. Läuft der Browser ohne requestIdleCallback, tut es ein Timer. */
+  function vorwaermen(stunden, ebenen) {
+    if (!Forecast.ready() || !ebenen?.size) return;
+    const offen = stunden.filter(h => !fcBilder.has(fcSchluessel(h, ebenen)));
+    if (!offen.length) return;
+    /* Bewusst ein einfacher Timer statt requestIdleCallback: Der
+       Leerlauf-Rückruf wird in Hintergrundfenstern ausgesetzt, und dann
+       bliebe das Vorwärmen liegen — also genau dann, wenn man die Karte
+       nach dem Zurückkehren zuerst antippt. 250 ms Abstand sind weit genug
+       auseinander, dass eine Kodierung kein Wischen ins Stocken bringt. */
+    const ruhig = (f) => setTimeout(f, 250);
+    const naechstes = () => {
+      const h = offen.shift();
+      if (h == null) return;
+      const bild = Forecast.frame(h, ebenen);
+      if (bild) {
+        if (fcBilder.size > 240) fcBilder.clear();
+        fcBilder.set(fcSchluessel(h, ebenen), bild.toDataURL('image/png'));
+      }
+      if (offen.length) ruhig(naechstes);
+    };
+    ruhig(naechstes);
+  }
+
   function showForecast(hourIndex, ebenen) {
     if (!ready || !map || !Forecast.ready()) return false;
-    const bild = Forecast.frame(hourIndex, ebenen);
-    if (!bild) return false;
 
-    // Bild- statt Canvas-Quelle: Letztere lieferte je nach Gerät eine
-    // schwarze Fläche, weil MapLibre das Canvas im falschen Moment ausliest.
-    const url = bild.toDataURL('image/png');
+    const key = fcSchluessel(hourIndex, ebenen);
+    let url = fcBilder.get(key);
+    if (!url) {
+      const bild = Forecast.frame(hourIndex, ebenen);
+      if (!bild) return false;
+      // Bild- statt Canvas-Quelle: Letztere lieferte je nach Gerät eine
+      // schwarze Fläche, weil MapLibre das Canvas im falschen Moment ausliest.
+      url = bild.toDataURL('image/png');
+      // Ein Tag Vorhersage in allen Kombinationen passt locker hinein
+      if (fcBilder.size > 240) fcBilder.clear();
+      fcBilder.set(key, url);
+    }
     const ecken = Forecast.corners();
 
     if (!map.getSource('fc')) {
@@ -581,6 +634,7 @@ const Radar = (() => {
 
   return { init, load, setCenter, play, pause, toggle, show, isPlaying,
            showForecast, showRadar, updateLabels, frameTimes, showAt, lastMeasured,
+           leereBildSpeicher, vorwaermen,
            updateLegend: renderLegend,
            get map() { return map; } };
 })();
