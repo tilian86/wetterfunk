@@ -2188,3 +2188,10 @@ body.ar-offen { overflow: hidden; }
   content: '·'; margin: 0 7px; color: var(--ink-faint);
 }
 .hm-werte b { font-size: 15px; font-weight: 700; }
+
+/* Stand der Daten im Tagesblatt — beantwortet die Frage, ob das aktuell ist */
+.ds-stand {
+  margin: 12px 0 0; padding-top: 10px;
+  border-top: 1px solid var(--card-line);
+  font-size: 11px; line-height: 1.5; color: var(--ink-faint);
+}
