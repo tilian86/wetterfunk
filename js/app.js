@@ -1033,9 +1033,25 @@ function renderScrub() {
   syncMapAt(punkte[nullpunkt].t);
 }
 
-/** Der Abspielknopf lässt die letzten zwei Stunden über die Karte laufen und
-    endet im Jetzt — der Regler wandert sichtbar mit. */
+/* Der Abspielknopf lief früher nur über die gemessene Vergangenheit und hielt
+   im Jetzt an. Wer ihn drückte, sah die Zugbahn heranziehen — und dann nichts
+   mehr. Genau das ist die Frage beim Regenradar: Kommt es zu mir?
+
+   Jetzt läuft er weiter in die Vorhersage, bis ans Ende des Viertelstunden-
+   Takts (rund drei Stunden voraus). Weiter zu laufen brächte nichts: Ab da
+   gibt es nur noch Stundenschritte, und die Zugbahn eines Schauers ist so
+   weit voraus ohnehin nicht mehr genau. */
 let spielTimer = null;
+
+function spielEnde(punkte) {
+  // Ende des Viertelstunden-Bereichs; fehlt er, wenigstens drei Stunden voraus
+  const fein = punkte.findLastIndex(p => p.fein && !p.radar);
+  if (fein > 0) return fein;
+  const grenze = Date.now() + 3 * 3600e3;
+  const k = punkte.findIndex(p => p.t.getTime() > grenze);
+  return k > 0 ? k : punkte.length - 1;
+}
+
 function toggleZeitraffer() {
   const sl = $('#scrubSlider');
   const knopf = $('#playBtn');
@@ -1045,7 +1061,7 @@ function toggleZeitraffer() {
     return;
   }
   const punkte = buildScrubPoints();
-  const ziel = jetztIndex(punkte);
+  const ziel = spielEnde(punkte);
   if (ziel <= 0) return;
 
   knopf?.classList.add('is-playing');
@@ -1059,6 +1075,8 @@ function toggleZeitraffer() {
     }
   };
   schritt();
+  /* In der Vorhersage etwas langsamer: Dort springt das Bild in größeren
+     Schritten, und die Karte muss je Schritt ein neues Bild zeichnen. */
   spielTimer = setInterval(schritt, 420);
 }
 
@@ -1131,14 +1149,26 @@ function zeitMarkeHeben() {
   zeitMarkeTimer = setTimeout(() => label.classList.remove('is-scrub'), 1600);
 }
 
-/** Karte an den Zeitstrahl koppeln: bis 30 Minuten zeigt das echte Radar,
-    danach die selbst gezeichnete Flächenvorhersage. */
+/* Karte an den Zeitstrahl koppeln. Bis wohin das echte Radar zuständig ist,
+   hängt davon ab, wie weit seine Bilder reichen: RainViewer liefert manchmal
+   eine halbe Stunde Kurzprognose, manchmal gar keine. Ohne diese Prüfung
+   zeigte die Karte bis zu 35 Minuten „Radar-Kurzprognose", obwohl sie in
+   Wahrheit das letzte gemessene Bild eingefroren hatte — die Vorhersage
+   schien nicht zu funktionieren. */
+function radarGrenze() {
+  const bilder = Radar.frameTimes?.() || [];
+  const letzte = bilder.length ? bilder[bilder.length - 1].t : null;
+  if (!letzte) return 0;
+  // Ein halber Bildabstand Puffer, damit der Wechsel nicht flackert
+  return Math.max(0, (letzte - Date.now()) / 60000 + 5);
+}
+
 function syncMapAt(ziel) {
   if (!radarReady || !ziel) return;
   const vorlauf = (ziel - Date.now()) / 60000;      // Minuten voraus
 
   const zeit = mapZeitWort(ziel);
-  if (vorlauf <= 35) {
+  if (vorlauf <= radarGrenze()) {
     Radar.showRadar();
     Radar.showAt(ziel instanceof Date ? ziel.getTime() : ziel);
     Radar.updateLabels();          // sonst greift ein Ebenenwechsel hier nicht
