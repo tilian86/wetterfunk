@@ -4213,7 +4213,7 @@ async function ladeStationen(lat, lon) {
     if (!zeilen.length) { karte.hidden = true; return; }
     renderStationen(zeilen);
     karte.hidden = false;
-    renderHeroMessung(zeilen[0]);
+    renderHeroMessung(zeilen);
   } catch (e) {
     console.warn('Stationen:', e.message);
     karte.hidden = true;
@@ -4232,36 +4232,80 @@ async function ladeStationen(lat, lon) {
    einordnen kann. Nur für Deutschland: Bright Sky kennt nur DWD-Stationen. */
 let naechsteStation = null;
 
-function renderHeroMessung(erste) {
+/* Wind, Böen und Regen meldet der DWD über 10, 30 oder 60 Minuten gemittelt —
+   je nach Station steht nur eines davon in der Antwort. Das kürzeste zuerst. */
+const messWert = (w, feld) => w[`${feld}_10`] ?? w[`${feld}_30`] ?? w[`${feld}_60`] ?? null;
+
+function renderHeroMessung(zeilen) {
   const el = $('#heroMess');
   if (!el) return;
   naechsteStation = null;
   el.hidden = true;
+  const erste = zeilen?.[0];
   if (!erste?.w || erste.w.temperature == null) return;
 
-  const km = erste.station.distance / 1000;
+  const abstand = (z) => z.station.distance / 1000;
+  const km = abstand(erste);
   const alterMin = (Date.now() - new Date(erste.w.timestamp).getTime()) / 60000;
   // Zu weit weg oder zu alt sagt nichts mehr über den eigenen Standort aus
   if (km > 60 || alterMin > 100 || alterMin < -10) return;
 
   naechsteStation = erste;
-  const t = new Date(erste.w.timestamp);
-  el.innerHTML = `<span class="hm-wert">${dez(erste.w.temperature)}°</span>
-    <span class="hm-txt">gemessen ${hhmm(t)} Uhr · ${esc(erste.station.station_name)}, ${
-      km < 10 ? dez(km) : Math.round(km)} km<i>?</i></span>`;
+  const w = erste.w;
+  const nameKm = (z) => `${esc(z.station.station_name)}, ${
+    abstand(z) < 10 ? dez(abstand(z)) : Math.round(abstand(z))} km`;
+
+  /* Kleine Automatikstationen messen oft nur Temperatur und Feuchte. Fehlt
+     der Wind, wird er von der nächsten Station geholt, die ihn misst — aber
+     dann steht auch dort, von welcher. Ein geliehener Wert unter einem
+     fremden Stationsnamen wäre schlimmer als gar keiner. */
+  const gruppen = [];
+  const nah = [`<b>${dez(w.temperature)}°</b>`];
+  if (w.relative_humidity != null) nah.push(`${w.relative_humidity} % Feuchte`);
+  if (w.cloud_cover != null) nah.push(wolkenWort(w.cloud_cover));
+  if (w.pressure_msl != null) nah.push(`${round(w.pressure_msl)} hPa`);
+  const regenNah = messWert(w, 'precipitation');
+  if (regenNah != null && regenNah > 0) nah.push(`${dez(regenNah)} mm Regen`);
+  gruppen.push({ werte: nah, quelle: nameKm(erste) });
+
+  const windZeile = (z) => {
+    const x = z.w;
+    const wind = messWert(x, 'wind_speed');
+    if (wind == null) return null;
+    const boe = messWert(x, 'wind_gust_speed');
+    const richtung = messWert(x, 'wind_direction');
+    const teile = [`Wind ${richtung != null ? dirName(richtung) + ' ' : ''}${round(wind)} km/h`];
+    if (boe != null && boe >= wind + 5) teile.push(`Böen ${round(boe)} km/h`);
+    return teile;
+  };
+
+  const eigenerWind = windZeile(erste);
+  if (eigenerWind) {
+    gruppen[0].werte.push(...eigenerWind);
+  } else {
+    const mitWind = zeilen.find(z => abstand(z) <= 60 && windZeile(z));
+    if (mitWind) gruppen.push({ werte: windZeile(mitWind), quelle: nameKm(mitWind) });
+  }
+
+  const t = new Date(w.timestamp);
+  el.innerHTML = `
+    <span class="hm-kopf">Gemessen ${hhmm(t)} Uhr<i>?</i></span>
+    ${gruppen.map(g => `
+      <span class="hm-zeile">
+        <span class="hm-werte">${g.werte.map(v => `<span>${v}</span>`).join('')}</span>
+        <span class="hm-quelle">${g.quelle}</span>
+      </span>`).join('')}`;
   el.hidden = false;
 }
 
 function renderStationen(zeilen) {
-  // Die Aggregate heißen je nach Messintervall anders
-  const wert = (w, feld) => w[`${feld}_10`] ?? w[`${feld}_30`] ?? w[`${feld}_60`] ?? null;
   const neueste = Math.max(...zeilen.map(z => new Date(z.w.timestamp).getTime()));
   $('#stationenStand').textContent = `gemessen ${hhmm(neueste)} Uhr`;
 
   $('#stationen').innerHTML = zeilen.map(({ station: s, w }) => {
-    const wind = wert(w, 'wind_speed');
-    const boe = wert(w, 'wind_gust_speed');
-    const richtung = wert(w, 'wind_direction');
+    const wind = messWert(w, 'wind_speed');
+    const boe = messWert(w, 'wind_gust_speed');
+    const richtung = messWert(w, 'wind_direction');
     const km = Math.round(s.distance / 1000);
 
     const rechts = [];

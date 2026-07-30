@@ -2155,24 +2155,36 @@ body.ar-offen { overflow: hidden; }
   font-size: 12px; font-weight: 600; color: var(--ink);
 }
 
-/* Messwert der nächsten DWD-Station unter der gerechneten Zahl */
+/* Was die nächste DWD-Station wirklich gemessen hat — unter der
+   gerechneten Zahl, klar als Messung ausgewiesen. */
 .hero-mess {
-  display: inline-flex; align-items: baseline; gap: 8px;
-  margin: 12px auto 0; padding: 7px 13px;
-  background: rgba(255,255,255,.07); border: 1px solid var(--card-line);
-  border-radius: 30px; color: var(--ink-dim);
+  display: grid; gap: 6px; width: 100%;
+  margin: 14px 0 0; padding: 10px 14px;
+  background: rgba(255,255,255,.06); border: 1px solid var(--card-line);
+  border-radius: var(--r-md); color: var(--ink-dim);
   font: 500 12px var(--font); cursor: pointer; text-align: left;
 }
 .hero-mess[hidden] { display: none; }
 .hero-mess:active { opacity: .65; }
-.hm-wert {
-  font-size: 15px; font-weight: 700; color: var(--ink);
-  font-variant-numeric: tabular-nums;
+.hm-kopf {
+  font-size: 10px; font-weight: 700; letter-spacing: .07em;
+  text-transform: uppercase; color: var(--ink-faint);
 }
-.hm-txt { line-height: 1.35; }
-.hm-txt i {
+.hm-kopf i {
   font-style: normal; display: inline-grid; place-items: center;
-  width: 13px; height: 13px; margin-left: 5px; border-radius: 50%;
+  width: 13px; height: 13px; margin-left: 6px; border-radius: 50%;
   background: rgba(255,255,255,.14); color: var(--ink-dim);
-  font-size: 9px; font-weight: 700; vertical-align: 1px;
+  font-size: 9px; font-weight: 700; vertical-align: -2px; letter-spacing: 0;
 }
+/* Je Station eine Zeile: Werte links, Herkunft rechts darunter */
+.hm-zeile { display: grid; gap: 1px; }
+.hm-quelle { font-size: 10.5px; color: var(--ink-faint); }
+/* Die Werte umbrechen bei Bedarf, mit Trennpunkten dazwischen */
+.hm-werte {
+  display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 0;
+  color: var(--ink); font-variant-numeric: tabular-nums; line-height: 1.4;
+}
+.hm-werte > span + span::before {
+  content: '·'; margin: 0 7px; color: var(--ink-faint);
+}
+.hm-werte b { font-size: 15px; font-weight: 700; }
