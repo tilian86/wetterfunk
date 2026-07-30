@@ -5087,6 +5087,7 @@ async function boot() {
       aktiveEbenen: activeLayers,
       onPointTap: showPointDetail,
       sharp: $('#mapSharp'),
+      mode: $('#mapMode'),
       onLocate: () => Radar.setCenter(place.lat, place.lon)
     });
     await Radar.load();

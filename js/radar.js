@@ -64,6 +64,17 @@ const Radar = (() => {
 
     map.addControl(new maplibregl.NavigationControl({ showCompass: false }), 'top-right');
     map.on('moveend', checkEchoes);
+
+    /* Scheitert das Laden eines Bildes, blieb die Karte bisher stumm leer —
+       und es sah aus, als gäbe es keine Vorhersage. Jetzt sagt sie es. */
+    map.on('error', (e) => {
+      const txt = String(e?.error?.message || e?.error || '');
+      console.warn('Karte:', txt);
+      if (/image|fc/i.test(txt) && els.mode) {
+        els.mode.innerHTML = '<span class="mm-art">Vorhersagebild ließ sich nicht laden</span>';
+        els.mode.dataset.mode = 'none';
+      }
+    });
     map.on('moveend', () => els.onMoveEnd?.(map.getCenter(), map.getZoom()));
     // Das DWD-Detailbild gilt nur für den gezeigten Ausschnitt — nach dem
     // Verschieben neu holen, aber erst wenn die Bewegung zur Ruhe kommt.
@@ -559,8 +570,13 @@ const Radar = (() => {
      ohnehin alles noch einmal. Ein kleiner Zwischenspeicher je Stunde und
      Ebenen-Kombination macht daraus eine einzige Kodierung. */
   const fcBilder = new Map();
+  let fcZaehler = 0;                 // damit veraltete Bilder nicht nachträglich landen
   const fcSchluessel = (h, ebenen) => `${h}|${[...ebenen].sort().join(',')}`;
-  function leereBildSpeicher() { fcBilder.clear(); }
+  function leereBildSpeicher() {
+    // Blob-Adressen belegen Speicher, bis sie ausdrücklich freigegeben werden
+    for (const u of fcBilder.values()) { try { URL.revokeObjectURL(u); } catch {} }
+    fcBilder.clear();
+  }
 
   /* Die erste Runde des Abspielens war die zäheste: Dort wird jedes Bild
      erstmalig kodiert. Deshalb die Stunden, die der Abspielknopf durchläuft,
@@ -581,31 +597,20 @@ const Radar = (() => {
       if (h == null) return;
       const bild = Forecast.frame(h, ebenen);
       if (bild) {
-        if (fcBilder.size > 240) fcBilder.clear();
-        fcBilder.set(fcSchluessel(h, ebenen), bild.toDataURL('image/png'));
+        bild.toBlob((blob) => {
+          if (!blob) return;
+          if (fcBilder.size > 120) leereBildSpeicher();
+          fcBilder.set(fcSchluessel(h, ebenen), URL.createObjectURL(blob));
+        }, 'image/png');
       }
       if (offen.length) ruhig(naechstes);
     };
     ruhig(naechstes);
   }
 
-  function showForecast(hourIndex, ebenen) {
-    if (!ready || !map || !Forecast.ready()) return false;
-
-    const key = fcSchluessel(hourIndex, ebenen);
-    let url = fcBilder.get(key);
-    if (!url) {
-      const bild = Forecast.frame(hourIndex, ebenen);
-      if (!bild) return false;
-      // Bild- statt Canvas-Quelle: Letztere lieferte je nach Gerät eine
-      // schwarze Fläche, weil MapLibre das Canvas im falschen Moment ausliest.
-      url = bild.toDataURL('image/png');
-      // Ein Tag Vorhersage in allen Kombinationen passt locker hinein
-      if (fcBilder.size > 240) fcBilder.clear();
-      fcBilder.set(key, url);
-    }
+  /** Bild auf die Karte legen — Quelle anlegen oder austauschen. */
+  function fcAnzeigen(url) {
     const ecken = Forecast.corners();
-
     if (!map.getSource('fc')) {
       map.addSource('fc', { type: 'image', url, coordinates: ecken });
       map.addLayer({ id: 'fc-layer', type: 'raster', source: 'fc',
@@ -614,6 +619,44 @@ const Radar = (() => {
       map.getSource('fc').updateImage({ url, coordinates: ecken });
     }
     map.setLayoutProperty('fc-layer', 'visibility', 'visible');
+  }
+
+  function showForecast(hourIndex, ebenen) {
+    if (!ready || !map || !Forecast.ready()) return false;
+
+    const key = fcSchluessel(hourIndex, ebenen);
+    const fertig = fcBilder.get(key);
+    if (fertig) {
+      fcAnzeigen(fertig);
+      setRadarVisible(false);
+      els.empty.hidden = true;
+      return true;
+    }
+
+    const bild = Forecast.frame(hourIndex, ebenen);
+    if (!bild) return false;
+
+    /* Blob statt Daten-Adresse: Base64 bläht das PNG um ein Drittel auf, und
+       das Gerät muss die Zeichenkette bei jedem Schritt erst zurückrechnen.
+       Bilder von 90 kB als Text, mehrfach je Sekunde — auf dem Telefon ist
+       das der Unterschied zwischen flüssig und gar nicht.
+
+       Bild- statt Canvas-Quelle bleibt es trotzdem: Letztere lieferte je nach
+       Gerät eine schwarze Fläche, weil MapLibre das Canvas im falschen
+       Moment ausliest. */
+    const laufendeNr = ++fcZaehler;
+    bild.toBlob((blob) => {
+      if (!blob) return;
+      /* Aufheben immer — auch wenn der Finger inzwischen weiter ist. Sonst
+         wäre beim Ziehen kein einziges Bild je im Speicher gelandet, weil
+         jeder Rückruf von einem neueren überholt wird. Nur das Anzeigen
+         bleibt dem jüngsten Bild vorbehalten. */
+      const url = URL.createObjectURL(blob);
+      if (fcBilder.size > 120) leereBildSpeicher();
+      fcBilder.set(key, url);
+      if (laufendeNr === fcZaehler) fcAnzeigen(url);
+    }, 'image/png');
+
     setRadarVisible(false);
     els.empty.hidden = true;
     return true;
