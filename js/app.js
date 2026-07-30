@@ -1840,12 +1840,25 @@ function wireExplain() {
 /** Alle Stunden eines Tages als Zeilen — Grundlage der Tagesansicht. */
 function dayHours(dayISO) {
   const h = data.hourly, out = [];
+
+  /* `is_day` gilt für den Beginn der Stunde. Geht die Sonne um 21:04 unter,
+     ist die Stunde 21–22 damit „Tag" — und ein wolkenloser Himmel wurde als
+     „21–22 Uhr sonnig" ausgewiesen, obwohl es 56 der 60 Minuten dunkel war.
+     Entscheidend ist deshalb die Mitte der Stunde. */
+  const tag = data.daily?.time?.indexOf(dayISO) ?? -1;
+  const auf = tag >= 0 ? new Date(data.daily.sunrise[tag]).getTime() : null;
+  const unter = tag >= 0 ? new Date(data.daily.sunset[tag]).getTime() : null;
+
   for (let u = 0; u < 24; u++) {
     const k = h.time.indexOf(`${dayISO}T${String(u).padStart(2, '0')}:00`);
     if (k < 0) continue;
+    const mitte = new Date(h.time[k]).getTime() + 30 * 60000;
+    const tags = (auf != null && unter != null)
+      ? (mitte >= auf && mitte <= unter)
+      : h.is_day[k] === 1;
     out.push({ u, temp: h.temperature_2m[k], mm: h.precipitation[k] ?? 0,
                wolken: h.cloud_cover[k] ?? 0, wind: h.wind_speed_10m[k],
-               boe: h.wind_gusts_10m[k], tags: h.is_day[k] === 1, uv: h.uv_index[k],
+               boe: h.wind_gusts_10m[k], tags, uv: h.uv_index[k],
                gefuehlt: h.apparent_temperature?.[k], feuchte: h.relative_humidity_2m?.[k] });
   }
   return out;
@@ -2026,9 +2039,15 @@ function openStundeSheet(i) {
   openSheet('#explainSheet');
 }
 
+/* Welcher Tag gerade offen ist. Kommen neue Daten herein, zeichnet sich das
+   Blatt damit selbst neu — sonst stünden dort die Zahlen von vorhin weiter,
+   während oben schon die frischen stehen. */
+let offenerTag = null;
+
 function openDaySheet(i) {
   const d = data.daily, dayISO = d.time[i];
   if (!dayISO) return;
+  offenerTag = dayISO;
   const stunden = dayHours(dayISO);
   const spans = daySpans(stunden).filter(s => s.art !== 'nacht' || s.bis - s.von >= 3);
   const sun = Math.round(sonnenStunden(dayISO));
@@ -2065,11 +2084,30 @@ function openDaySheet(i) {
       Verteilt über mehrere Stunden ist das kaum spürbar, in zehn Minuten ein kräftiger Schauer.
       ${warm.gefuehlt != null
         ? `Die gefühlte Temperatur weicht am Nachmittag ab: ${gefuehltWarum(warm.temp, warm.gefuehlt, warm.wind, warm.feuchte)}.`
-        : ''}</p>`;
+        : ''}</p>
+    <p class="ds-stand">Stand ${standZeit ? hhmm(standZeit) : hhmm(Date.now())} Uhr · ${
+      esc(sourceOf(sourceId()).name)}. Die App lädt alle zehn Minuten nach; dieses Blatt
+      zieht dann mit.</p>`;
 
   const l = $('#explainLink');
   if (l) l.hidden = true;
   openSheet('#explainSheet');
+}
+
+/** Nach dem Laden: offenes Tagesblatt auf den neuen Stand bringen. */
+function tagesblattAuffrischen() {
+  if (!offenerTag || !data?.daily) return;
+  // #explainSheet ist die Hülle selbst und trägt die Klasse „open"
+  if (!$('#explainSheet')?.classList.contains('open')) { offenerTag = null; return; }
+  const i = data.daily.time.indexOf(offenerTag);
+  if (i < 0) return;
+
+  /* Wer gerade unten bei den Windwerten liest, soll nicht plötzlich wieder
+     oben stehen, nur weil im Hintergrund neue Zahlen kamen. */
+  const rolle = $('#explainSheet .sheet');
+  const oben = rolle?.scrollTop ?? 0;
+  openDaySheet(i);
+  if (rolle) rolle.scrollTop = oben;
 }
 
 
@@ -3471,6 +3509,7 @@ function openSheet(id) {
   s.querySelector('.sheet')?.scrollTo?.(0, 0);
 }
 function closeSheet(id) {
+  offenerTag = null;
   const s = $(id); s.classList.remove('open');
   const blatt = s.querySelector('.sheet');
   if (blatt) blatt.style.transform = '';
@@ -3566,15 +3605,17 @@ async function selectPlace(p) {
 // ══ Laden & Aktualisieren ══════════════════════════════════
 let busy = false;
 
-async function refresh() {
+async function refresh(leise = false) {
   if (!place || busy) return;
   busy = true;
   document.body.classList.add('loading');
   $('#refreshBtn').classList.add('spin');
-  const stamp = $('#footStamp');
-  if (stamp) stamp.textContent = 'Daten werden geholt…';
-  zeigeStand('lädt…');
-  toast('Daten werden geholt…', 1500);
+  if (!leise) {
+    const stamp = $('#footStamp');
+    if (stamp) stamp.textContent = 'Daten werden geholt…';
+    zeigeStand('lädt…');
+    toast('Daten werden geholt…', 1500);
+  }
 
   // Unabhängig von den Zahlen — er soll auch dastehen, wenn Open-Meteo hakt
   loadDwdText(place.lat, place.lon);
@@ -3640,8 +3681,11 @@ async function refresh() {
       `Quelle: ${sourceOf(sourceId()).name}` +
       (veraltet ? ' · aus dem Zwischenspeicher' : umweg ? ' · über den Umweg geholt' : '');
     setzeStand(standZeitpunkt);
-    toast(veraltet ? 'Der Wetterdienst antwortet gerade nicht — angezeigt werden die zuletzt geholten Daten.'
-                   : 'Aktualisiert.', veraltet ? 4500 : 1400);
+    tagesblattAuffrischen();     // erst jetzt — das Blatt zeigt den Stand mit an
+    if (!leise || veraltet) {
+      toast(veraltet ? 'Der Wetterdienst antwortet gerade nicht — angezeigt werden die zuletzt geholten Daten.'
+                     : 'Aktualisiert.', veraltet ? 4500 : 1400);
+    }
     veraltet = false; umweg = false; standAlt = null;
     document.body.classList.remove('loading', 'error');
   } catch (err) {
@@ -4844,13 +4888,30 @@ function wire() {
     toast('Webcam gespeichert.');
   });
 
-  // Beim Zurückkehren auf den Homescreen-Tab: still nachladen
+  /* Frisch bleiben, ohne dass man daran denken muss. Zwei Wege:
+
+     1. Beim Zurückkehren zur App — der häufige Fall auf dem Telefon.
+     2. Alle zehn Minuten, solange die App offen im Vordergrund liegt.
+        Ohne das blieben die Zahlen stehen, wenn die App den ganzen
+        Nachmittag offen ist, und ein Tippen auf einen Tag zeigte den
+        Stand von vor drei Stunden.
+
+     Zehn Minuten passen zum Takt der Quellen: Das Radar kommt alle fünf
+     Minuten, die DWD-Warnungen etwa alle zwei, die Modellvorhersage
+     stündlich. Häufiger wäre nur Last ohne neue Zahlen. */
+  const FRISCH_MS = 6e5;
+  const zuAlt = () => {
+    const c = store.get(LS.cache, null);
+    return !c || Date.now() - c.at > FRISCH_MS;
+  };
+
   document.addEventListener('visibilitychange', () => {
-    if (!document.hidden) {
-      const c = store.get(LS.cache, null);
-      if (!c || Date.now() - c.at > 6e5) refresh();
-    }
+    if (!document.hidden && zuAlt()) refresh(true);
   });
+
+  setInterval(() => {
+    if (!document.hidden && zuAlt()) refresh(true);
+  }, 60000);
 }
 
 // ══ Start ══════════════════════════════════════════════════
