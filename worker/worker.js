@@ -662,20 +662,46 @@ function warnungMelden(daten, eintrag) {
 function entscheide(lage, eintrag) {
   const alt = eintrag.gemeldet || {};
 
+  /* Solange es regnet, ist die Vorhersage vom Ende die eine Zahl, die zählt —
+     und sie verschiebt sich. Deshalb wird nachgemeldet, wenn sie sich um mehr
+     als eine Viertelstunde bewegt hat, und sonst spätestens nach 45 Minuten
+     mit dem dann gültigen Stand. Wer im Regen steht, will nicht dreimal
+     dasselbe hören, aber auch nicht mit einer Zahl von vor zwei Stunden
+     dastehen. */
+  const NACHFASSEN_MS = 45 * 60000;
+  const ENDE_TOLERANZ = 15 * 60000;
+
   // Fall 1: Es regnet gerade — melden, wann es aufhört
   if (lage.laeuft) {
-    const schonGesagt = alt.art === 'ende'
-      && Math.abs((alt.ende || 0) - lage.laeuft.ende) < START_TOLERANZ;
-    if (schonGesagt) return null;
-    // Nur ansagen, wenn das Ende absehbar ist und nicht in zwei Minuten eintritt
     const minuten = Math.round((lage.laeuft.ende - Date.now()) / 60000);
+    // Nur ansagen, wenn das Ende absehbar ist und nicht in zwei Minuten eintritt
     if (minuten < 10 || minuten > 180) return null;
+
+    const gleichesEnde = alt.art === 'ende'
+      && Math.abs((alt.ende || 0) - lage.laeuft.ende) < ENDE_TOLERANZ;
+    const frischGemeldet = Date.now() - (alt.wann || 0) < NACHFASSEN_MS;
+    if (gleichesEnde && frischGemeldet) return null;
+
     return {
       art: 'ende',
       titel: `Regen hört gegen ${lage.laeuft.endeUhr} Uhr auf`,
       text: `Noch etwa ${minuten} Minuten${lage.naechste
         ? `. Danach ab ${lage.naechste.startUhr} Uhr wieder ${lage.naechste.staerke}.` : '.'}`,
-      merker: { art: 'ende', ende: lage.laeuft.ende }
+      merker: { art: 'ende', ende: lage.laeuft.ende, wann: Date.now(), regnete: true }
+    };
+  }
+
+  /* Fall 1b: Es hat aufgehört. Beim letzten Durchgang lief noch Regen —
+     dann gehört die Entwarnung dazu, sonst wartet man weiter im Trockenen
+     auf ein Ende, das längst eingetreten ist. */
+  if (alt.regnete) {
+    return {
+      art: 'vorbei',
+      titel: 'Regen ist durch',
+      text: lage.naechste
+        ? `Trocken. Ab ${lage.naechste.startUhr} Uhr kommt ${lage.naechste.staerke} nach.`
+        : 'Trocken, und in den nächsten Stunden kommt nichts nach.',
+      merker: { art: 'vorbei', wann: Date.now(), regnete: false }
     };
   }
 
@@ -691,7 +717,7 @@ function entscheide(lage, eintrag) {
     titel: minuten <= 20 ? `Gleich ${p.staerke}` : `In ${minuten} Minuten ${p.staerke}`,
     text: `Von ${p.startUhr} bis ${p.endeUhr} Uhr, rund ${p.summe.toFixed(1)} mm.` +
           (p.danachPause ? ` Danach Pause bis ${p.danachPause}.` : ''),
-    merker: { art: 'start', start: p.start }
+    merker: { art: 'start', start: p.start, wann: Date.now(), regnete: false }
   };
 }
 

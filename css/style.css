@@ -2195,3 +2195,34 @@ body.ar-offen { overflow: hidden; }
   border-top: 1px solid var(--card-line);
   font-size: 11px; line-height: 1.5; color: var(--ink-faint);
 }
+
+/* Regenzeile antippbar, mit Restdauer-Leiste bei laufendem Regen */
+.verdict { cursor: pointer; }
+.verdict:active { opacity: .7; }
+.rp-rest { color: #6cc6ff; }
+
+.rp-leiste {
+  display: flex; align-items: flex-end; gap: 2px;
+  height: 34px; margin: 11px 0 0;
+}
+.rp-leiste i {
+  flex: 1; height: var(--h); border-radius: 2px; display: block;
+}
+.rp-nass { background: linear-gradient(180deg, #6cc6ff, #2f8fd6); }
+.rp-trocken { background: rgba(255,255,255,.13); }
+
+.rp-achse {
+  position: relative; display: block; height: 14px; margin-top: 4px;
+  font-size: 10px; color: var(--ink-faint);
+}
+.rp-achse em { font-style: normal; position: absolute; top: 0; }
+.rp-achse em:first-child { left: 0; }
+.rp-rechts { right: 0; }
+.rp-ende {
+  transform: translateX(-50%); color: #6cc6ff; font-weight: 600;
+  white-space: nowrap;
+}
+.rp-ende::before {
+  content: ''; position: absolute; left: 50%; top: -38px;
+  width: 1px; height: 36px; background: rgba(108,198,255,.55);
+}

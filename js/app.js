@@ -354,11 +354,44 @@ function renderVerdict() {
   const wet = near.filter(x => x.mm > 0.05);
 
   if (raining) {
+    /* Regnet es gerade, ist die einzig interessante Frage: wie lange noch?
+       Die Viertelstundenwerte reichen zwei Stunden voraus — daraus eine
+       Leiste, die den nassen Rest zeigt und wo er aufhört. */
     const dry = near.find(x => x.t > now && x.mm <= 0.05);
     const word = WX.precipWord(data.current.weather_code);
-    el.innerHTML = dry
-      ? `<b>${word} gerade.</b> Lässt gegen ${hhmm(dry.t)} nach.`
-      : `<b>${word} gerade.</b> Hält vorerst an.`;
+    const bis = dry ? dry.t : null;
+    const restMin = bis ? Math.max(0, Math.round((bis - now) / 60000)) : null;
+
+    // Zeitfenster der Leiste: mindestens eine Stunde, sonst bis zum Ende
+    const fenster = Math.min(120, Math.max(60, (restMin ?? 120) + 15));
+    const bloecke = near.filter(x => x.t >= now - 9e5 && x.t <= now + fenster * 60000);
+    const staerkste = Math.max(0.4, ...bloecke.map(x => x.mm));
+
+    const leiste = bloecke.length ? `
+      <span class="rp-leiste" aria-hidden="true">
+        ${bloecke.map(x => {
+          const anteil = Math.min(1, x.mm / staerkste);
+          return `<i class="${x.mm > 0.05 ? 'rp-nass' : 'rp-trocken'}"
+                     style="--h:${(24 + anteil * 34).toFixed(0)}%"></i>`;
+        }).join('')}
+      </span>
+      <span class="rp-achse">
+        <em>jetzt</em>${bis ? `<em class="rp-ende" style="left:${
+          Math.min(97, (bis - (now - 9e5)) / ((fenster + 15) * 60000) * 100).toFixed(1)}%">${hhmm(bis)}</em>` : ''}
+        <em class="rp-rechts">+${Math.round(fenster / 60)} Std.</em>
+      </span>` : '';
+
+    /* Hört der Regen auf und fängt im selben Fenster wieder an, gehört das
+       in denselben Satz. „Noch 14 Minuten" allein hätte jemanden losgeschickt,
+       der eine halbe Stunde später wieder im Regen steht. */
+    const wieder = bis ? near.find(x => x.t > bis && x.mm > 0.05) : null;
+    const nachsatz = wieder ? ` Dann ab ${hhmm(wieder.t)} wieder.` : '';
+
+    el.innerHTML = `<b>${word} gerade.</b> ${
+      restMin != null
+        ? (restMin <= 5 ? `Hört gleich auf.${nachsatz}`
+           : `Noch etwa <b class="rp-rest">${restMin} Minuten</b>, bis gegen ${hhmm(bis)}.${nachsatz}`)
+        : 'Hält die nächsten zwei Stunden an.'}${leiste}`;
     el.dataset.tone = 'wet';
     return;
   }
@@ -1742,6 +1775,17 @@ const EXPLAIN = {
     link: { url: 'https://www.dwd.de/DE/forschung/wettervorhersage/num_modellierung/'
                + '01_num_vorhersagemodelle/icon_beschreibung.html',
             text: 'Wie das Modell ICON rechnet (DWD)' } },
+  regenlage: { titel: 'Die Regenzeile',
+    text: 'Diese Zeile beantwortet die häufigste Frage zuerst: Werde ich nass?\n\n'
+        + 'Regnet es gerade, steht dort, wie lange noch — und die Leiste darunter zeigt die '
+        + 'nächsten Viertelstunden. Hohe Balken heißen kräftiger Regen, flache Nieseln, '
+        + 'die dunklen sind trocken.\n\n'
+        + 'Regnet es nicht, sucht die App zuerst in den Viertelstundenwerten der nächsten '
+        + 'zwei Stunden. Findet sie dort nichts, geht sie die kommenden 24 Stunden durch und '
+        + 'nennt die erste Stunde mit nennenswertem Regen.\n\n'
+        + 'Die Viertelstundenwerte stammen aus dem Kurzfristmodell des DWD und sind für die '
+        + 'nächsten ein bis zwei Stunden erstaunlich treffsicher. Weiter voraus wird aus '
+        + '„es regnet um 16:15" eher „irgendwann am Nachmittag".' },
   mond: { titel: 'Mondphase',
     text: 'Der Anteil der beleuchteten Mondscheibe. Bei Vollmond ist die Nacht so hell, dass '
         + 'schwache Sterne und Sternschnuppen untergehen; bei Neumond ist der Himmel am dunkelsten. '
@@ -4856,6 +4900,15 @@ function wire() {
     el.addEventListener('click', openZonen);
   });
   $('#heroMess')?.addEventListener('click', () => openExplain('messung'));
+  const vd = $('#verdict');
+  if (vd) {
+    vd.setAttribute('role', 'button');
+    vd.tabIndex = 0;
+    vd.addEventListener('click', () => openExplain('regenlage'));
+    vd.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openExplain('regenlage'); }
+    });
+  }
   $('#pushToggle')?.addEventListener('click', pushUmschalten);
   // Häkchen wirken sofort — auch bei bereits laufendem Abo
   PUSH_ARTEN.forEach(([, key, sel]) => {
