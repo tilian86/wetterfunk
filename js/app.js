@@ -907,6 +907,19 @@ function jetztIndex(punkte = buildScrubPoints()) {
   return best;
 }
 
+/* Wie fein der Regler greift, hängt davon ab, wie viele Stützstellen auf
+   welchen Zeitraum entfallen — der Regler verteilt sie ja gleichmäßig über
+   seine Breite.
+
+   Vorher lagen 117 der 142 Stellen in der fernen Zukunft: Die ersten drei
+   Stunden bekamen damit ein Sechstel des Wegs, gut fünfzig Pixel auf dem
+   Telefon. Genau dort will man aber genau treffen — ob der Schauer um 16:15
+   oder 16:45 kommt, entscheidet, ob man losgeht.
+
+   Jetzt wird nach hinten ausgedünnt: die nächsten drei Stunden im
+   Viertelstundentakt, bis zwölf Stunden stündlich, bis zwei Tage in
+   Dreierschritten, danach alle sechs Stunden. Die fünf Tage bleiben
+   erreichbar, aber der Nahbereich bekommt fast die halbe Breite. */
 function buildFuturePoints() {
   const h = data.hourly, m = data.minutely_15;
   const jetzt = Date.now();
@@ -923,12 +936,25 @@ function buildFuturePoints() {
     }
   }
 
+  /** Abstand in Stunden, je nachdem wie weit der Zeitpunkt voraus liegt. */
+  const schrittWeite = (stundenVoraus) =>
+    stundenVoraus <= 12 ? 1 : stundenVoraus <= 48 ? 3 : 6;
+
   const i0 = nowIndex(h.time);
+  let letzte = punkte.length ? punkte[punkte.length - 1].t.getTime() : 0;
   for (let k = 0; k < h.time.length - i0; k++) {
     const t = new Date(h.time[i0 + k]);
-    if (punkte.length && t.getTime() <= punkte[punkte.length - 1].t.getTime()) continue;
-    if (punkte.length >= 1 && t.getTime() > jetzt + 120 * 36e5) break;
+    const ms = t.getTime();
+    if (punkte.length && ms <= letzte) continue;
+    if (punkte.length >= 1 && ms > jetzt + 120 * 36e5) break;
+
+    const voraus = (ms - jetzt) / 36e5;
+    const weite = schrittWeite(voraus);
+    // Auf volle Schrittweiten rasten, damit die Marken auf runden Zeiten sitzen
+    if (weite > 1 && t.getHours() % weite !== 0) continue;
+
     punkte.push({ t, fein: false, i: i0 + k });
+    letzte = ms;
   }
   return punkte;
 }
@@ -1105,12 +1131,16 @@ function toggleZeitraffer() {
     if (k++ >= ziel) {
       clearInterval(spielTimer); spielTimer = null;
       knopf?.classList.remove('is-playing');
+      // Die Zahlen erst jetzt setzen — während des Laufs wären sie nur Last
+      Radar.updateLabels?.();
     }
   };
   schritt();
-  /* In der Vorhersage etwas langsamer: Dort springt das Bild in größeren
-     Schritten, und die Karte muss je Schritt ein neues Bild zeichnen. */
-  spielTimer = setInterval(schritt, 420);
+  /* 420 ms je Bild war zäh: Eine Zugbahn erkennt man erst, wenn die Bilder
+     schnell genug aufeinanderfolgen. Bei 150 ms läuft der Nachmittag in gut
+     vier Sekunden durch — nah an dem, was Radaransichten üblicherweise
+     zeigen, und immer noch verfolgbar. */
+  spielTimer = setInterval(schritt, 150);
 }
 
 // ══ Kartenebenen ═══════════════════════════════════════════
@@ -1200,17 +1230,23 @@ function syncMapAt(ziel) {
   if (!radarReady || !ziel) return;
   const vorlauf = (ziel - Date.now()) / 60000;      // Minuten voraus
 
+  /* Die Zahlen auf der Karte bauen bei jedem Aufruf eine neue GeoJSON-Quelle
+     aus 400 Punkten. Während der Animation ist das die teuerste Einzelheit
+     und ändert dabei kaum etwas Sichtbares — deshalb dort ausgelassen und
+     einmal am Ende nachgeholt. */
+  const beschriften = () => { if (!spielTimer) Radar.updateLabels(); };
+
   const zeit = mapZeitWort(ziel);
   if (vorlauf <= radarGrenze()) {
     Radar.showRadar();
     Radar.showAt(ziel instanceof Date ? ziel.getTime() : ziel);
-    Radar.updateLabels();          // sonst greift ein Ebenenwechsel hier nicht
+    beschriften();                 // sonst greift ein Ebenenwechsel hier nicht
     setMapMode(zeit, vorlauf > 7 ? 'Radar-Kurzprognose' : 'Radarmessung', 'radar');
   } else {
     const hi = Forecast.indexFor(ziel);
     const flaechen = new Set([...activeLayers()].filter(x => x !== 'zahlen'));
     const ok = hi >= 0 && (flaechen.size ? Radar.showForecast(hi, flaechen) : true);
-    Radar.updateLabels();
+    beschriften();
     // Die Zahlen sind keine Fläche — sie gehören nicht in die Aufzählung
     const namen = LAYERS.filter(l => l.id !== 'zahlen' && activeLayers().has(l.id))
       .map(l => l.name).join(' + ') || 'Karte';
@@ -1247,7 +1283,18 @@ function ladeRaster(lat, lon, zoom, ebenen, sicht) {
   if (laden) laden.hidden = false;
 
   return Forecast.load(lat, lon, zoom, ebenen, sicht)
-    .then(() => { syncMapAt(currentScrubTime()); Radar.updateLabels?.(); })
+    .then(() => {
+      syncMapAt(currentScrubTime());
+      Radar.updateLabels?.();
+      // Die Stunden, die der Abspielknopf durchläuft, still vorbereiten
+      const flaechen = new Set([...ebenen].filter(x => x !== 'zahlen'));
+      const stunden = [];
+      for (let k = 0; k <= 4; k++) {
+        const h = Forecast.indexFor(Date.now() + k * 3600e3);
+        if (h >= 0 && !stunden.includes(h)) stunden.push(h);
+      }
+      Radar.vorwaermen?.(stunden, flaechen);
+    })
     .catch((e) => {
       // Beim Abruflimit den Grund nennen — "keine Daten" wäre irreführend
       setMapMode(zeit(), /429/.test(e?.message)
