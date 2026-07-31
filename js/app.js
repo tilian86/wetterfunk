@@ -1149,6 +1149,7 @@ const LAYERS = [
   { id: 'wolken',     name: 'Wolken',       farbe: '#e6ecf5' },
   { id: 'temperatur', name: 'Temperatur',   farbe: '#ff9f6a' },
   { id: 'boeen',      name: 'Sturmböen',    farbe: '#be78f0' },
+  { id: 'wind',       name: 'Windpfeile',   farbe: '#39a0e8' },
   { id: 'gewitter',   name: 'Gewitter',     farbe: '#ff5a5a' },
   { id: 'zahlen',     name: 'Grad-Zahlen',  farbe: '#ffffff' }
 ];
@@ -1244,7 +1245,8 @@ function syncMapAt(ziel) {
     setMapMode(zeit, vorlauf > 7 ? 'Radar-Kurzprognose' : 'Radarmessung', 'radar');
   } else {
     const hi = Forecast.indexFor(ziel);
-    const flaechen = new Set([...activeLayers()].filter(x => x !== 'zahlen'));
+    // Zahlen und Windpfeile sind Symbole, keine Farbflächen
+    const flaechen = new Set([...activeLayers()].filter(x => x !== 'zahlen' && x !== 'wind'));
     const ok = hi >= 0 && (flaechen.size ? Radar.showForecast(hi, flaechen) : true);
     beschriften();
     // Die Zahlen sind keine Fläche — sie gehören nicht in die Aufzählung
@@ -4508,6 +4510,11 @@ const EBENEN_HILFE = {
   temperatur: { name: 'Temperatur', farbe: '#ff9f6a',
     text: 'Blau ist kalt, grün mild, orange und rot heiß. Gut zu sehen, wo eine '
         + 'Kaltfront durchzieht oder wo es im Bergland kühler bleibt.' },
+  wind: { name: 'Windpfeile', farbe: '#39a0e8',
+    text: 'Jeder Pfeil zeigt, wohin der Wind weht — Größe und Farbe sagen, wie stark: '
+        + 'grau ist ein Lüftchen, blau spürbarer Wind, violett kräftig (ab 30 km/h), '
+        + 'rot stürmisch (ab 55 km/h). Die Angabe ist der Mittelwind in 10 m Höhe; '
+        + 'Böen darüber zeigt die eigene Ebene.' },
   boeen: { name: 'Sturmböen', farbe: '#af5afa',
     text: 'Violett erscheint erst ab 45 km/h — das ist Windstärke 6, bei der Regenschirme '
         + 'kaum noch zu halten sind. Ab 60 km/h knicken Äste, ab 75 km/h wird es gefährlich.' },
@@ -4919,7 +4926,17 @@ function toggleMapFull() {
   const an = karte.classList.toggle('is-full');
   document.body.classList.toggle('map-full', an);
   $('#mapFull').setAttribute('aria-label', an ? 'Karte verkleinern' : 'Karte vergrößern');
-  setTimeout(() => Radar.map?.resize(), 220);
+
+  /* Läuft gerade ein Kameraflug (etwa zur Erdkugel), rechnet er mit der
+     alten Fenstergröße weiter — nach dem Umschalten lag die Kugel dann
+     außerhalb des Bildes und die Karte wirkte leer. Deshalb: Flug anhalten,
+     Größe anpassen, Kamera ausdrücklich wieder auf ihren Stand setzen. */
+  const m = Radar.map;
+  if (m) {
+    m.stop();
+    const kamera = { center: m.getCenter(), zoom: m.getZoom() };
+    setTimeout(() => { m.resize(); m.jumpTo(kamera); }, 220);
+  }
   if (an) karte.scrollIntoView({ block: 'start', behavior: 'instant' });
 }
 

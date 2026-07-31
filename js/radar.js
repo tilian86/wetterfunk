@@ -227,7 +227,55 @@ const Radar = (() => {
       sieht, wie warm es wo ist, statt Farben deuten zu müssen. */
   /** Zahlen auf der Karte. Wo Regen fällt, steht die Menge in mm — die ist
       dort die interessantere Angabe; sonst die Temperatur. */
+  /* Windpfeile: Pfeilzeichen als Schriftsymbol, gedreht in die Richtung, in
+     die der Wind WEHT (meteorologische Angabe + 180°). Größe und Farbe nach
+     Stärke — ein blasser kleiner Pfeil ist ein Lüftchen, ein roter großer
+     ein Sturm. Kein Bild nötig, die Kartenschrift bringt das Zeichen mit. */
+  function updateWind() {
+    if (!ready || !map || !Forecast.ready()) return;
+    const an = els.aktiveEbenen?.().has('wind');
+    if (!an) {
+      if (map.getLayer('wind-layer')) map.setLayoutProperty('wind-layer', 'visibility', 'none');
+      return;
+    }
+    const zeit = els.currentTime?.();
+    const h = Math.max(0, zeit ? Forecast.indexFor(zeit) : 0);
+    const geo = {
+      type: 'FeatureCollection',
+      features: Forecast.windPoints(h).map(p => ({
+        type: 'Feature',
+        geometry: { type: 'Point', coordinates: [p.lon, p.lat] },
+        properties: { rot: (p.richtung + 180) % 360, spd: Math.round(p.kmh) }
+      }))
+    };
+    if (!map.getSource('wind')) {
+      map.addSource('wind', { type: 'geojson', data: geo });
+      map.addLayer({
+        id: 'wind-layer', type: 'symbol', source: 'wind',
+        layout: {
+          'text-field': '↑',
+          'text-font': ['Noto Sans Bold'],
+          'text-rotate': ['get', 'rot'],
+          'text-rotation-alignment': 'map',
+          'text-allow-overlap': true,
+          'text-size': ['interpolate', ['linear'], ['get', 'spd'],
+                        0, 13, 20, 18, 45, 25, 80, 32]
+        },
+        paint: {
+          'text-color': ['step', ['get', 'spd'],
+            '#5a7690', 12, '#2f8fd6', 30, '#8b3fd6', 55, '#e0342f'],
+          'text-halo-color': 'rgba(255,255,255,.85)',
+          'text-halo-width': 1.4
+        }
+      });
+    } else {
+      map.getSource('wind').setData(geo);
+      map.setLayoutProperty('wind-layer', 'visibility', 'visible');
+    }
+  }
+
   function updateLabels() {
+    updateWind();
     if (!ready || !map || !Forecast.ready()) return;
     const zeit = els.currentTime?.();
     const h = Math.max(0, zeit ? Forecast.indexFor(zeit) : 0);
@@ -494,6 +542,7 @@ const Radar = (() => {
      genau die Ebenen, die gerade eingeschaltet sind. */
   const LEGENDE = {
     wolken:     { farbe: '#9aa8bb', text: 'Wolken' },
+    wind:       { farbe: '#2f8fd6', text: 'Windpfeile' },
     boeen:      { farbe: '#af5afa', text: 'Böen ab 45 km/h' },
     gewitter:   { farbe: '#ff3c3c', text: 'Gewitterneigung' },
     temperatur: { farbe: '#ff9f6a', text: 'Temperatur' }
