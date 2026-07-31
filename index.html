@@ -35,10 +35,10 @@
 <meta name="theme-color" content="#0b1220">
 <link rel="apple-touch-icon" href="icons/icon-180.png">
 <link rel="icon" href="icons/icon-192.png">
-<link rel="manifest" href="manifest.webmanifest?v=86">
+<link rel="manifest" href="manifest.webmanifest?v=91">
 
-<link rel="stylesheet" href="vendor/maplibre-gl.css?v=86">
-<link rel="stylesheet" href="css/style.css?v=86">
+<link rel="stylesheet" href="vendor/maplibre-gl.css?v=91">
+<link rel="stylesheet" href="css/style.css?v=91">
 </head>
 <body>
 
@@ -135,6 +135,8 @@
     <div class="card-head"><h2>10 Tage</h2><span class="card-sub" id="dailyRange"></span></div>
     <!-- Feste Skala über der Liste: die Striche in den Streifen brauchen
          eine Beschriftung, die auch beim Scrollen sichtbar bleibt. -->
+    <!-- Verlauf über alle zehn Tage: Temperatur als Kurve, Regen als Säulen -->
+    <div class="meteo-wrap" id="meteoWrap"></div>
     <div class="daily-scale">
       <span class="ds-lead">Tagesverlauf</span>
       <span class="ds-marks"><i>0</i><i>6</i><i>12</i><i>18</i><i>24 Uhr</i></span>
@@ -442,6 +444,8 @@
       <button class="sheet-x" aria-label="Schließen">✕</button>
     </div>
     <h3>Ort wählen</h3>
+    <!-- Ein Tipp statt Suche: die zuletzt genutzten Orte als Chips -->
+    <div class="ort-chips" id="ortChips" hidden></div>
     <div class="search-row">
       <input type="search" id="placeSearch" placeholder="Stadt suchen…" autocomplete="off" enterkeyhint="search">
     </div>
@@ -554,12 +558,12 @@
 
 <div class="toast" id="toast" hidden></div>
 
-<script src="vendor/maplibre-gl.js?v=86"></script>
-<script src="js/icons.js?v=86"></script>
-<script src="js/radar.js?v=86"></script>
-<script src="js/forecast.js?v=86"></script>
-<script src="js/briefing.js?v=86"></script>
-<script src="js/news.js?v=86"></script>
-<script src="js/app.js?v=86"></script>
+<script src="vendor/maplibre-gl.js?v=91"></script>
+<script src="js/icons.js?v=91"></script>
+<script src="js/radar.js?v=91"></script>
+<script src="js/forecast.js?v=91"></script>
+<script src="js/briefing.js?v=91"></script>
+<script src="js/news.js?v=91"></script>
+<script src="js/app.js?v=91"></script>
 </body>
 </html>

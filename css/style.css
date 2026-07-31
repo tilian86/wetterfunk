@@ -2226,3 +2226,52 @@ body.ar-offen { overflow: hidden; }
   content: ''; position: absolute; left: 50%; top: -38px;
   width: 1px; height: 36px; background: rgba(108,198,255,.55);
 }
+
+/* ── Meteogramm: zehn Tage Temperatur und Regen ────────────── */
+.meteo-wrap { margin: 2px 0 14px; }
+.mg-svg { width: 100%; height: auto; display: block; }
+.mg-svg text { stroke: none; text-anchor: middle; }
+/* Die globale Regel `svg { stroke: currentColor }` zog sonst eine helle
+   Kontur um die gefüllte Temperaturfläche — sah aus wie eine Achse. */
+.mg-svg rect, .mg-svg circle, .mg-svg path { stroke: none; }
+
+.mg-nacht { fill: rgba(255,255,255,.035); }
+.mg-tag   { stroke: rgba(255,255,255,.09); stroke-width: 1; }
+.mg-achse { stroke: rgba(255,255,255,.16); stroke-width: 1; }
+/* Nach dem Reset oben ausdrücklich wieder setzen — sonst nimmt die Regel
+   `.mg-svg path { stroke: none }` auch der Kurve ihren Strich. */
+.mg-svg path.mg-linie {
+  stroke: #ff9f6a; stroke-width: 1.6;
+  stroke-linejoin: round; stroke-linecap: round; fill: none;
+}
+.mg-regen { fill: #4aa8e8; }
+.mg-punkt { fill: #fff; }
+.mg-wert  {
+  font: 700 11.5px var(--font); fill: var(--ink);
+  paint-order: stroke; stroke: rgba(11,18,32,.85); stroke-width: 2.4;
+}
+.mg-jetzt { stroke: rgba(255,255,255,.55); stroke-width: 1; stroke-dasharray: 2 2; }
+.mg-wtag  { font: 600 11px var(--font); fill: var(--ink-faint); }
+.mg-achsentext { font: 500 9.5px var(--font); fill: var(--ink-faint); text-anchor: end; }
+.mg-regenachse { fill: #4aa8e8; }
+
+/* ── Gespeicherte Orte als Chips ───────────────────────────── */
+.ort-chips {
+  display: flex; flex-wrap: wrap; gap: 7px;
+  margin: 12px 0 4px;
+}
+.ort-chips[hidden] { display: none; }
+.ort-chip {
+  display: inline-flex; align-items: center; gap: 5px;
+  padding: 8px 14px 8px 11px; border-radius: 30px;
+  background: rgba(255,255,255,.07); border: 1px solid var(--card-line);
+  color: var(--ink-dim); font: 600 13px var(--font); cursor: pointer;
+  transition: background .15s, color .15s, border-color .15s;
+}
+.ort-chip .oc-pin { width: 14px; height: 14px; flex: none; opacity: .7; }
+.ort-chip.on {
+  background: rgba(108,198,255,.18); border-color: rgba(108,198,255,.42);
+  color: var(--accent);
+}
+.ort-chip.on .oc-pin { opacity: 1; }
+.ort-chip:active { transform: scale(.96); }
