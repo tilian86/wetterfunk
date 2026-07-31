@@ -5201,16 +5201,20 @@ function openDwdFull() {
   openSheet('#explainSheet');
 }
 
+/* Reihenfolge nach Alltagsnutzen: Was man täglich braucht, steht vorn.
+   Wind, UV und Feuchte schaut man ständig nach — wie treffsicher das Modell
+   zuletzt war, vielleicht einmal die Woche. Deshalb sind die auswertenden
+   Abschnitte ans Ende gerückt, hinter die Berichte. */
 const NAV = [
   { id: 'nav-jetzt',   ziel: '.hero',        name: 'Jetzt' },
   { id: 'nav-stunden', ziel: '.card-hourly', name: 'Stündlich' },
   { id: 'nav-tage',    ziel: '#daily',       name: '10 Tage' },
   { id: 'nav-radar',   ziel: '.card-radar',  name: 'Radar & Zeit' },
-  { id: 'nav-rueck',   ziel: '.card-rueck',  name: 'Trefferquote' },
   { id: 'nav-details', ziel: '#tiles',       name: 'Details' },
   { id: 'nav-sonne',   ziel: '.card-cd',     name: 'Sonne' },
   { id: 'nav-dwd',     ziel: '.card-dwd',    name: 'DWD' },
   { id: 'nav-bericht', ziel: '.card-brief',  name: 'Bericht' },
+  { id: 'nav-rueck',   ziel: '.card-rueck',  name: 'Trefferquote' },
   { id: 'nav-news',    ziel: '.card-news',   name: 'News' }
 ];
 
