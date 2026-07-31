@@ -186,7 +186,7 @@ function loadAir(lat, lon) {
 function loadModels(lat, lon) {
   const p = new URLSearchParams({
     latitude: lat, longitude: lon, timezone: 'auto', forecast_days: '7',
-    hourly: 'temperature_2m,precipitation',
+    hourly: 'temperature_2m,precipitation,cloud_cover',
     models: MODELS.map(m => m.id).join(',')
   });
   return fetchCached(`${FORECAST}?${p}`, 20).catch(() => null);
@@ -1615,11 +1615,101 @@ function ebenenGeaendert() {
 
 // ══ Rendering: Modellvergleich ═════════════════════════════
 /** Zeigt, wo sich die Rechenmodelle einig sind – und ab wann nicht mehr. */
+/* ── Modellvergleich nach Wettercharakter ──────────────────
+   Florians Einwand: Temperaturkurven übereinander sagen dem Laien wenig.
+   Die eigentliche Frage ist, ob die Modelle denselben WETTERABLAUF sehen —
+   sonnig, bedeckt oder Regen. Deshalb je Tag und Modell ein Zeichen, und
+   daneben, ob sie sich einig sind. Die Temperaturkurve bleibt darunter
+   als Detail: Ihre Spannweite zeigt, WANN die Rechnung unsicher wird.
+
+   Grob gruppiert wird in freundlich / trüb / Regen. Ob 40 oder 60 % Wolken,
+   ist Geschmackssache — ob nass oder trocken, ist die Entscheidung. */
+function modellCharakter(H, mid, tagISO) {
+  let regen = 0, hatRegen = false;
+  const wolken = [];
+  for (let k = 0; k < H.time.length; k++) {
+    if (!H.time[k].startsWith(tagISO)) continue;
+    const p = H[`precipitation_${mid}`]?.[k];
+    if (p != null) { regen += p; hatRegen = true; }
+    const stunde = +H.time[k].slice(11, 13);
+    const c = H[`cloud_cover_${mid}`]?.[k];
+    if (c != null && stunde >= 8 && stunde <= 20) wolken.push(c);
+  }
+  if (!wolken.length && !hatRegen) return null;         // Modell reicht nicht so weit
+
+  if (regen >= 1) return { zeichen: '🌧', wort: 'Regen', grob: 'nass', mm: regen };
+  const wm = wolken.length ? wolken.reduce((a, b) => a + b, 0) / wolken.length : null;
+  if (wm == null) return null;
+  const tropfen = regen >= 0.2;
+  if (wm < 25) return { zeichen: '☀️', wort: 'sonnig', grob: 'freundlich', mm: regen, tropfen };
+  if (wm < 55) return { zeichen: '🌤', wort: 'heiter', grob: 'freundlich', mm: regen, tropfen };
+  if (wm < 80) return { zeichen: '⛅', wort: 'wolkig', grob: 'trüb', mm: regen, tropfen };
+  return { zeichen: '☁️', wort: 'bedeckt', grob: 'trüb', mm: regen, tropfen };
+}
+
+const GROB_WORT = { freundlich: 'freundlich', trüb: 'bedeckt', nass: 'Regen' };
+
+function renderModellTage(H) {
+  const box = $('#modelTage');
+  if (!box) return { streit: null };
+
+  // Die nächsten fünf Kalendertage ab heute
+  const heute = new Date(); heute.setHours(12, 0, 0, 0);
+  const tage = Array.from({ length: 5 }, (_, i) => {
+    const d = new Date(heute); d.setDate(d.getDate() + i);
+    return d;
+  });
+  const iso = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${
+    String(d.getDate()).padStart(2, '0')}`;
+
+  let ersterStreit = null;
+
+  const zeilen = tage.map((d, i) => {
+    const urteile = MODELS.map(m => ({ m, c: modellCharakter(H, m.id, iso(d)) }));
+    const mitDaten = urteile.filter(u => u.c);
+    if (mitDaten.length < 2) return '';
+
+    // Zählen, wie viele Modelle je Grobgruppe stimmen
+    const gruppen = {};
+    for (const u of mitDaten) gruppen[u.c.grob] = (gruppen[u.c.grob] || 0) + 1;
+    const sortiert = Object.entries(gruppen).sort((a, b) => b[1] - a[1]);
+    const einig = sortiert.length === 1;
+    // Sobald ein Modell Regen sieht und ein anderes nicht, ist die
+    // Tagesfrage strittig — egal ob das trockene Lager sonnig oder trüb sagt
+    const nassStreit = 'nass' in gruppen && !einig;
+    const ton = einig ? 'good' : nassStreit ? 'bad' : 'ok';
+    if (nassStreit && ersterStreit === null && i <= 2) {
+      ersterStreit = { tag: i === 0 ? 'heute' : i === 1 ? 'morgen' : weekday(d) };
+    }
+
+    const urteilText = einig
+      ? `einig: ${GROB_WORT[sortiert[0][0]]}`
+      : sortiert.map(([g, n]) => `${n}× ${GROB_WORT[g]}`).join(' · ');
+
+    return `<div class="mt-zeile">
+      <span class="mt-tag"><b>${i === 0 ? 'heute' : i === 1 ? 'morgen' : weekday(d)}</b>
+        <i>${d.getDate()}.${d.getMonth() + 1}.</i></span>
+      <span class="mt-modelle">${urteile.map(({ m, c }) => c
+        ? `<span class="mt-chip" title="${m.name}: ${c.wort}${
+            c.mm >= 0.2 ? `, ${dez(c.mm)} mm` : ''}">
+             <em>${c.zeichen}</em><i style="background:${m.color}"></i></span>`
+        : `<span class="mt-chip mt-leer" title="${m.name}: reicht nicht so weit">
+             <em>·</em><i style="background:${m.color}"></i></span>`).join('')}
+      </span>
+      <span class="mt-urteil" data-tone="${ton}">${urteilText}</span>
+    </div>`;
+  }).join('');
+
+  box.innerHTML = zeilen;
+  return { streit: ersterStreit };
+}
+
 function renderModels(md) {
   const chart = $('#modelChart'), legend = $('#modelLegend');
   if (!md?.hourly) { chart.innerHTML = '<p class="empty">Modelldaten nicht verfügbar.</p>'; return; }
 
   const H = md.hourly, i0 = nowIndex(H.time);
+  const { streit } = renderModellTage(H);
   const N = Math.min(120, H.time.length - i0);                 // 5 Tage
   const series = MODELS.map(m => ({
     ...m,
@@ -1696,6 +1786,10 @@ function renderModels(md) {
   else if (near < 2.5) { verdict = 'weitgehend einig'; tone = 'ok'; }
   else { verdict = 'uneinig — Prognose unsicher'; tone = 'bad'; }
 
+  /* Streit über Regen schlägt Streit über Zehntelgrade: Ob es nass wird,
+     entscheidet den Tag — das gehört in die Überschrift. */
+  if (streit) { verdict = `uneinig, ob es ${streit.tag} regnet`; tone = 'bad'; }
+
   $('#modelAgree').textContent = verdict;
   $('#modelAgree').dataset.tone = tone;
 
@@ -1716,10 +1810,17 @@ function renderModels(md) {
   }
 
   const when = firstBad > 0 ? new Date(H.time[i0 + firstBad]) : null;
+  /* Oben steht die Frage nach dem Wettercharakter, unten das Temperatur-
+     Detail — jeder Text zu seinem Teil, nicht der zweite über dem ersten. */
   $('#modelNote').innerHTML =
-    `Temperaturverlauf der nächsten 5 Tage. Das farbige Band zeigt die Spannweite zwischen den Modellen — je schmaler, desto verlässlicher. ` +
+    'Vier Rechenmodelle, ein Tag — sehen sie denselben Wetterablauf? '
+    + 'Wo sie sich widersprechen, ist die Vorhersage mit Vorsicht zu genießen. '
+    + 'Antippen der Zeichen zeigt Modell und Regenmenge.';
+  const hinweis = $('.mt-hinweis');
+  if (hinweis) hinweis.innerHTML =
+    `Temperaturverlauf im Vergleich. Das farbige Band zeigt die Spannweite — je schmaler, desto verlässlicher. ` +
     (when
-      ? `Ab <b>${weekday(when)}</b> laufen sie deutlich auseinander (bis ${Math.round(Math.max(...spread))} °C Unterschied).`
+      ? `Ab <b>${weekday(when)}</b> laufen die Modelle deutlich auseinander (bis ${Math.round(Math.max(...spread))} °C Unterschied).`
       : `Über den ganzen Zeitraum bleiben sie dicht beieinander (max. ${Math.round(Math.max(...spread))} °C Unterschied).`) +
     ` Ø Abweichung heute ${near.toFixed(1)} °C, in 3–5 Tagen ${far.toFixed(1)} °C.`;
 }
