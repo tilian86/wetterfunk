@@ -1092,6 +1092,166 @@ function renderMeteogramm() {
     </svg>`;
 }
 
+/* ── Rückblick: was war angesagt, was kam wirklich? ────────
+   Jede Wetter-App zeigt, was kommt. Keine zeigt, ob sie beim letzten Mal
+   recht hatte. Dabei ist genau das die Frage, an der Vertrauen hängt.
+
+   Zwei Quellen, bewusst getrennt:
+   · Was angesagt war — Open-Meteo hält frühere Modellläufe vor, also die
+     Vorhersage von vor einem und von vor drei Tagen.
+   · Was wirklich kam — die Messung der nächsten DWD-Station. Nicht die
+     spätere Modellrechnung: Das Modell gegen sich selbst zu prüfen wäre
+     ein Zirkelschluss.
+
+   Der Vergleich läuft deshalb nur in Deutschland; anderswo fehlt die
+   Messreihe und die Karte bleibt weg. */
+const RUECK_TAGE = 6;
+
+async function ladeRueckblick(lat, lon) {
+  const karte = $('#rueckCard');
+  if (!karte) return;
+  try {
+    const heute = new Date(); heute.setHours(0, 0, 0, 0);
+    const iso = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${
+      String(d.getDate()).padStart(2, '0')}`;
+    const von = new Date(heute); von.setDate(von.getDate() - RUECK_TAGE);
+    const bis = new Date(heute); bis.setDate(bis.getDate() - 1);
+
+    const vorhersageUrl = 'https://previous-runs-api.open-meteo.com/v1/forecast?'
+      + new URLSearchParams({
+          latitude: String(lat), longitude: String(lon), timezone: 'auto',
+          hourly: ['temperature_2m_previous_day1', 'temperature_2m_previous_day3',
+                   'precipitation_previous_day1'].join(','),
+          past_days: String(RUECK_TAGE), forecast_days: '1'
+        });
+    const messUrl = `${BRIGHTSKY}/weather?lat=${lat}&lon=${lon}`
+      + `&date=${iso(von)}&last_date=${iso(bis)}&tz=Europe/Berlin`;
+
+    const [vh, ms] = await Promise.all([
+      fetch(vorhersageUrl).then(r => (r.ok ? r.json() : null)).catch(() => null),
+      fetch(messUrl).then(r => (r.ok ? r.json() : null)).catch(() => null)
+    ]);
+    if (!vh?.hourly || !ms?.weather?.length) { karte.hidden = true; return; }
+
+    // Beides auf Tage zusammenfassen
+    const proTag = new Map();
+    const holen = (tag) => {
+      if (!proTag.has(tag)) proTag.set(tag, { temps: [], regen: 0, stunden: 0,
+                                              v1: [], v3: [], r1: 0 });
+      return proTag.get(tag);
+    };
+    for (const w of ms.weather) {
+      if (w.temperature == null) continue;
+      const e = holen(w.timestamp.slice(0, 10));
+      e.temps.push(w.temperature);
+      e.regen += w.precipitation || 0;
+      e.stunden++;
+    }
+    const h = vh.hourly;
+    h.time.forEach((t, k) => {
+      const e = proTag.get(t.slice(0, 10));
+      if (!e) return;
+      const a = h.temperature_2m_previous_day1?.[k];
+      const b = h.temperature_2m_previous_day3?.[k];
+      if (a != null) e.v1.push(a);
+      if (b != null) e.v3.push(b);
+      e.r1 += h.precipitation_previous_day1?.[k] || 0;
+    });
+
+    // Nur vollständige Tage — ein halber Tag verzerrt das Maximum
+    const tage = [...proTag.entries()]
+      .filter(([, e]) => e.stunden >= 20 && e.v1.length >= 20)
+      .map(([tag, e]) => ({
+        tag,
+        istMax: Math.max(...e.temps), istRegen: e.regen,
+        sollMax1: Math.max(...e.v1),
+        sollMax3: e.v3.length >= 20 ? Math.max(...e.v3) : null,
+        sollRegen1: e.r1
+      }))
+      .sort((a, b) => (a.tag < b.tag ? 1 : -1));
+
+    if (!tage.length) { karte.hidden = true; return; }
+    renderRueckblick(tage, ms.sources?.[0]);
+    karte.hidden = false;
+  } catch (e) {
+    console.warn('Rückblick:', e.message);
+    karte.hidden = true;
+  }
+}
+
+/** Ab wann ist eine Abweichung schlimm? Ein Grad merkt niemand, drei schon. */
+const rueckTon = (d) => (d <= 1 ? 'gut' : d <= 2.5 ? 'ok' : 'schlecht');
+
+function renderRueckblick(tage, quelle) {
+  const abw1 = tage.map(t => Math.abs(t.istMax - t.sollMax1));
+  const mittel1 = abw1.reduce((a, b) => a + b, 0) / abw1.length;
+  const mitDrei = tage.filter(t => t.sollMax3 != null);
+  const mittel3 = mitDrei.length
+    ? mitDrei.reduce((a, t) => a + Math.abs(t.istMax - t.sollMax3), 0) / mitDrei.length : null;
+
+  // Regen zählt als getroffen, wenn die Aussage "nass oder trocken" stimmte
+  const nass = (mm) => mm >= 0.5;
+  const regenTreffer = tage.filter(t => nass(t.istRegen) === nass(t.sollRegen1)).length;
+
+  $('#rueckStand').textContent = `letzte ${tage.length} Tage`;
+
+  const urteil = mittel1 <= 1 ? 'sehr gut' : mittel1 <= 2 ? 'gut'
+               : mittel1 <= 3 ? 'brauchbar' : 'eher daneben';
+
+  /* Liegt die Vorhersage immer in dieselbe Richtung daneben, ist das kein
+     Zufall, sondern eine Eigenart des Modells an diesem Ort — meist wegen
+     der Höhenlage oder weil die Stadt wärmer ist als das Umland. Das ist
+     die nützlichere Aussage als der reine Mittelwert. */
+  const abweichungen = tage.map(t => t.istMax - t.sollMax1);
+  const zuWarm = abweichungen.filter(d => d < -0.5).length;
+  const zuKalt = abweichungen.filter(d => d > 0.5).length;
+  const schnitt = abweichungen.reduce((a, b) => a + b, 0) / abweichungen.length;
+  let muster = '';
+  if (zuWarm >= tage.length * 0.8 && Math.abs(schnitt) >= 0.8) {
+    muster = ` Auffällig: Sie lag dabei fast immer <b>zu hoch</b>, im Mittel um ${dez(-schnitt)} °C.`;
+  } else if (zuKalt >= tage.length * 0.8 && Math.abs(schnitt) >= 0.8) {
+    muster = ` Auffällig: Sie lag dabei fast immer <b>zu niedrig</b>, im Mittel um ${dez(schnitt)} °C.`;
+  }
+
+  $('#rueckFazit').innerHTML =
+    `Für den nächsten Tag lag die Höchsttemperatur im Schnitt <b>${dez(mittel1)} °C</b> daneben — `
+    + `${urteil}.${mittel3 != null
+        ? ` Drei Tage im Voraus waren es <b>${dez(mittel3)} °C</b>.` : ''}`
+    + ` Ob es regnet oder trocken bleibt, stimmte an <b>${regenTreffer} von ${tage.length}</b> Tagen.`
+    + muster;
+
+  $('#rueckListe').innerHTML = tage.map(t => {
+    const d = t.istMax - t.sollMax1;
+    const ton = rueckTon(Math.abs(d));
+    /* Runden beide Werte auf dieselbe Zahl, die Abweichung ist aber sichtbar,
+       wirkt „29° → 29°  −0,8" widersprüchlich. Dann eine Stelle mehr zeigen. */
+    const genau = Math.round(t.sollMax1) === Math.round(t.istMax) && Math.abs(d) >= 0.5;
+    const zahl = (v) => (genau ? dez(v) : String(Math.round(v)));
+    const datum = new Date(t.tag + 'T12:00');
+    const regenPasst = nass(t.istRegen) === nass(t.sollRegen1);
+    return `<div class="rk-zeile">
+      <span class="rk-tag"><b>${weekday(datum)}</b><i>${datum.getDate()}.${datum.getMonth() + 1}.</i></span>
+      <span class="rk-werte">
+        <span class="rk-paar"><i>angesagt</i><b>${zahl(t.sollMax1)}°</b></span>
+        <span class="rk-pfeil">→</span>
+        <span class="rk-paar"><i>gemessen</i><b>${zahl(t.istMax)}°</b></span>
+      </span>
+      <span class="rk-abw t-${ton}">${d > 0 ? '+' : ''}${dez(d)}</span>
+      <span class="rk-regen">${nass(t.istRegen) ? '🌧' : '☀️'}</span>
+      ${regenPasst ? '' : `<span class="rk-notiz">${
+        nass(t.istRegen)
+          ? `Regen war nicht angesagt — es fielen ${dez(t.istRegen)} mm`
+          : `${dez(t.sollRegen1)} mm Regen angesagt, gefallen ist nichts`}</span>`}
+    </div>`;
+  }).join('');
+
+  $('#rueckQuelle').innerHTML = quelle
+    ? `Gemessen an der DWD-Station ${esc(quelle.station_name)}, ${
+        Math.round(quelle.distance / 1000)} km entfernt. Verglichen wird die Vorhersage, `
+      + `die einen Tag vorher galt — nicht die spätere Nachrechnung.`
+    : '';
+}
+
 function renderScrub() {
   const h = data.hourly, m = data.minutely_15;
   const punkte = buildScrubPoints();
@@ -3905,6 +4065,7 @@ async function refresh(leise = false) {
   // Unabhängig von den Zahlen — er soll auch dastehen, wenn Open-Meteo hakt
   loadDwdText(place.lat, place.lon);
   ladeStationen(place.lat, place.lon);
+  ladeRueckblick(place.lat, place.lon);
   renderPush();
 
   try {
@@ -5045,6 +5206,7 @@ const NAV = [
   { id: 'nav-stunden', ziel: '.card-hourly', name: 'Stündlich' },
   { id: 'nav-tage',    ziel: '#daily',       name: '10 Tage' },
   { id: 'nav-radar',   ziel: '.card-radar',  name: 'Radar & Zeit' },
+  { id: 'nav-rueck',   ziel: '.card-rueck',  name: 'Trefferquote' },
   { id: 'nav-details', ziel: '#tiles',       name: 'Details' },
   { id: 'nav-sonne',   ziel: '.card-cd',     name: 'Sonne' },
   { id: 'nav-dwd',     ziel: '.card-dwd',    name: 'DWD' },
