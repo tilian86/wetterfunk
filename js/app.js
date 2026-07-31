@@ -350,7 +350,18 @@ function renderVerdict() {
     t: new Date(t).getTime(), mm: m.precipitation[mi + k] ?? 0, code: m.weather_code[mi + k]
   })) : [];
 
-  const raining = data.current.precipitation > 0.02;
+  /* Ob es gerade regnet, hing allein an `current.precipitation` — einem
+     gerechneten Wert. Zwei Geräte, die im Abstand von Minuten laden, treffen
+     unterschiedliche Modellläufe: Auf dem einen stand der Regen-Countdown,
+     auf dem anderen nicht, bei gleichem Wetter vor der Tür.
+
+     Jetzt zählt jede der drei Quellen — und die Messung wiegt am schwersten,
+     denn ein Regenmesser rechnet nicht, er misst. */
+  const jetztBlock = near.find(x => x.t <= now && x.t + 9e5 > now);
+  const gemessenerRegen = naechsteStation?.w ? messWert(naechsteStation.w, 'precipitation') : null;
+  const raining = (gemessenerRegen != null && gemessenerRegen > 0)
+               || data.current.precipitation > 0.02
+               || (jetztBlock?.mm ?? 0) > 0.05;
   const wet = near.filter(x => x.mm > 0.05);
 
   if (raining) {
@@ -957,6 +968,128 @@ function buildFuturePoints() {
     letzte = ms;
   }
   return punkte;
+}
+
+/* ── Meteogramm: zehn Tage als eine Kurve ──────────────────
+   Die Tagesliste sagt, wie warm ein Tag wird. Sie sagt nicht, ob die Wärme
+   gleichmäßig kommt oder ob am Sonntag ein Einbruch von zwölf Grad steckt.
+   Genau dafür ist der Verlauf da — oben die Temperatur, unten der Regen,
+   beides auf derselben Zeitachse wie beim DWD. */
+/* Maße bewusst nah an der echten Pixelgröße auf dem Telefon: Bei einem
+   700 Einheiten breiten Feld auf 305 px Karte schrumpft jede Schrift auf
+   44 % — 10-px-Text wurde zu 4 px und war nicht mehr zu lesen. */
+const METEO = { w: 340, h: 116, links: 26, rechts: 6, oben: 12, tempUnten: 66,
+                regenOben: 70, regenUnten: 92, achse: 92 };
+
+function renderMeteogramm() {
+  const ziel = $('#meteoWrap');
+  if (!ziel || !data?.hourly) return;
+  const h = data.hourly;
+  const i0 = Math.max(0, nowIndex(h.time) - 2);      // zwei Stunden Vorlauf
+  const bis = h.time.length;
+  const n = bis - i0;
+  if (n < 24) { ziel.innerHTML = ''; return; }
+
+  const zeiten = h.time.slice(i0, bis).map(t => new Date(t));
+  const temps = h.temperature_2m.slice(i0, bis);
+  const regen = h.precipitation.slice(i0, bis).map(v => v ?? 0);
+
+  const tMin = Math.min(...temps), tMax = Math.max(...temps);
+  // Etwas Luft nach oben und unten, sonst klebt die Kurve am Rand
+  const spanne = Math.max(6, tMax - tMin);
+  const yMin = tMin - spanne * 0.12, yMax = tMax + spanne * 0.12;
+  const regenMax = Math.max(1, ...regen);
+
+  const breite = METEO.w - METEO.links - METEO.rechts;
+  const X = (k) => METEO.links + (k / (n - 1)) * breite;
+  const Y = (t) => METEO.oben + (1 - (t - yMin) / (yMax - yMin)) * (METEO.tempUnten - METEO.oben);
+  const YR = (mm) => METEO.regenUnten - (mm / regenMax) * (METEO.regenUnten - METEO.regenOben);
+
+  // Temperaturkurve, geglättet über kubische Zwischenstücke
+  const punkte = temps.map((t, k) => [X(k), Y(t)]);
+  let kurve = `M${punkte[0][0].toFixed(1)},${punkte[0][1].toFixed(1)}`;
+  for (let k = 1; k < punkte.length; k++) {
+    const [x0, y0] = punkte[k - 1], [x1, y1] = punkte[k];
+    const mx = (x0 + x1) / 2;
+    kurve += ` C${mx.toFixed(1)},${y0.toFixed(1)} ${mx.toFixed(1)},${y1.toFixed(1)} ${x1.toFixed(1)},${y1.toFixed(1)}`;
+  }
+  const flaeche = `${kurve} L${X(n - 1).toFixed(1)},${METEO.tempUnten} L${METEO.links},${METEO.tempUnten} Z`;
+
+  // Regensäulen — nur zeichnen, wo wirklich etwas fällt
+  const saeulen = regen.map((mm, k) => {
+    if (mm < 0.05) return '';
+    const bw = Math.max(1.4, breite / n * 0.8);
+    return `<rect class="mg-regen" x="${(X(k) - bw / 2).toFixed(1)}" y="${YR(mm).toFixed(1)}"
+      width="${bw.toFixed(1)}" height="${(METEO.regenUnten - YR(mm)).toFixed(1)}" rx="0.8"/>`;
+  }).join('');
+
+  // Tagesgrenzen und Wochentage
+  let tage = '';
+  zeiten.forEach((t, k) => {
+    if (t.getHours() !== 0 || k === 0) return;
+    const x = X(k);
+    tage += `<line class="mg-tag" x1="${x.toFixed(1)}" y1="${METEO.oben}" x2="${x.toFixed(1)}" y2="${METEO.achse}"/>`;
+  });
+  // Beschriftung in die Mitte jedes Tages
+  let namen = '';
+  for (let k = 0; k < n; k++) {
+    if (zeiten[k].getHours() !== 12) continue;
+    namen += `<text class="mg-wtag" x="${X(k).toFixed(1)}" y="${METEO.h - 3}">${
+      k < 12 ? 'heute' : weekday(zeiten[k])}</text>`;
+  }
+
+  // Nachtstreifen, damit man Tag und Nacht auseinanderhält
+  let naechte = '';
+  let start = null;
+  for (let k = 0; k < n; k++) {
+    const tags = h.is_day[i0 + k] === 1;
+    if (!tags && start === null) start = k;
+    if ((tags || k === n - 1) && start !== null) {
+      naechte += `<rect class="mg-nacht" x="${X(start).toFixed(1)}" y="${METEO.oben}"
+        width="${(X(k) - X(start)).toFixed(1)}" height="${METEO.achse - METEO.oben}"/>`;
+      start = null;
+    }
+  }
+
+  // Jetzt-Linie
+  const jetztK = zeiten.findIndex(t => t.getTime() >= Date.now());
+  const jetztLinie = jetztK > 0 ? `
+    <line class="mg-jetzt" x1="${X(jetztK).toFixed(1)}" y1="${METEO.oben}"
+          x2="${X(jetztK).toFixed(1)}" y2="${METEO.achse}"/>` : '';
+
+  // Höchst- und Tiefstwert beschriften
+  const iMax = temps.indexOf(tMax), iMin = temps.indexOf(tMin);
+  /* Beide Werte über den Punkt: Unter dem Tiefstwert liegt schon die
+     Regenachse, dort wäre die Zahl nicht mehr zu lesen. */
+  const marke = (k, t) => `
+    <circle class="mg-punkt" cx="${X(k).toFixed(1)}" cy="${Y(t).toFixed(1)}" r="2"/>
+    <text class="mg-wert" x="${X(k).toFixed(1)}" y="${(Y(t) - 5).toFixed(1)}">${Math.round(t)}°</text>`;
+
+  ziel.innerHTML = `
+    <svg viewBox="0 0 ${METEO.w} ${METEO.h}" class="mg-svg" role="img"
+         aria-label="Temperatur- und Regenverlauf der nächsten zehn Tage">
+      <defs>
+        <linearGradient id="mgTemp" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0" stop-color="#ff9f6a" stop-opacity=".42"/>
+          <stop offset="1" stop-color="#ff9f6a" stop-opacity="0"/>
+        </linearGradient>
+      </defs>
+      ${naechte}
+      ${tage}
+      ${namen}
+      <line class="mg-achse" x1="${METEO.links}" y1="${METEO.regenUnten}"
+            x2="${METEO.w - METEO.rechts}" y2="${METEO.regenUnten}"/>
+      <path d="${flaeche}" fill="url(#mgTemp)"/>
+      <path class="mg-linie" d="${kurve}" fill="none" stroke="#ff9f6a"/>
+      ${saeulen}
+      ${marke(iMax, tMax)}
+      ${marke(iMin, tMin)}
+      ${jetztLinie}
+      <text class="mg-achsentext" x="${METEO.links - 4}" y="${METEO.oben + 3}">${Math.round(yMax)}°</text>
+      <text class="mg-achsentext" x="${METEO.links - 4}" y="${METEO.tempUnten}">${Math.round(yMin)}°</text>
+      <text class="mg-achsentext mg-regenachse" x="${METEO.links - 4}" y="${METEO.regenUnten}">${
+        dez(regenMax)} mm</text>
+    </svg>`;
 }
 
 function renderScrub() {
@@ -3684,7 +3817,35 @@ function wireSheetGesten() {
   });
 }
 
+/* Die gespeicherten Orte zusätzlich als Chips ganz oben. Der Weg
+   „Ortswähler öffnen, tippen, fertig" ist damit zwei Berührungen kurz —
+   die Liste weiter unten bleibt für das Löschen. */
+function renderOrtsChips() {
+  const box = $('#ortChips');
+  if (!box) return;
+  const saved = store.get(LS.places, []).slice(0, 6);
+  if (saved.length < 2) { box.hidden = true; box.innerHTML = ''; return; }
+
+  box.hidden = false;
+  box.innerHTML = saved.map((p, i) => {
+    const hier = place && Math.abs(p.lat - place.lat) < 0.01 && Math.abs(p.lon - place.lon) < 0.01;
+    return `<button class="ort-chip${hier ? ' on' : ''}" data-i="${i}">
+      <svg class="oc-pin" viewBox="0 0 24 24" aria-hidden="true">
+        <path d="M12 22s7-6.1 7-11a7 7 0 1 0-14 0c0 4.9 7 11 7 11z"/><circle cx="12" cy="11" r="2.6"/>
+      </svg>${esc(p.name)}</button>`;
+  }).join('');
+
+  $$('.ort-chip', box).forEach(b => b.addEventListener('click', () => {
+    const liste = store.get(LS.places, []);
+    const p = liste[+b.dataset.i];
+    if (!p) return;
+    closeSheet('#placeSheet');
+    selectPlace(p);
+  }));
+}
+
 function renderSaved() {
+  renderOrtsChips();
   const saved = store.get(LS.places, []);
   const box = $('#savedPlaces');
   if (!saved.length) { box.innerHTML = ''; return; }
@@ -3718,6 +3879,7 @@ async function selectPlace(p) {
   place = p;
   store.set(LS.active, p);
   savePlace(p);
+  renderSaved();          // frisch gewählter Ort wandert nach vorn und wird markiert
   closeSheet('#placeSheet');
   $('#placeName').textContent = p.name;
   renderSaved();
@@ -3780,6 +3942,7 @@ async function refresh(leise = false) {
     renderHourly();
     renderSource();
     renderDaily();
+    renderMeteogramm();
     renderScrub();
     renderModels(md);
     renderTiles(aq);
@@ -4381,6 +4544,8 @@ async function ladeStationen(lat, lon) {
     renderStationen(zeilen);
     karte.hidden = false;
     renderHeroMessung(zeilen);
+    // Die Messung kann die Regenfrage anders beantworten als das Modell
+    if (data?.current) renderVerdict();
   } catch (e) {
     console.warn('Stationen:', e.message);
     karte.hidden = true;
@@ -4942,7 +5107,11 @@ function toggleMapFull() {
 
 // ══ Ereignisse ═════════════════════════════════════════════
 function wire() {
-  $('#placeBtn').addEventListener('click', () => { openSheet('#placeSheet'); $('#placeSearch').focus(); });
+  $('#placeBtn').addEventListener('click', () => {
+    renderSaved();                 // markiert den gerade aktiven Ort
+    openSheet('#placeSheet');
+    $('#placeSearch').focus();
+  });
   $('#placeClose').addEventListener('click', () => closeSheet('#placeSheet'));
   $('#placeSheet').addEventListener('click', e => { if (e.target.id === 'placeSheet') closeSheet('#placeSheet'); });
   $('#gpsBtn').addEventListener('click', useGPS);
