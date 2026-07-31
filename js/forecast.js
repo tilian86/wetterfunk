@@ -34,8 +34,12 @@ const FELDER = {
   wolken:     'cloud_cover',
   temperatur: 'temperature_2m',
   boeen:      'wind_gusts_10m',
-  gewitter:   'cape'
+  gewitter:   'cape',
+  wind:       'wind_speed_10m'
 };
+/* Windpfeile brauchen zwei Felder: Stärke UND Richtung. Die Richtung hängt
+   nicht in FELDER, weil sie allein keine Ebene ist. */
+const WIND_RICHTUNG = 'wind_direction_10m';
 const PFLICHT = ['precipitation', 'temperature_2m'];
 
 /** Raster um den Ort herum laden. `zoom` bestimmt, wie weit es reicht,
@@ -77,10 +81,11 @@ async function load(lat, lon, zoom = 7, ebenen = null, sicht = null) {
   }
 
   const gewuenscht = ebenen
-    ? [...new Set([...PFLICHT, ...[...ebenen].map(e => FELDER[e]).filter(Boolean)])]
-    : Object.values(FELDER);
+    ? [...new Set([...PFLICHT, ...[...ebenen].map(e => FELDER[e]).filter(Boolean),
+                   ...(ebenen.has('wind') ? [WIND_RICHTUNG] : [])])]
+    : [...Object.values(FELDER), WIND_RICHTUNG];
   // Reihenfolge festhalten, sonst wechselt der Cache-Schlüssel bei gleicher Auswahl
-  const felder = Object.values(FELDER).filter(f => gewuenscht.includes(f));
+  const felder = [...Object.values(FELDER), WIND_RICHTUNG].filter(f => gewuenscht.includes(f));
 
   const p = new URLSearchParams({
     latitude: lats.join(','), longitude: lons.join(','),
@@ -126,7 +131,9 @@ async function load(lat, lon, zoom = 7, ebenen = null, sicht = null) {
     cloud:  holen('cloud_cover'),
     temp:   holen('temperature_2m'),
     gusts:  holen('wind_gusts_10m'),
-    cape:   holen('cape')
+    cape:   holen('cape'),
+    windS:  holen('wind_speed_10m'),
+    windD:  holen(WIND_RICHTUNG)
   };
 
   if (!canvas) {
@@ -272,6 +279,7 @@ function covers(lat, lon, zoom, ebenen = null, sicht = null) {
   if (zoom !== undefined && stufeFuer(zoom).name !== grid.stufe) return false;
   // Wurde eine Ebene neu eingeschaltet, fehlt ihr Messfeld noch
   if (ebenen && [...ebenen].some(e => FELDER[e] && !grid.felder.includes(FELDER[e]))) return false;
+  if (ebenen?.has('wind') && !grid.felder.includes(WIND_RICHTUNG)) return false;
 
   const nord = grid.lat0 + grid.spanLat, ost = grid.lon0 + grid.spanLon;
 
@@ -332,6 +340,23 @@ function indexFor(date) {
   return best;
 }
 
+/** Windpfeile: jeder zweite Rasterpunkt, sonst wird die Karte zum Nadelkissen.
+    Richtung ist meteorologisch — woher der Wind kommt. */
+function windPoints(h) {
+  if (!grid || !grid.windS?.[0]?.length || !grid.windD?.[0]?.length) return [];
+  const out = [];
+  for (let i = 0; i < N; i += 2) {
+    for (let j = 0; j < N; j += 2) {
+      const s = grid.windS[i * N + j]?.[h];
+      const d = grid.windD[i * N + j]?.[h];
+      if (s == null || d == null) continue;
+      out.push({ lat: grid.lat0 + i * grid.dLat, lon: grid.lon0 + j * grid.dLon,
+                 kmh: s, richtung: d });
+    }
+  }
+  return out;
+}
+
 /** Kennung des geladenen Rasters — ändert sich mit Ausschnitt, Auflösung
     und Feldern. Bilder aus einem anderen Raster dürfen nie wiederverwendet
     werden: Sie zeigten die falsche Gegend. */
@@ -341,6 +366,6 @@ function stamp() {
     : 'leer';
 }
 
-return { load, frame, corners, ready, hours, indexFor, covers, points, stufeFuer, series, stamp,
+return { load, frame, corners, ready, hours, indexFor, covers, points, windPoints, stufeFuer, series, stamp,
          get canvas() { return canvas; } };
 })();
