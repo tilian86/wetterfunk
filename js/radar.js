@@ -387,6 +387,161 @@ const Radar = (() => {
     }
   }
 
+  /* ── Regenschirme auf der Karte ───────────────────────────
+     Wie in der DWD-App: Die Farbfläche sagt „hier fällt etwas", der Schirm
+     sagt „nimm etwas mit". Vier Stufen mit denselben Schwellen wie der
+     Klartext der App — 0,5 / 2 / 5 mm je Stunde.
+
+     Die Zeichen entstehen als Canvas-Pfade, nicht als SVG-Bild: MapLibre lehnt
+     Base64-Adressen ab, und der Umweg über einen Blob wäre asynchron — dann
+     fehlte das Bild ausgerechnet beim ersten Aufbau der Ebene, und MapLibre
+     ließe alle Schirme weg. Gezeichnete Pfade liegen sofort vor und gehen
+     nebenbei der Regel `svg { stroke: currentColor }` aus dem Weg. */
+  const SCHIRM_AB = 0.15;              // darunter lohnt kein Schirm (mm/h)
+  /* Die Stärke steckt in Form und Größe, nicht in der Farbe: Unter dem Schirm
+     liegt schon die farbige Regenfläche. Ein zweites Farbsystem darüber wäre
+     nur noch zu raten. Dunkelblau mit weißem Rand steht auf jedem Untergrund —
+     auf der fast weißen Karte ebenso wie auf einer gelben Starkregenzelle. */
+  const SCHIRM_FARBE = '#0e3c60';
+  const SCHIRM_RAND = 'rgba(255,255,255,.92)';
+  const SCHIRM_ARTEN = {
+    'schirm-tropfen':  { r: 6.5,  offen: false, tropfen: 0 },  // ein paar Tropfen
+    'schirm-leicht':   { r: 7.5,  offen: true,  tropfen: 0 },  // leichter Regen
+    'schirm-regen':    { r: 9,    offen: true,  tropfen: 0 },  // Regen
+    'schirm-kraeftig': { r: 10.5, offen: true,  tropfen: 3 }   // kräftiger Regen
+  };
+
+  /** Ein Wassertropfen mit der Spitze nach oben. */
+  function tropfenPfad(x, y, s) {
+    const p = new Path2D();
+    p.moveTo(x, y - s);
+    p.quadraticCurveTo(x + s * 0.8, y + s * 0.25, x, y + s * 0.9);
+    p.quadraticCurveTo(x - s * 0.8, y + s * 0.25, x, y - s);
+    p.closePath();
+    return p;
+  }
+
+  /** Ein Schirmzeichen als Bildpunkte für map.addImage. */
+  function schirmBild({ r, offen, tropfen }) {
+    const S = 2;                        // doppelt gezeichnet, halb angezeigt
+    const obenRaum = (offen ? r + 2.6 : r * 1.6) + 2.6;
+    const breite = Math.ceil((offen ? r * 2 : r * 1.2) + 8);
+    const hoehe = Math.ceil(obenRaum + r * 1.75 + 3);
+    const cv = document.createElement('canvas');
+    cv.width = breite * S; cv.height = hoehe * S;
+    const c = cv.getContext('2d');
+    c.scale(S, S);
+    const cx = breite / 2, cy = obenRaum;      // cy = Unterkante der Kuppel
+
+    const teile = [];                   // { d: Path2D, fuellen: boolean }
+
+    const griff = new Path2D();
+    if (offen) {
+      // Stiel mit Spitze über der Kuppel — daran erkennt man den Schirm sofort
+      griff.moveTo(cx, cy - r - 2.6);
+      griff.lineTo(cx, cy + r * 1.15);
+      griff.quadraticCurveTo(cx, cy + r * 1.6, cx + r * 0.5, cy + r * 1.38);
+
+      const kuppel = new Path2D();
+      kuppel.moveTo(cx - r, cy);
+      kuppel.arc(cx, cy, r, Math.PI, 0);
+      // Gezackte Unterkante — erst sie macht aus dem Halbkreis einen Schirm
+      const zacken = 3, b = (2 * r) / zacken;
+      for (let k = 0; k < zacken; k++) {
+        const x = cx + r - k * b;
+        kuppel.quadraticCurveTo(x - b / 2, cy + b * 0.5, x - b, cy);
+      }
+      kuppel.closePath();
+      teile.push({ d: griff, fuellen: false }, { d: kuppel, fuellen: true });
+    } else {
+      /* Geschlossener Schirm: eine schmale Hülle. Sie sagt auf einen Blick
+         „dabeihaben, aber wohl nicht aufspannen". */
+      griff.moveTo(cx, cy);
+      griff.lineTo(cx, cy + r * 1.25);
+      griff.quadraticCurveTo(cx, cy + r * 1.62, cx + r * 0.5, cy + r * 1.42);
+
+      const huelle = new Path2D();
+      const w = r * 0.44;
+      huelle.moveTo(cx, cy - r * 1.6);
+      huelle.quadraticCurveTo(cx + w * 1.6, cy - r * 0.35, cx + w, cy + r * 0.3);
+      huelle.quadraticCurveTo(cx, cy + r * 0.55, cx - w, cy + r * 0.3);
+      huelle.quadraticCurveTo(cx - w * 1.6, cy - r * 0.35, cx, cy - r * 1.6);
+      huelle.closePath();
+      teile.push({ d: griff, fuellen: false }, { d: huelle, fuellen: true });
+    }
+
+    for (let k = 0; k < tropfen; k++) {
+      const stellen = [[-0.74, 0.62], [0.76, 0.58], [-0.5, 1.28]];
+      const [fx, fy] = stellen[k % stellen.length];
+      teile.push({ d: tropfenPfad(cx + r * fx, cy + r * fy, r * 0.3), fuellen: true });
+    }
+
+    /* Erst der weiße Rand für alle Teile, dann die Farbe darüber. Andersherum
+       schnitte der Rand des Stiels eine helle Kerbe in die Kuppel. */
+    c.lineJoin = 'round'; c.lineCap = 'round';
+    c.strokeStyle = SCHIRM_RAND;
+    for (const t of teile) { c.lineWidth = t.fuellen ? 3.2 : 4.4; c.stroke(t.d); }
+    c.fillStyle = c.strokeStyle = SCHIRM_FARBE;
+    c.lineWidth = 1.9;
+    for (const t of teile) { t.fuellen ? c.fill(t.d) : c.stroke(t.d); }
+
+    return c.getImageData(0, 0, cv.width, cv.height);
+  }
+
+  function schirmBilderAnlegen() {
+    for (const [name, art] of Object.entries(SCHIRM_ARTEN)) {
+      if (map.hasImage(name)) continue;
+      map.addImage(name, schirmBild(art), { pixelRatio: 2 });
+    }
+  }
+
+  /** Schirmebene anlegen oder auffrischen. `geo` enthält nur die Punkte mit
+      nennenswertem Niederschlag — an allen anderen steht weiter die Temperatur. */
+  function schirmEbene(geo, an) {
+    if (!map.getLayer('schirm-layer')) {
+      if (!an) return;                  // erst anlegen, wenn wirklich gebraucht
+      schirmBilderAnlegen();
+      map.addSource('schirme', { type: 'geojson', data: geo });
+      map.addLayer({
+        id: 'schirm-layer', type: 'symbol', source: 'schirme',
+        layout: {
+          'icon-image': ['step', ['get', 'mm'], 'schirm-tropfen',
+                         0.5, 'schirm-leicht', 2, 'schirm-regen', 5, 'schirm-kraeftig'],
+          'icon-padding': 3,
+          /* Dicht an dicht würde die Karte zum Schirmständer. MapLibre lässt
+             überlappende Zeichen weg — und dank des Sortierschlüssels bleibt
+             dabei der stärkste Regen stehen, nicht der zufällig erste. */
+          'symbol-sort-key': ['-', 0, ['get', 'mm']],
+          'text-field': ['get', 't'],
+          'text-font': ['Noto Sans Bold'],
+          'text-size': 11.5,
+          'text-anchor': 'left',
+          // Je größer der Schirm, desto weiter muss die Zahl daneben rücken
+          'text-offset': ['step', ['get', 'mm'], ['literal', [0.55, 0.2]],
+                          0.5, ['literal', [0.85, 0.2]],
+                          2,   ['literal', [1.0, 0.2]],
+                          5,   ['literal', [1.15, 0.2]]],
+          'text-padding': 2,
+          'text-optional': true          // lieber ein Schirm ohne Zahl als keiner
+        },
+        paint: {
+          'text-color': '#0d3a5c',
+          'text-halo-color': 'rgba(255,255,255,.9)',
+          'text-halo-width': 1.8
+        }
+      });
+      map.on('click', 'schirm-layer', (e) => {
+        const f = e.features?.[0]?.properties;
+        if (f) els.onPointTap?.(f, e.lngLat);
+      });
+      map.on('mouseenter', 'schirm-layer', () => { map.getCanvas().style.cursor = 'pointer'; });
+      map.on('mouseleave', 'schirm-layer', () => { map.getCanvas().style.cursor = ''; });
+    } else if (an) {
+      map.getSource('schirme').setData(geo);
+    }
+    map.setLayoutProperty('schirm-layer', 'visibility', an ? 'visible' : 'none');
+  }
+
   function updateLabels() {
     updateWind();
     if (!ready || !map || !Forecast.ready()) return;
@@ -394,24 +549,30 @@ const Radar = (() => {
     const h = Math.max(0, zeit ? Forecast.indexFor(zeit) : 0);
     const temps = Forecast.points(h, 'temp');
     const regen = Forecast.points(h, 'precip');
+    const schirmeAn = !!els.aktiveEbenen?.().has('schirme');
+    const mmText = (mm) => (mm < 1 ? mm.toFixed(1) : String(Math.round(mm))).replace('.', ',');
 
-    const geo = {
-      type: 'FeatureCollection',
-      features: temps.map((p, k) => {
-        const mm = regen[k]?.wert ?? 0;
-        const nass = mm >= 0.1;
-        return {
-          type: 'Feature',
-          geometry: { type: 'Point', coordinates: [p.lon, p.lat] },
-          properties: {
-            t: nass ? `${(mm < 1 ? mm.toFixed(1) : String(Math.round(mm))).replace('.', ',')} mm`
-                    : `${Math.round(p.wert)}°`,
-            nass: nass ? 1 : 0,
-            mm, grad: Math.round(p.wert), stunde: h
-          }
-        };
-      })
-    };
+    const marken = [], schirme = [];
+    temps.forEach((p, k) => {
+      const mm = regen[k]?.wert ?? 0;
+      const punkt = (eigen) => ({
+        type: 'Feature',
+        geometry: { type: 'Point', coordinates: [p.lon, p.lat] },
+        properties: { mm, grad: Math.round(p.wert), stunde: h, ...eigen }
+      });
+      /* Steht hier ein Schirm, trägt er die Menge selbst. Die Zahlenebene lässt
+         den Punkt dann aus: Sonst stünde dieselbe Zahl zweimal nebeneinander —
+         und beide Beschriftungen würden einander von der Karte verdrängen,
+         weil sie um denselben Platz streiten. */
+      if (schirmeAn && mm >= SCHIRM_AB) { schirme.push(punkt({ t: mmText(mm) })); return; }
+      const nass = mm >= 0.1;
+      marken.push(punkt({
+        t: nass ? `${mmText(mm)} mm` : `${Math.round(p.wert)}°`,
+        nass: nass ? 1 : 0
+      }));
+    });
+
+    const geo = { type: 'FeatureCollection', features: marken };
 
     if (!map.getSource('temps')) {
       map.addSource('temps', { type: 'geojson', data: geo });
@@ -443,6 +604,11 @@ const Radar = (() => {
     }
     map.setLayoutProperty('temp-labels', 'visibility',
       els.labelsOn?.() ? 'visible' : 'none');
+
+    /* Zuletzt, damit die Schirme in der Ebenenfolge obenauf liegen: Wo es eng
+       wird, setzt MapLibre das obere Zeichen und lässt das untere weg — und
+       ein Schirm ist wichtiger als eine Gradzahl daneben. */
+    schirmEbene({ type: 'FeatureCollection', features: schirme }, schirmeAn);
   }
 
   /** Erste Beschriftungsebene des Kartenstils. Wetterflächen kommen darunter,
@@ -666,6 +832,7 @@ const Radar = (() => {
      rötlicher oder violetter Schatten bedeutet. Die Legende zeigt deshalb
      genau die Ebenen, die gerade eingeschaltet sind. */
   const LEGENDE = {
+    schirme:    { farbe: SCHIRM_FARBE, text: 'Schirme ab 0,15 mm/h' },
     wolken:     { farbe: '#9aa8bb', text: 'Wolken' },
     wind:       { farbe: '#2f8fd6', text: 'Windpfeile' },
     boeen:      { farbe: '#af5afa', text: 'Böen ab 45 km/h' },

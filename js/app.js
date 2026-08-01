@@ -91,6 +91,10 @@ let air = null;             // Luftqualität + Pollen
 let modelData = null;       // Modellvergleich
 let activeWarnings = [];    // DWD-Warnungen für diesen Ort
 let radarReady = false;
+/* Abweichung der Geräteuhr zur Serverzeit, in Millisekunden. Einmal beim
+   Start gemessen; die Ringuhr oben rechnet damit, sonst zeigte sie die
+   falsche Zeit eines falsch gestellten Geräts. */
+let uhrVersatz = 0;
 
 // ══ Hilfsfunktionen ════════════════════════════════════════
 const $  = (s, r = document) => r.querySelector(s);
@@ -301,7 +305,7 @@ function renderHeroUhr() {
   const el = $('#heroUhr');
   if (!el || !place || !data?.daily) { if (el) el.hidden = true; return; }
 
-  const jetzt = new Date();
+  const jetzt = new Date(Date.now() + uhrVersatz);
   const tagStart = new Date(jetzt); tagStart.setHours(0, 0, 0, 0);
   const ev = sunEvents(jetzt, place.lat, place.lon);
   const w = (t) => (t ? uhrWinkel(new Date(t), tagStart) : null);
@@ -346,6 +350,23 @@ function renderHeroUhr() {
   const jetztW = uhrWinkel(jetzt, tagStart);
   const [px, py] = polarMini(jetztW, MINI.r);
 
+  /* Ohne Marken sagt der Ring nur „irgendwo im Tag". Vier Striche genügen:
+     neun, zwölf, fünfzehn und achtzehn Uhr. Mittag steht etwas kräftiger da,
+     das gibt dem Ring einen Anker — mehr Striche machen ihn bei 76 Pixeln
+     nur unruhig. */
+  /* Die Striche sitzen außerhalb des Rings, nicht quer darüber: Der Ring
+     wechselt im Tagesverlauf von Schwarz über Blau nach Gelb — eine Farbe,
+     die auf allen dreien zu sehen ist, gibt es nicht. Außen liegt immer der
+     dunkle Himmelsverlauf, dort trägt ein heller Strich. */
+  const marken = [9, 12, 15, 18].map(h => {
+    const g = uhrWinkel(new Date(tagStart.getTime() + h * 3600000), tagStart);
+    const aussen = MINI.r + MINI.ring / 2;
+    const [ax, ay] = polarMini(g, aussen + 1.4);
+    const [bx, by] = polarMini(g, aussen + (h === 12 ? 4.2 : 3.4));
+    return `<path class="hu-marke${h === 12 ? ' ist-mittag' : ''}"
+      d="M${ax.toFixed(1)} ${ay.toFixed(1)}L${bx.toFixed(1)} ${by.toFixed(1)}"/>`;
+  }).join('');
+
   /* Dieselbe Rechnung wie der Balken darunter — nachts zählt der Anteil der
      Nacht, nicht ein leerer Tageswert. Vorher stand dort nur „Nacht". */
   const d = data.daily;
@@ -374,6 +395,7 @@ function renderHeroUhr() {
   el.innerHTML = `
     <svg viewBox="0 0 76 76" class="hu-svg" aria-hidden="true">
       ${ring}
+      ${marken}
       <circle class="hu-punkt" cx="${px.toFixed(1)}" cy="${py.toFixed(1)}" r="3.6"/>
     </svg>
     <span class="hu-mitte"><b class="hu-zeit">${zeit}</b></span>
@@ -454,8 +476,7 @@ function renderDayProgress() {
   el.onclick = () => {
     const ziel = document.querySelector('.card-cd') || document.querySelector('#tiles');
     if (!ziel) return;
-    const kopf = ($('.topbar')?.offsetHeight || 0) + ($('#nav')?.offsetHeight || 0) + 8;
-    window.scrollTo({ top: Math.max(0, ziel.getBoundingClientRect().top + window.scrollY - kopf),
+    window.scrollTo({ top: Math.max(0, ziel.getBoundingClientRect().top + window.scrollY - kopfHoehe()),
                       behavior: 'smooth' });
   };
   el.innerHTML = `
@@ -636,42 +657,54 @@ function renderVerdict() {
     return;
   }
 
-  // 2) Grobauflösung: nächste Regenstunde in den kommenden 24 h
+  /* 2) Grobauflösung: nächste Regenstunde in den kommenden 24 h.
+
+     Gesucht wird nach einer Stunde mit wirklicher Menge. Eine hohe
+     Wahrscheinlichkeit allein ist kein Regen: Die Prozentzahl sagt, wie
+     viele Rechnungen dort überhaupt etwas sehen — über die Menge sagt sie
+     nichts. Beides in einen Satz zu packen ergab den Widerspruch „Regen
+     nicht ausgeschlossen (65 %), gerechnet wird aber mit nichts". */
   const h = data.hourly;
   const i0 = nowIndex(h.time);
+  let vielleicht = null;      // erste Stunde mit Risiko, aber ohne Menge
+
   for (let i = i0; i < Math.min(i0 + 24, h.time.length); i++) {
     const prob = h.precipitation_probability[i] ?? 0;
     const mm = h.precipitation[i] ?? 0;
-    if (mm >= 0.2 || prob >= 60) {
-      const t = new Date(h.time[i]).getTime();
-      const hrs = Math.round((t - now) / 3600e3);
-      /* Menge der Regenphase aufsummieren, nicht nur die erste Stunde —
-         zwei Stunden mit je 0,8 mm sind etwas anderes als eine mit 0,8. */
-      let summe = 0, spitze = 0;
-      for (let k = i; k < Math.min(i + 8, h.time.length); k++) {
-        const v = h.precipitation[k] ?? 0;
-        if (v < REGEN.nichts && k > i) break;
-        summe += v; spitze = Math.max(spitze, v);
-      }
-      /* Der Zweig löste auch bei reiner Wahrscheinlichkeit ohne Menge aus —
-         dann stand dort „Trocken bis etwa 08:00, dann trocken". Fällt zu
-         wenig für eine Aussage, wird die Wahrscheinlichkeit genannt und
-         sonst nichts behauptet. */
-      const k = regenKlartext(spitze);
-      if (k.wort === 'trocken') {
-        el.innerHTML = `<b>Bleibt trocken.</b> Gegen ${hhmm(t)} ist Regen zwar
-          nicht ausgeschlossen (${prob} %), gerechnet wird aber mit
-          <b>${summe < 0.05 ? 'nichts' : dez(summe) + ' mm'}</b> — das merkt man nicht.`;
-        el.dataset.tone = 'dry';
-        return;
-      }
-      const was = regenSatzteil(spitze, summe);
-      el.innerHTML = hrs <= 1
-        ? `<b>Trocken bis etwa ${hhmm(t)}</b>, dann ${was}. <i>${prob} % Wahrscheinlichkeit.</i>`
-        : `<b>Bleibt ${hrs} Std. trocken.</b> Ab ca. ${hhmm(t)} ${was}. <i>${prob} %.</i>`;
-      el.dataset.tone = 'later';
-      return;
+
+    if (mm < 0.2) {
+      if (prob >= 60 && !vielleicht) vielleicht = { t: new Date(h.time[i]).getTime(), prob };
+      continue;
     }
+
+    const t = new Date(h.time[i]).getTime();
+    const hrs = Math.round((t - now) / 3600e3);
+    /* Menge der Regenphase aufsummieren, nicht nur die erste Stunde —
+       zwei Stunden mit je 0,8 mm sind etwas anderes als eine mit 0,8. */
+    let summe = 0, spitze = 0;
+    for (let k = i; k < Math.min(i + 8, h.time.length); k++) {
+      const v = h.precipitation[k] ?? 0;
+      if (v < REGEN.nichts && k > i) break;
+      summe += v; spitze = Math.max(spitze, v);
+    }
+    const was = regenSatzteil(spitze, summe);
+    el.innerHTML = hrs <= 1
+      ? `<b>Trocken bis etwa ${hhmm(t)}</b>, dann ${was}. <i>${prob} % Wahrscheinlichkeit.</i>`
+      : `<b>Bleibt ${hrs} Std. trocken.</b> Ab ca. ${hhmm(t)} ${was}. <i>${prob} %.</i>`;
+    el.dataset.tone = 'later';
+    return;
+  }
+
+  if (vielleicht) {
+    /* Die laufende Stunde ist keine Vorschau: „gegen 08:00" stand um 08:24
+       schon in der Vergangenheit. Dann gehört keine Uhrzeit in den Satz. */
+    const laeuft = vielleicht.t <= now;
+    el.innerHTML = `<b>Bleibt trocken — kein Schirm nötig.</b>
+      ${laeuft ? 'In dieser Stunde' : `Gegen ${hhmm(vielleicht.t)}`} können einzelne
+      Tropfen fallen, nass wird man davon nicht. <i>Die ${vielleicht.prob} % sagen
+      nur, wie viele Rechnungen dort überhaupt etwas sehen — nicht wie viel.</i>`;
+    el.dataset.tone = 'dry';
+    return;
   }
 
   const maxProb = Math.max(...h.precipitation_probability.slice(i0, i0 + 24).map(v => v ?? 0));
@@ -1116,9 +1149,18 @@ function renderSource() {
   const el = $('#modelName');
   if (!el) return;
   const q = sourceOf(sourceId());
-  el.innerHTML = q.id === 'best_match'
+  const basis = q.id === 'best_match'
     ? `Quelle: <b>bestes verfügbares Modell</b> — hier DWD ICON-D2, 2 km`
     : `Quelle: <b>${q.name}</b>`;
+
+  /* Die Ortskorrektur stand früher als eigene Kastenzeile darüber. Sie sagt
+     etwas über die Herkunft der Zahlen, nicht über das Wetter — und genau
+     dort steht sie jetzt: hinter der Quelle, klein, antippbar. */
+  const v = ortsVersatz ? versatzFuer(new Date().getHours()) : null;
+  const korr = v == null ? ''
+    : ` <i class="src-korr">· ortskorrigiert${
+        Math.abs(v) >= 0.2 ? ` ${dez(-v)} °C` : ''}<u>?</u></i>`;
+  el.innerHTML = basis + korr;
 }
 
 function renderSourceList() {
@@ -1754,16 +1796,11 @@ function wendeVersatzAn(fc) {
   return fc;
 }
 
-/** Zeile unter der Stundenleiste: was die Korrektur gerade tut. */
+/** Die Korrektur wird in der Quellenzeile mitgeführt — ein eigener Kasten
+    darüber war eine Zeile zu viel für eine Angabe, die zur Herkunft der
+    Zahlen gehört und nicht zum Wetter. */
 function renderVersatzHinweis() {
-  const el = $('#versatzZeile');
-  if (!el) return;
-  if (!ortsVersatz) { el.hidden = true; return; }
-  const v = versatzFuer(new Date().getHours());
-  el.hidden = false;
-  el.innerHTML = Math.abs(v) < 0.2
-    ? `<b>Ortskorrektur aktiv</b> — um diese Tageszeit rechnet das Modell hier richtig`
-    : `<b>Ortskorrektur:</b> ${dez(-v)} °C gegenüber dem rohen Modellwert<i>?</i>`;
+  renderSource();
 }
 
 /* ── Rückblick: was war angesagt, was kam wirklich? ────────
@@ -2215,11 +2252,15 @@ const LAYER_SVG = {
           + '<path d="m12.5 15-2.5 4h3l-2 4"/>',
   // Zahlen auf der Karte: ein Etikett mit Ziffer statt kryptischer Striche
   zahlen: '<rect x="3.5" y="6.5" width="17" height="11" rx="2.5"/>'
-        + '<path d="M8 10.5h1.5v3M13 10.5h2.5l-2 3h2.5"/>'
+        + '<path d="M8 10.5h1.5v3M13 10.5h2.5l-2 3h2.5"/>',
+  schirme: '<path d="M2.8 12.4a9.2 9.2 0 0 1 18.4 0"/>'
+         + '<path d="M2.8 12.4c1.2 2.2 4.9 2.2 6.1 0c1.2 2.2 4.9 2.2 6.1 0c1.2 2.2 4.9 2.2 6.1 0"/>'
+         + '<path d="M12 3.2V17.8q0 2.6 2.8 2"/>'
 };
 
 const LAYERS = [
   { id: 'regen',      name: 'Niederschlag', farbe: '#5ac8fa' },
+  { id: 'schirme',    name: 'Regenschirme', farbe: '#4aa8e0' },
   { id: 'wolken',     name: 'Wolken',       farbe: '#e6ecf5' },
   { id: 'temperatur', name: 'Temperatur',   farbe: '#ff9f6a' },
   { id: 'boeen',      name: 'Sturmböen',    farbe: '#be78f0' },
@@ -2227,6 +2268,12 @@ const LAYERS = [
   { id: 'gewitter',   name: 'Gewitter',     farbe: '#ff5a5a' },
   { id: 'zahlen',     name: 'Grad-Zahlen',  farbe: '#ffffff' }
 ];
+
+/* Diese drei sind Zeichen auf der Karte, keine eingefärbten Flächen. Sie
+   gehören deshalb nicht in den Schlüssel, unter dem die Rasterbilder
+   zwischengespeichert werden — sonst passen Ablegen und Suchen nicht
+   zusammen. An zwei Stellen gebraucht, darum hier an einer Stelle erklärt. */
+const SYMBOL_EBENEN = new Set(['zahlen', 'wind', 'schirme']);
 
 const activeLayers = () => new Set(store.get(LS.layers, ['regen', 'wolken']));
 
@@ -2338,7 +2385,7 @@ function syncMapAt(ziel) {
   } else {
     const hi = Forecast.indexFor(ziel);
     // Zahlen und Windpfeile sind Symbole, keine Farbflächen
-    const flaechen = new Set([...activeLayers()].filter(x => x !== 'zahlen' && x !== 'wind'));
+    const flaechen = new Set([...activeLayers()].filter(x => !SYMBOL_EBENEN.has(x)));
     const ok = hi >= 0 && (flaechen.size ? Radar.showForecast(hi, flaechen) : true);
     beschriften();
     // Die Zahlen sind keine Fläche — sie gehören nicht in die Aufzählung
@@ -2380,8 +2427,14 @@ function ladeRaster(lat, lon, zoom, ebenen, sicht) {
     .then(() => {
       syncMapAt(currentScrubTime());
       Radar.updateLabels?.();
-      // Die Stunden, die der Abspielknopf durchläuft, still vorbereiten
-      const flaechen = new Set([...ebenen].filter(x => x !== 'zahlen'));
+      /* Die Stunden, die der Abspielknopf durchläuft, still vorbereiten.
+
+         Hier stand früher nur `x !== 'zahlen'`, beim Anzeigen aber auch
+         `x !== 'wind'`. Die vorgewärmten Bilder lagen deshalb unter einem
+         anderen Schlüssel als dem, unter dem sie gesucht wurden — bei
+         eingeschalteten Windpfeilen war jedes vorbereitete Bild wertlos und
+         der erste Durchlauf ruckelte, als gäbe es kein Vorwärmen. */
+      const flaechen = new Set([...ebenen].filter(x => !SYMBOL_EBENEN.has(x)));
       const stunden = [];
       for (let k = 0; k <= 4; k++) {
         const h = Forecast.indexFor(Date.now() + k * 3600e3);
@@ -2428,7 +2481,7 @@ function ebenenGeaendert() {
    Grob gruppiert wird in freundlich / trüb / Regen. Ob 40 oder 60 % Wolken,
    ist Geschmackssache — ob nass oder trocken, ist die Entscheidung. */
 function modellCharakter(H, mid, tagISO) {
-  let regen = 0, hatRegen = false;
+  let regen = 0, hatRegen = false, spitze = 0;
   const wolken = [];
   const nasseStunden = [];
   for (let k = 0; k < H.time.length; k++) {
@@ -2437,6 +2490,10 @@ function modellCharakter(H, mid, tagISO) {
     const stunde = +H.time[k].slice(11, 13);
     if (p != null) {
       regen += p; hatRegen = true;
+      /* Die stärkste Stunde entscheidet über den Schirm, nicht die
+         Tagessumme: 3 mm über acht Stunden sind Nieseln, 3 mm in einer
+         Stunde sind ein Guss. */
+      spitze = Math.max(spitze, p);
       if (p >= REGEN.nichts) nasseStunden.push(stunde);
     }
     const c = H[`cloud_cover_${mid}`]?.[k];
@@ -2458,7 +2515,7 @@ function modellCharakter(H, mid, tagISO) {
     ? `${String(f.von).padStart(2, '0')} Uhr`
     : `${String(f.von).padStart(2, '0')}–${String(f.bis + 1).padStart(2, '0')} Uhr`);
 
-  const basis = { mm: regen, zeiten, stunden: nasseStunden };
+  const basis = { mm: regen, spitze, zeiten, stunden: nasseStunden };
   if (regen >= 1) return { ...basis, zeichen: '🌧', wort: 'Regen', grob: 'nass' };
 
   /* Widerspruch beseitigt: Das Zeichen kam allein aus der Bewölkung, die
@@ -2536,7 +2593,9 @@ function renderModellTage(H) {
         <i>${d.getDate()}.${d.getMonth() + 1}.</i></span>
       <span class="mt-modelle">${urteile.map(({ m, c }) => c
         ? `<button class="mt-chip" data-info="${esc(m.name)}|${c.wort}|${
-             c.mm >= REGEN.nichts ? dez(c.mm) + ' mm' : ''}|${c.zeiten.join(', ')}">
+             c.mm >= REGEN.nichts
+               ? `${dez(c.mm)} mm, ${regenKlartext(c.spitze).kurz || 'kaum spürbar'}`
+               : ''}|${c.zeiten.join(', ')}">
              <em>${c.zeichen}</em><i style="background:${m.color}"></i></button>`
         : `<button class="mt-chip mt-leer" data-info="${esc(m.name)}|reicht nicht so weit||">
              <em>·</em><i style="background:${m.color}"></i></button>`).join('')}
@@ -2570,15 +2629,21 @@ function renderModellTage(H) {
   const koerper = MODELS.map(m => {
     const zellen = tage.map((d, i) => {
       const c = modellCharakter(H, m.id, iso(d));
+      /* Der Bindestrich im dritten Feld heißt „dieses Modell reicht nicht so
+         weit". Ohne die Unterscheidung stand darunter „reicht nicht so weit
+         voraus, kein Niederschlag gerechnet" — beides zugleich. */
       if (!c) return `<td class="mtb-leer" data-info="${esc(m.name)}|${
-        i === 0 ? 'heute' : i === 1 ? 'morgen' : weekday(d)}||reicht nicht so weit voraus">·</td>`;
+        i === 0 ? 'heute' : i === 1 ? 'morgen' : weekday(d)}|-|reicht nicht so weit voraus">·</td>`;
       const fenster = alleFenster(c.stunden);
       const nass = fenster.length > 0;
       const tagWort = i === 0 ? 'heute' : i === 1 ? 'morgen' : weekday(d);
       /* Auch trockene Zellen antippbar: Wer auf ein Feld tippt, erwartet
          eine Antwort — „nichts passiert" ist eine Antwort. */
+      /* Nicht nur die Menge, sondern was sie bedeutet: „0,4 mm" sagt einem
+         Laien nichts, „kleiner Schirm genügt" beantwortet die Frage. */
+      const k = regenKlartext(c.spitze);
       const info = nass
-        ? `${esc(m.name)}|${tagWort}|${fenster.join(', ')}|${dez(c.mm)}`
+        ? `${esc(m.name)}|${tagWort}|${fenster.join(', ')}|${dez(c.mm)} mm — ${k.wort}, ${k.rat || 'kaum spürbar'}`
         : `${esc(m.name)}|${tagWort}||${c.wort}`;
       return `<td class="${nass ? 'mtb-nass' : ''}${nass && fenster.length > 2 ? ' mtb-mehr' : ''}"
         data-info="${info}">
@@ -2614,7 +2679,7 @@ function renderModellTage(H) {
     e.stopPropagation();
     const [name, wort, mm, zeiten] = (b.dataset.info || '').split('|');
     toast(`${name}: ${wort}${mm ? ` · ${mm}` : ''}${
-      zeiten ? ` · nass ${zeiten}` : ''}`, 4500);
+      zeiten ? ` · nass ${zeiten}` : ''}`, 5000);
   }));
 
   // Zelle antippen: alle Regenfenster dieses Modells für diesen Tag
@@ -2623,9 +2688,9 @@ function renderModellTage(H) {
     td.addEventListener('click', (e) => {
       e.stopPropagation();
       const [name, tag, fenster, rest] = (td.dataset.info || '').split('|');
-      toast(fenster
-        ? `${name}, ${tag}: Regen ${fenster} Uhr · ${rest} mm`
-        : `${name}, ${tag}: ${rest}, kein Niederschlag gerechnet`, 5000);
+      toast(fenster === '-' ? `${name}, ${tag}: ${rest}`
+          : fenster ? `${name}, ${tag}: Regen ${fenster} Uhr · ${rest}`
+          : `${name}, ${tag}: ${rest}, kein Niederschlag gerechnet`, 6000);
     });
   });
 
@@ -3336,23 +3401,39 @@ function dayHours(dayISO) {
   return out;
 }
 
-/** Zusammenhängende Abschnitte gleicher Art zusammenfassen ("9–14 Uhr sonnig"). */
+/** Zusammenhängende Abschnitte gleicher Art zusammenfassen ("9–14 Uhr sonnig").
+    Zu jedem Abschnitt kommen die Zahlen, die man dort wirklich braucht:
+    Temperaturspanne, Wind und Böen. Vorher stand die Windspitze nur als
+    Tageswert weiter unten — ohne Bezug, wann sie kommt. */
 function daySpans(stunden) {
-  const art = (s) => (s.mm >= 0.1 ? 'regen' : !s.tags ? 'nacht'
+  /* „Regen" ab 0,1 mm in der Stunde war zu großzügig: Darunter stand dann
+     „🌧 Regen · kaum spürbar" in einer Zeile. Zwei Stufen lösen das auf. */
+  const art = (s) => (s.mm >= 0.5 ? 'regen' : s.mm >= 0.1 ? 'tropfen'
+                    : !s.tags ? 'nacht'
                     : s.wolken < 25 ? 'sonnig' : s.wolken < 55 ? 'heiter'
                     : s.wolken < 80 ? 'wolkig' : 'bedeckt');
   const spans = [];
   for (const s of stunden) {
     const a = art(s);
     const letzt = spans[spans.length - 1];
-    if (letzt && letzt.art === a) { letzt.bis = s.u + 1; letzt.mm += s.mm; }
-    else spans.push({ art: a, von: s.u, bis: s.u + 1, mm: s.mm });
+    if (letzt && letzt.art === a) { letzt.bis = s.u + 1; letzt.mm += s.mm; letzt.h.push(s); }
+    else spans.push({ art: a, von: s.u, bis: s.u + 1, mm: s.mm, h: [s] });
+  }
+
+  const groesste = (liste) => (liste.length ? Math.max(...liste) : null);
+  for (const sp of spans) {
+    const temps = sp.h.map(x => x.temp).filter(v => v != null);
+    sp.tMin = temps.length ? Math.min(...temps) : null;
+    sp.tMax = temps.length ? Math.max(...temps) : null;
+    sp.wind = groesste(sp.h.map(x => x.wind).filter(v => v != null));
+    sp.boe  = groesste(sp.h.map(x => x.boe).filter(v => v != null));
   }
   return spans;
 }
 
 const SPAN_WORT = { sonnig: '☀️ sonnig', heiter: '🌤 heiter', wolkig: '⛅ wolkig',
-                    bedeckt: '☁️ bedeckt', regen: '🌧 Regen', nacht: '🌙 Nacht' };
+                    bedeckt: '☁️ bedeckt', regen: '🌧 Regen',
+                    tropfen: '🌦 ein paar Tropfen', nacht: '🌙 Nacht' };
 
 /** Was 11 km/h bedeuten, weiß kaum jemand — die Beaufort-Skala in Worten. */
 function windWorte(kmh) {
@@ -3527,6 +3608,11 @@ function openDaySheet(i) {
   const warm = stunden.reduce((a, b) => (b.temp > a.temp ? b : a), stunden[0] || { u: 12, temp: 0 });
   const kalt = stunden.reduce((a, b) => (b.temp < a.temp ? b : a), stunden[0] || { u: 5, temp: 0 });
   const wind = d.wind_speed_10m_max?.[i], boe = d.wind_gusts_10m_max?.[i];
+  /* Die Windspitze ohne Uhrzeit half niemandem: „Böen bis 38 km/h" kann
+     nachts um drei gelten oder mitten am Nachmittag. */
+  const windSpitze = stunden.length
+    ? stunden.reduce((a, b) => ((b.boe ?? b.wind ?? -1) > (a.boe ?? a.wind ?? -1) ? b : a)).u
+    : null;
   const uvMax = d.uv_index_max?.[i];
   const heute = new Date(dayISO).toDateString() === new Date().toDateString();
 
@@ -3539,10 +3625,33 @@ function openDaySheet(i) {
            stehen — sonst muss man selbst suchen, was gerade gilt. */
         const jetztStunde = new Date().getHours();
         const laeuft = heute && jetztStunde >= s.von && jetztStunde < s.bis;
-        return `<div class="ds-span${laeuft ? ' ist-jetzt' : ''}">
-          <b>${String(s.von).padStart(2, '0')}–${String(s.bis).padStart(2, '0')} Uhr${
-            laeuft ? '<em>jetzt</em>' : ''}</b>
-          <span>${SPAN_WORT[s.art]}${s.art === 'regen' ? ` · ${dez(s.mm)} mm` : ''}</span>
+
+        /* Zweite Zeile: Temperatur und Wind für genau diesen Abschnitt.
+           Ohne sie stand hier nur „bedeckt" — die Frage, wie warm und wie
+           windig es dann ist, musste man sich aus Tageswerten zusammenreimen. */
+        const zahlen = [];
+        if (s.tMin != null) {
+          zahlen.push(round(s.tMin) === round(s.tMax)
+            ? `${round(s.tMax)}°`
+            : `${round(s.tMin)}–${round(s.tMax)}°`);
+        }
+        if (s.wind != null) {
+          zahlen.push(`Wind ${round(s.wind)} km/h${
+            s.boe != null && s.boe >= s.wind + 8 ? `, Böen ${round(s.boe)}` : ''}`);
+        }
+        if (s.art === 'regen' || s.art === 'tropfen') {
+          const k = regenKlartext(s.mm / Math.max(1, s.bis - s.von));
+          zahlen.push(`${dez(s.mm)} mm${k.kurz ? ` — ${k.kurz}` : ''}`);
+        }
+
+        return `<div class="ds-span ds-zwei${laeuft ? ' ist-jetzt' : ''}">
+          <span class="ds-kopf">
+            <b>${String(s.von).padStart(2, '0')}–${String(s.bis).padStart(2, '0')} Uhr${
+              laeuft ? '<em>jetzt</em>' : ''}</b>
+            <span class="ds-wort">${SPAN_WORT[s.art]}</span>
+          </span>
+          ${zahlen.length ? `<span class="ds-zahlen">${
+            zahlen.map(z => `<i>${z}</i>`).join('')}</span>` : ''}
         </div>`;
       }).join('')}
     </div>
@@ -3553,11 +3662,12 @@ function openDaySheet(i) {
         kalt.gefuehlt != null ? ` <i>fühlt sich an wie ${round(kalt.gefuehlt)}°</i>` : ''}</dd>
       <dt>Sonne</dt><dd>${sun} Stunden${sun >= 8 ? ' — viel' : sun <= 2 ? ' — wenig' : ''}</dd>
       <dt>Regen</dt><dd>${mm < 0.2 ? 'keiner erwartet' : `${dez(mm)} mm — ${rainWords(mm)}`}</dd>
-      <dt>Wind</dt><dd>bis ${round(wind)} km/h, Böen bis ${round(boe)} km/h
+      <dt>Wind</dt><dd>bis ${round(wind)} km/h, Böen bis ${round(boe)} km/h${
+        windSpitze != null ? ` gegen ${String(windSpitze).padStart(2, '0')} Uhr` : ''}
         <i>${windWorte(wind)}${boe >= 60 ? ' · in Böen auf lose Gegenstände achten' : ''}</i></dd>
       <dt>Sonnenaufgang</dt><dd>${hhmm(d.sunrise[i])}</dd>
       <dt>Sonnenuntergang</dt><dd>${hhmm(d.sunset[i])}</dd>
-      ${uvMax != null ? `<dt>UV-Höchstwert</dt><dd>${uvMax.toFixed(1)}${uvMax >= 6 ? ' — Sonnenschutz sinnvoll' : uvMax >= 3 ? ' — mäßig' : ' — unkritisch'}</dd>` : ''}
+      ${uvMax != null ? `<dt>UV-Höchstwert</dt><dd>${dez(uvMax)}${uvMax >= 6 ? ' — Sonnenschutz sinnvoll' : uvMax >= 3 ? ' — mäßig' : ' — unkritisch'}</dd>` : ''}
     </dl>
     <p class="ds-note">1 mm Regen heißt: Auf einen Quadratmeter fällt ein Liter Wasser.
       Verteilt über mehrere Stunden ist das kaum spürbar, in zehn Minuten ein kräftiger Schauer.
@@ -5797,66 +5907,153 @@ let naechsteStation = null;
    je nach Station steht nur eines davon in der Antwort. Das kürzeste zuerst. */
 const messWert = (w, feld) => w[`${feld}_10`] ?? w[`${feld}_30`] ?? w[`${feld}_60`] ?? null;
 
+/* Alle Stationen der letzten Abfrage — die Kopfzeile zeigt nur das Nötigste,
+   das Blatt beim Antippen zeigt sie vollständig. */
+let messZeilen = null;
+
+const abstandKm = (z) => z.station.distance / 1000;
+const stationName = (z) => `${esc(z.station.station_name)}, ${
+  abstandKm(z) < 10 ? dez(abstandKm(z)) : Math.round(abstandKm(z))} km`;
+
+/* Wind mit Richtung und Böen, sofern die Station ihn misst. */
+function windMessung(z) {
+  const x = z?.w;
+  const wind = x ? messWert(x, 'wind_speed') : null;
+  if (wind == null) return null;
+  const boe = messWert(x, 'wind_gust_speed');
+  const richtung = messWert(x, 'wind_direction');
+  return {
+    kurz: `Wind ${richtung != null ? dirName(richtung) + ' ' : ''}${round(wind)} km/h`,
+    boe: boe != null && boe >= wind + 5 ? `Böen ${round(boe)} km/h` : null,
+    wind
+  };
+}
+
 function renderHeroMessung(zeilen) {
   const el = $('#heroMess');
   if (!el) return;
   naechsteStation = null;
+  messZeilen = zeilen?.length ? zeilen : null;
   el.hidden = true;
   const erste = zeilen?.[0];
   if (!erste?.w || erste.w.temperature == null) return;
 
-  const abstand = (z) => z.station.distance / 1000;
-  const km = abstand(erste);
+  const km = abstandKm(erste);
   const alterMin = (Date.now() - new Date(erste.w.timestamp).getTime()) / 60000;
   // Zu weit weg oder zu alt sagt nichts mehr über den eigenen Standort aus
   if (km > 60 || alterMin > 100 || alterMin < -10) return;
 
   naechsteStation = erste;
   const w = erste.w;
-  const nameKm = (z) => `${esc(z.station.station_name)}, ${
-    abstand(z) < 10 ? dez(abstand(z)) : Math.round(abstand(z))} km`;
+
+  /* Der Kasten hier war ein zweiter Wetterblock unter dem ersten: noch eine
+     Temperatur, noch eine Zeile Stationsnamen. Die große Zahl oben genügt.
+     Gezeigt wird deshalb nur, was sie nicht sagt — Feuchte und Wind, und
+     zwar gemessen statt gerechnet. Namen, Entfernungen, Luftdruck und die
+     übrigen Stationen stehen beim Antippen.
+
+     Ausnahme: Weicht die Messung deutlich von der gerechneten Zahl ab,
+     gehört das nach vorn. Ein Grad ist Rauschen, zwei sind eine Aussage. */
+  const teile = [`gemessen ${hhmm(new Date(w.timestamp))}`];
+  const modellT = data?.current?.temperature_2m;
+  if (modellT != null && Math.abs(w.temperature - modellT) >= 2) {
+    teile.push(`<b>${dez(w.temperature)}°</b>`);
+  }
+  if (w.relative_humidity != null) teile.push(`${w.relative_humidity} % Feuchte`);
 
   /* Kleine Automatikstationen messen oft nur Temperatur und Feuchte. Fehlt
-     der Wind, wird er von der nächsten Station geholt, die ihn misst — aber
-     dann steht auch dort, von welcher. Ein geliehener Wert unter einem
-     fremden Stationsnamen wäre schlimmer als gar keiner. */
-  const gruppen = [];
-  const nah = [`<b>${dez(w.temperature)}°</b>`];
-  if (w.relative_humidity != null) nah.push(`${w.relative_humidity} % Feuchte`);
-  if (w.cloud_cover != null) nah.push(wolkenWort(w.cloud_cover));
-  if (w.pressure_msl != null) nah.push(`${round(w.pressure_msl)} hPa`);
-  const regenNah = messWert(w, 'precipitation');
-  if (regenNah != null && regenNah > 0) nah.push(`${dez(regenNah)} mm Regen`);
-  gruppen.push({ werte: nah, quelle: nameKm(erste) });
+     der Wind, wird er von der nächsten Station geholt, die ihn misst. Ein
+     Stationsname steht hier bewusst nicht dabei — er stünde sonst über
+     einem geliehenen Wert. Im Blatt beim Antippen ist jeder Wert seiner
+     Station zugeordnet. */
+  const windVon = windMessung(erste)
+    ? erste
+    : zeilen.find(z => abstandKm(z) <= 60 && windMessung(z));
+  const wm = windMessung(windVon);
+  if (wm) teile.push(wm.kurz);
+  if (teile.length === 1 && w.cloud_cover != null) teile.push(wolkenWort(w.cloud_cover));
+  if (teile.length === 1) return;
 
-  const windZeile = (z) => {
-    const x = z.w;
-    const wind = messWert(x, 'wind_speed');
-    if (wind == null) return null;
-    const boe = messWert(x, 'wind_gust_speed');
-    const richtung = messWert(x, 'wind_direction');
-    const teile = [`Wind ${richtung != null ? dirName(richtung) + ' ' : ''}${round(wind)} km/h`];
-    if (boe != null && boe >= wind + 5) teile.push(`Böen ${round(boe)} km/h`);
-    return teile;
-  };
-
-  const eigenerWind = windZeile(erste);
-  if (eigenerWind) {
-    gruppen[0].werte.push(...eigenerWind);
-  } else {
-    const mitWind = zeilen.find(z => abstand(z) <= 60 && windZeile(z));
-    if (mitWind) gruppen.push({ werte: windZeile(mitWind), quelle: nameKm(mitWind) });
-  }
-
-  const t = new Date(w.timestamp);
-  el.innerHTML = `
-    <span class="hm-kopf">Gemessen ${hhmm(t)} Uhr<i>?</i></span>
-    ${gruppen.map(g => `
-      <span class="hm-zeile">
-        <span class="hm-werte">${g.werte.map(v => `<span>${v}</span>`).join('')}</span>
-        <span class="hm-quelle">${g.quelle}</span>
-      </span>`).join('')}`;
+  el.innerHTML = `<span class="hm-dot" aria-hidden="true"></span>
+    <span class="hm-werte">${teile.map(v => `<span>${v}</span>`).join('')}</span>
+    <span class="hm-mehr" aria-hidden="true">›</span>`;
+  el.setAttribute('aria-label',
+    `Messwerte der Wetterstation ${erste.station.station_name}, ${Math.round(km)} km entfernt`);
   el.hidden = false;
+}
+
+/** Das ganze Messbild: nächste Station im Vergleich zum Modell, dann die
+    übrigen Stationen ringsum — jeder Wert mit seiner Herkunft. */
+function openMessung() {
+  const zeilen = messZeilen;
+  const erste = zeilen?.[0];
+  if (!erste) { openExplain('messung'); return; }
+
+  const w = erste.w;
+  const modellT = data?.current?.temperature_2m;
+  const diff = modellT != null ? w.temperature - modellT : null;
+
+  const wm = windMessung(erste);
+  const geliehen = wm ? null : zeilen.find(z => abstandKm(z) <= 60 && windMessung(z));
+  const gm = windMessung(geliehen);
+
+  const werte = [];
+  if (w.relative_humidity != null) werte.push(['Luftfeuchte', `${w.relative_humidity} %`, '']);
+  if (wm) werte.push(['Wind', `${wm.kurz.replace('Wind ', '')}`, wm.boe || '']);
+  else if (gm) werte.push(['Wind', gm.kurz.replace('Wind ', ''),
+                           `gemessen in ${stationName(geliehen)}`]);
+  if (w.cloud_cover != null) werte.push(['Bewölkung', `${w.cloud_cover} %`, wolkenWort(w.cloud_cover)]);
+  if (w.pressure_msl != null) werte.push(['Luftdruck', `${round(w.pressure_msl)} hPa`,
+    w.pressure_msl >= 1020 ? 'Hochdruck' : w.pressure_msl <= 1000 ? 'Tiefdruck' : 'normal']);
+  const regen = messWert(w, 'precipitation');
+  if (regen != null) werte.push(['Niederschlag',
+    regen > 0 ? `${dez(regen)} mm` : 'nichts gefallen', 'in der letzten Stunde']);
+
+  const weitere = (zeilen || []).slice(1, 6);
+
+  $('#explainTitle').textContent = 'Gemessen statt gerechnet';
+  $('#explainText').innerHTML = `
+    <div class="ms-kopf">
+      <span class="ms-paar">
+        <b>${round(modellT)}°</b><i>gerechnet für ${esc(place?.name || 'deinen Ort')}</i>
+      </span>
+      <span class="ms-pfeil" aria-hidden="true">↔</span>
+      <span class="ms-paar">
+        <b>${dez(w.temperature)}°</b><i>gemessen, ${stationName(erste)}</i>
+      </span>
+    </div>
+    <p class="ms-satz">${diff == null ? ''
+      : Math.abs(diff) < 1
+        ? 'Beide Zahlen liegen beieinander — das Modell trifft deinen Ort gerade gut.'
+        : `Das sind <b>${dez(Math.abs(diff))}°</b> Unterschied. Die Station steht
+           ${erste.station.height != null ? `auf ${Math.round(erste.station.height)} m und ` : ''}
+           ${Math.round(abstandKm(erste))} km entfernt — Höhe und Lage erklären
+           solche Abstände meist besser als ein Fehler im Modell.`}</p>
+
+    <dl class="ds-facts">
+      <dt>Messzeit</dt><dd>${hhmm(new Date(w.timestamp))} Uhr<i>${
+        esc(erste.station.station_name)}, DWD</i></dd>
+      ${werte.map(([k, v, s]) => `<dt>${k}</dt><dd>${v}${s ? `<i>${s}</i>` : ''}</dd>`).join('')}
+    </dl>
+
+    ${weitere.length ? `<p class="rs-kopf">Stationen ringsum</p>
+      <div class="ms-liste">${weitere.map(z => `
+        <span class="ms-zeile">
+          <span class="ms-ort"><b>${esc(z.station.station_name)}</b>
+            <i>${Math.round(abstandKm(z))} km${
+              z.station.height != null ? ` · ${Math.round(z.station.height)} m` : ''}</i></span>
+          <span class="ms-grad">${dez(z.w.temperature)}°</span>
+        </span>`).join('')}</div>` : ''}
+
+    <p class="ds-note">${EXPLAIN.messung.text.split('\n\n')[0]}</p>`;
+
+  const l = $('#explainLink');
+  if (l) {
+    l.href = EXPLAIN.messung.link.url;
+    l.textContent = `${EXPLAIN.messung.link.text} öffnen →`;
+    l.hidden = false;
+  }
+  openSheet('#explainSheet');
 }
 
 function renderStationen(zeilen) {
@@ -5898,6 +6095,12 @@ const EBENEN_HILFE = {
     text: 'Wie viel Regen oder Schnee in einer Stunde fällt. Blau ist wenig, '
         + 'grün und gelb mittel, rot und violett viel. Unter 0,5 mm merkt man kaum etwas, '
         + 'ab 5 mm in der Stunde wird man ohne Schirm nass.' },
+  schirme: { name: 'Regenschirme', farbe: '#4aa8e0',
+    text: 'Ein Schirm steht dort, wo in der gezeigten Stunde mindestens 0,15 mm Regen '
+        + 'fallen; daneben die Menge in Millimetern. Geschlossen heißt ein paar Tropfen, '
+        + 'aufgespannt leichter bis mäßiger Regen, aufgespannt mit Tropfen ab 5 mm — dann '
+        + 'wird man ohne Schirm in Minuten nass. Die Farbfläche darunter zeigt dasselbe '
+        + 'flächig; die Schirme sagen es auf einen Blick.' },
   wolken: { name: 'Wolken', farbe: '#9aa8bb',
     text: 'Wie dicht der Himmel bedeckt ist. Je grauer die Fläche, desto geschlossener '
         + 'die Wolkendecke. Helle Stellen sind Lücken, durch die die Sonne kommt.' },
@@ -5976,24 +6179,51 @@ let zonenWetter = null;        // { 'Ort': { t, code } }
    ist ein Abruf für fünfzehn Städte. */
 async function ladeZonenWetter() {
   if (zonenWetter && Date.now() - zonenWetter.stand < 20 * 60000) return;
+
+  /* Beim Start aus dem Zwischenspeicher: Sonst steht beim Öffnen erst
+     einmal nichts da, bis die Antwort kommt — und wenn Open-Meteo gerade
+     nicht mag, bleibt es leer. Eine halbe Stunde alte Zahl ist besser als
+     gar keine, sie wird ja gleich überschrieben. */
+  if (!zonenWetter) {
+    const alt = store.get('wf.zonenWetter', null);
+    if (alt?.karte && Date.now() - alt.stand < 6 * 3600e3) {
+      zonenWetter = alt;
+      renderZonen();
+    }
+  }
+
   const p = new URLSearchParams({
     latitude: ZONEN.map(z => z.lat).join(','),
     longitude: ZONEN.map(z => z.lon).join(','),
     current: 'temperature_2m,weather_code,is_day'
   });
-  try {
-    const r = await fetch(`${FORECAST}?${p}`);
-    if (!r.ok) return;
-    const d = await r.json();
-    const liste = Array.isArray(d) ? d : [d];
-    const karte = {};
-    ZONEN.forEach((z, i) => {
-      const c = liste[i]?.current;
-      if (c) karte[z.ort] = { t: c.temperature_2m, code: c.weather_code, tag: c.is_day };
-    });
-    zonenWetter = { karte, stand: Date.now() };
-    renderZonen();
-  } catch { /* ohne Wetter bleibt die Liste wie bisher */ }
+  const direkt = `${FORECAST}?${p}`;
+  /* Erst über den eigenen Worker: Der puffert die Antwort zwölf Minuten und
+     zählt auf die Adresse von Cloudflare. Fünfzehn Städte gehen sonst voll
+     auf das Tageskontingent dieses Anschlusses — und dann fehlte hier das
+     Wetter, obwohl der Code stimmte. */
+  const proxy = (store.get('wf.proxy', '') || 'https://wetterfunk.florian-s-thiel.workers.dev')
+    .replace(/\/+$/, '');
+  const wege = [`${proxy}/wetter?url=${encodeURIComponent(direkt)}`, direkt];
+
+  for (const weg of wege) {
+    try {
+      const r = await fetch(weg);
+      if (!r.ok) continue;
+      const d = await r.json();
+      const liste = Array.isArray(d) ? d : [d];
+      const karte = {};
+      ZONEN.forEach((z, i) => {
+        const c = liste[i]?.current;
+        if (c) karte[z.ort] = { t: c.temperature_2m, code: c.weather_code, tag: c.is_day };
+      });
+      if (!Object.keys(karte).length) continue;
+      zonenWetter = { karte, stand: Date.now() };
+      store.set('wf.zonenWetter', zonenWetter);
+      renderZonen();
+      return;
+    } catch { /* nächster Weg */ }
+  }
 }
 
 function renderZonen() {
@@ -6020,9 +6250,13 @@ function renderZonen() {
     const himmel = hoehe > 6 ? '☀️' : hoehe > -0.833 ? '🌇' : hoehe > -6 ? '🌆' : '🌙';
     const wetter = zonenWetter?.karte?.[z.ort];
 
+    /* Das Wetterzeichen sagt schon, ob dort Tag oder Nacht ist — daneben
+       stand sonst zweimal derselbe Mond. Das Himmelszeichen bleibt nur,
+       solange kein Wetter vorliegt. */
     return `<div class="tz-row${z.heim ? ' is-here' : ''}">
       <span class="tz-ort">${esc(z.ort)}</span>
-      <span class="tz-sky" title="Sonne ${hoehe.toFixed(0)}° über dem Horizont">${himmel}</span>
+      <span class="tz-sky" title="Sonne ${hoehe.toFixed(0)}° über dem Horizont">${
+        wetter ? '' : himmel}</span>
       <span class="tz-wetter">${wetter
         ? `<i>${wetterZeichen(wetter.code, wetter.tag)}</i><b>${round(wetter.t)}°</b>` : ''}</span>
       <span class="tz-zeit">${zeit}</span>
@@ -6035,9 +6269,18 @@ function renderZonen() {
 function openZonen() {
   ladeZonenWetter();
   $('#explainTitle').textContent = 'Zeit und Wetter weltweit';
+  /* Die Warnung vor einer falsch gehenden Geräteuhr stand früher in der
+     Zeile unter dem Tagesbalken. Die gibt es nicht mehr — also gehört sie
+     hierher, wo man die Zeit ohnehin nachschlägt. */
+  const schief = Math.abs(uhrVersatz) > 30000;
   $('#explainText').innerHTML = `
-    <p style="margin:0 0 12px">Die Uhr oben wird einmal beim Start gegen die
-      Serverzeit geprüft — falls das Gerät falsch geht, steht es dort.</p>
+    <p style="margin:0 0 12px">${schief
+      ? `<b>Achtung:</b> Die Uhr dieses Geräts geht
+         ${uhrVersatz > 0 ? 'nach' : 'vor'} — um
+         ${Math.abs(Math.round(uhrVersatz / 1000))} Sekunden. Die Ringuhr oben
+         rechnet das heraus und zeigt die richtige Zeit.`
+      : `Die Ringuhr oben wird beim Start gegen die Serverzeit geprüft.
+         Dieses Gerät geht richtig.`}</p>
     <div class="tz-liste" id="zonenListe"></div>
     <p class="ds-note" style="margin-top:12px">Die Sonne wandert in einer Stunde
       um 15 Längengrade weiter. Wo es später Nachmittag ist, ist es weiter östlich.</p>`;
@@ -6305,20 +6548,25 @@ function openDwdFull() {
    Wind, UV und Feuchte schaut man ständig nach — wie treffsicher das Modell
    zuletzt war, vielleicht einmal die Woche. Deshalb sind die auswertenden
    Abschnitte ans Ende gerückt, hinter die Berichte. */
+/* Die Messwerte-Karte fehlte hier — sie war der einzige Abschnitt der Seite
+   ohne Reiter. „Radar & Zeit" heißt jetzt kurz „Radar", damit die Leiste in
+   drei Zeilen bleibt. */
 const NAV = [
-  { id: 'nav-jetzt',   ziel: '.hero',        name: 'Jetzt' },
-  { id: 'nav-stunden', ziel: '.card-hourly', name: 'Stündlich' },
-  { id: 'nav-tage',    ziel: '#daily',       name: '10 Tage' },
-  { id: 'nav-radar',   ziel: '.card-radar',  name: 'Radar & Zeit' },
-  { id: 'nav-details', ziel: '#tiles',       name: 'Details' },
-  { id: 'nav-sonne',   ziel: '.card-cd',     name: 'Sonne' },
-  { id: 'nav-modelle', ziel: '.card-modelle', name: 'Modelle' },
-  { id: 'nav-dwd',     ziel: '.card-dwd',    name: 'DWD' },
-  { id: 'nav-bericht', ziel: '.card-brief',  name: 'Bericht' },
-  { id: 'nav-himmel',  ziel: '.card-sky',    name: 'Am Himmel' },
-  { id: 'nav-cams',    ziel: '.card-cams',   name: 'Webcams' },
-  { id: 'nav-rueck',   ziel: '.card-rueck',  name: 'Trefferquote' },
-  { id: 'nav-push',    ziel: '.card-push',   name: 'Meldungen' }
+  { id: 'nav-jetzt',   ziel: '.hero',           name: 'Jetzt' },
+  { id: 'nav-stunden', ziel: '.card-hourly',    name: 'Stunden' },
+  { id: 'nav-tage',    ziel: '#daily',          name: '10 Tage' },
+  { id: 'nav-radar',   ziel: '.card-radar',     name: 'Radar' },
+  { id: 'nav-details', ziel: '#tiles',          name: 'Details' },
+  { id: 'nav-mess',    ziel: '.card-stationen', name: 'Messung' },
+  { id: 'nav-sonne',   ziel: '.card-cd',        name: 'Sonne' },
+  { id: 'nav-modelle', ziel: '.card-modelle',   name: 'Modelle' },
+  { id: 'nav-dwd',     ziel: '.card-dwd',       name: 'DWD' },
+  { id: 'nav-bericht', ziel: '.card-brief',     name: 'Bericht' },
+  { id: 'nav-himmel',  ziel: '.card-sky',       name: 'Himmel' },
+  { id: 'nav-cams',    ziel: '.card-cams',      name: 'Webcams' },
+  { id: 'nav-rueck',   ziel: '.card-rueck',     name: 'Treffer' },
+  { id: 'nav-push',    ziel: '.card-push',      name: 'Meldungen' },
+  { id: 'nav-install', ziel: '.card-install',   name: 'Als App' }
 ];
 
 /** Waagerechte Leiste unter dem Kopf: springt zum Abschnitt und hebt hervor,
@@ -6329,6 +6577,32 @@ function zielOeffnen(sel) {
   const karte = document.querySelector(sel)?.closest('.card') || document.querySelector(sel);
   const koerper = karte?.querySelector('.klapp-body');
   if (koerper?.hidden) karte.querySelector('.klapp-kopf')?.click();
+}
+
+/** Höhe der umgebrochenen Sprungleiste messen und weiterreichen. Fest
+    verdrahtet stimmte sie nicht mehr, sobald das Gerät auf größere Schrift
+    steht oder ein Reiter in die nächste Zeile rutscht. */
+function navHoeheMessen() {
+  const bar = $('#nav');
+  if (!bar) return 0;
+  const h = Math.round(bar.getBoundingClientRect().height);
+  if (h) document.documentElement.style.setProperty('--nav-h', `${h}px`);
+  return h;
+}
+
+/** Kopfhöhe für Sprungziele: Kopfzeile plus Sprungleiste plus Luft. */
+const kopfHoehe = () =>
+  ($('.topbar')?.offsetHeight || 0) + ($('#nav')?.offsetHeight || 0) + 8;
+
+/** Reiter für Abschnitte ausblenden, die es gerade nicht gibt. */
+function navChipsPruefen() {
+  const bar = $('#nav');
+  if (!bar) return;
+  $$('.nav-chip', bar).forEach(c => {
+    const el = document.querySelector(c.dataset.ziel);
+    c.hidden = !el || el.hasAttribute('hidden');
+  });
+  navHoeheMessen();
 }
 
 function renderNav() {
@@ -6342,7 +6616,10 @@ function renderNav() {
     zielOeffnen(b.dataset.ziel);          // zugeklappte Karte mitnehmen
     const el = document.querySelector(b.dataset.ziel);
     if (!el) return;
-    const kopf = $('.topbar').offsetHeight + bar.offsetHeight + 8;
+    /* Beim Springen soll die Leiste zu sehen sein — sonst landet man in
+       einem Abschnitt und weiß nicht mehr, wo man ist. */
+    document.body.classList.remove('nav-weg');
+    const kopf = kopfHoehe();
     // Nach dem Aufklappen kurz warten, sonst zielt der Sprung auf die alte Höhe
     setTimeout(() => {
       const y = el.getBoundingClientRect().top + window.scrollY - kopf;
@@ -6350,7 +6627,33 @@ function renderNav() {
     }, 30);
   }));
 
-  // Aktiven Abschnitt beim Scrollen mitführen
+  navChipsPruefen();
+  /* Ein ResizeObserver auf der Leiste selbst statt eines resize-Horchers am
+     Fenster: Die Leiste ändert ihre Höhe auch ohne Fensterwechsel — wenn ein
+     Reiter dazukommt, wegfällt oder das Gerät auf größere Schrift steht. */
+  if (window.ResizeObserver) new ResizeObserver(() => navHoeheMessen()).observe(bar);
+  addEventListener('resize', navHoeheMessen);
+  addEventListener('orientationchange', () => setTimeout(navHoeheMessen, 250));
+  /* Nachmessen, sobald die Seite wieder sichtbar wird: Ein Browser hält im
+     Hintergrund sowohl den ResizeObserver als auch das Zeichnen an — die
+     Höhe stünde sonst auf dem Stand von vor dem Wegschalten. */
+  addEventListener('visibilitychange', () => { if (!document.hidden) navHoeheMessen(); });
+  setTimeout(navHoeheMessen, 400);
+
+  /* Mehrere Karten erscheinen erst, wenn ihre Daten da sind (DWD-Bericht,
+     Trefferquote, Meldungen, Messwerte). Ein Reiter, der auf eine
+     ausgeblendete Karte zeigt, führte ins Leere — deshalb hört die Leiste
+     mit, wann eine Karte auf- oder zugeht. */
+  const wache = new MutationObserver(() => navChipsPruefen());
+  NAV.forEach(n => {
+    const el = document.querySelector(n.ziel);
+    if (el) wache.observe(el, { attributes: true, attributeFilter: ['hidden'] });
+  });
+
+  /* Aktiven Abschnitt beim Scrollen mitführen. Der obere Rand muss die
+     ganze Kopfhöhe abziehen — sonst gilt ein Abschnitt schon als „aktiv",
+     während er noch hinter der Leiste steckt. Früher stand dort fest 90 px,
+     inzwischen ist der Kopf deutlich höher. */
   const ziele = NAV.map(n => ({ ...n, el: document.querySelector(n.ziel) })).filter(z => z.el);
   const beob = new IntersectionObserver((eintraege) => {
     const sichtbar = eintraege.filter(e => e.isIntersecting)
@@ -6358,12 +6661,37 @@ function renderNav() {
     if (!sichtbar) return;
     const treffer = ziele.find(z => z.el === sichtbar.target);
     if (!treffer) return;
+    /* Kein scrollIntoView mehr: Die Leiste scrollt nicht mehr seitwärts,
+       der Aufruf hätte stattdessen die ganze Seite verschoben. */
     $$('.nav-chip', bar).forEach(c => c.classList.toggle('on', c.dataset.ziel === treffer.ziel));
-    const aktiv = bar.querySelector('.nav-chip.on');
-    if (aktiv) aktiv.scrollIntoView({ block: 'nearest', inline: 'center', behavior: 'smooth' });
-  }, { rootMargin: '-90px 0px -60% 0px', threshold: [0.05, 0.3] });
+  }, { rootMargin: `-${Math.round(kopfHoehe())}px 0px -60% 0px`, threshold: [0.05, 0.3] });
 
   ziele.forEach(z => beob.observe(z.el));
+  navAusblendenBinden();
+}
+
+/* Drei Zeilen Reiter sind viel Bild. Beim Herunterscrollen fährt die Leiste
+   deshalb ein, beim Hochscrollen und ganz oben ist sie wieder da — dort,
+   wo man ohnehin entscheidet, wohin man will. */
+function navAusblendenBinden() {
+  let letztes = window.scrollY;
+  /* Bewusst ohne requestAnimationFrame: In einem nicht sichtbaren Fenster
+     hält der Browser rAF an, und die Leiste bliebe hängen, wo sie gerade
+     steht. Ein Zeitfenster von 80 ms genügt für ruhiges Scrollen. */
+  let zuletztGeprueft = 0;
+  addEventListener('scroll', () => {
+    const jetzt = Date.now();
+    if (jetzt - zuletztGeprueft < 80) return;
+    zuletztGeprueft = jetzt;
+
+    const y = window.scrollY;
+    // Im Kartenvollbild ist die Leiste ohnehin weg
+    if (document.body.classList.contains('map-full')) { letztes = y; return; }
+    // Kleine Rucke ignorieren, sonst flackert die Leiste
+    if (Math.abs(y - letztes) < 8) return;
+    document.body.classList.toggle('nav-weg', y > letztes && y > kopfHoehe());
+    letztes = y;
+  }, { passive: true });
 }
 
 /** Karte auf den ganzen Bildschirm ziehen. */
@@ -6407,7 +6735,7 @@ function wire() {
   });
   wireSheetGesten();
   $('#playBtn')?.addEventListener('click', toggleZeitraffer);
-  [$('#topClock'), $('#footClock')].forEach(el => {
+  [$('#footClock')].forEach(el => {
     if (!el) return;
     el.setAttribute('role', 'button');
     el.tabIndex = 0;
@@ -6431,8 +6759,7 @@ function wire() {
 
   // Die Uhr im Kopf öffnet die Weltzeit — das ist ihr Thema
   $('#heroUhr')?.addEventListener('click', (e) => { e.stopPropagation(); openZonen(); });
-  $('#heroMess')?.addEventListener('click', () => openExplain('messung'));
-  $('#versatzZeile')?.addEventListener('click', () => openExplain('versatz'));
+  $('#heroMess')?.addEventListener('click', (e) => { e.stopPropagation(); openMessung(); });
   const vd = $('#verdict');
   if (vd) {
     vd.setAttribute('role', 'button');
@@ -6511,7 +6838,11 @@ function wire() {
   $('#refreshBtn').addEventListener('click', refresh);
 
   // Datenquelle
-  $('#modelPick').addEventListener('click', () => { renderSourceList(); openSheet('#modelSheet'); });
+  $('#modelPick').addEventListener('click', (e) => {
+    // Der Hinweis auf die Ortskorrektur sitzt in derselben Zeile und erklärt sich selbst
+    if (e.target.closest('.src-korr')) { openExplain('versatz'); return; }
+    renderSourceList(); openSheet('#modelSheet');
+  });
   $('#modelClose').addEventListener('click', () => closeSheet('#modelSheet'));
   $('#explainClose').addEventListener('click', () => closeSheet('#explainSheet'));
   $('#explainSheet').addEventListener('click', e => { if (e.target.id === 'explainSheet') closeSheet('#explainSheet'); });
@@ -6677,24 +7008,32 @@ function zeigeStand(text = null) {
 }
 
 function startClock() {
-  const ziele = [$('#topClock'), $('#footClock')].filter(Boolean);
-  if (!ziele.length) return;
-  let versatz = 0;
-
   fetch('./manifest.webmanifest', { method: 'HEAD', cache: 'no-store' })
     .then(res => {
       const serverzeit = res.headers.get('date');
-      if (serverzeit) versatz = new Date(serverzeit).getTime() - Date.now();
+      if (serverzeit) uhrVersatz = new Date(serverzeit).getTime() - Date.now();
     })
     .catch(() => {});
 
+  let letzteMinute = -1;
   const tick = () => {
-    const t = new Date(Date.now() + versatz);
-    const html = `<b>${t.toLocaleTimeString('de-DE')}</b> Uhr` +
-      (Math.abs(versatz) > 30000
-        ? ` · Gerät geht ${versatz > 0 ? 'nach' : 'vor'} (${Math.abs(Math.round(versatz / 1000))} s)`
-        : '');
-    ziele.forEach(el => { el.innerHTML = html; });
+    const t = new Date(Date.now() + uhrVersatz);
+    const fuss = $('#footClock');
+    if (fuss) {
+      fuss.innerHTML = `<b>${t.toLocaleTimeString('de-DE')}</b> Uhr` +
+        (Math.abs(uhrVersatz) > 30000
+          ? ` · Gerät geht ${uhrVersatz > 0 ? 'nach' : 'vor'} (${Math.abs(Math.round(uhrVersatz / 1000))} s)`
+          : '');
+    }
+
+    /* Die Ringuhr oben zeigt jetzt die Zeit — die muss mitlaufen. Vorher
+       wurde sie nur beim Laden neuer Wetterdaten gezeichnet und stand
+       danach bis zu zehn Minuten falsch da. Die Minute genügt: Sekunden
+       ständig neu zu setzen kostet nur Strom. */
+    if (t.getMinutes() !== letzteMinute) {
+      letzteMinute = t.getMinutes();
+      if (data?.daily) renderHeroUhr();
+    }
   };
   tick();
   setInterval(tick, 1000);
