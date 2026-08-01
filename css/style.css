@@ -2523,3 +2523,47 @@ body.ar-offen { overflow: hidden; }
   background: rgba(255,255,255,.13);
 }
 .rs-tspanne { font-size: 10.5px; color: var(--ink-faint); }
+
+/* ── Modelltabelle: Modelle × Tage ─────────────────────────── */
+.mt-umschalter {
+  display: inline-flex; gap: 2px; margin: 0 0 12px; padding: 2px;
+  background: rgba(255,255,255,.07); border-radius: 30px;
+}
+.mt-tab {
+  padding: 6px 14px; border: 0; border-radius: 30px; background: transparent;
+  color: var(--ink-dim); font: 600 12px var(--font); cursor: pointer;
+}
+.mt-tab.is-an { background: rgba(255,255,255,.16); color: var(--ink); }
+.mt-tabelle[hidden], .mt-uebersicht[hidden] { display: none; }
+
+/* Waagerecht rollbar, damit fünf Tage auch auf dem Telefon passen */
+.mt-tabelle { overflow-x: auto; scrollbar-width: none; margin: 0 -2px; }
+.mt-tabelle::-webkit-scrollbar { display: none; }
+.mtb { border-collapse: collapse; width: 100%; min-width: 420px; }
+.mtb th, .mtb td { padding: 8px 6px; text-align: center; vertical-align: top; }
+.mtb thead th {
+  font: 700 11px var(--font); color: var(--ink); line-height: 1.25;
+  border-bottom: 1px solid var(--card-line);
+}
+.mtb thead th i { display: block; font-style: normal; font-size: 9.5px;
+                  font-weight: 500; color: var(--ink-faint); }
+.mtb-ecke { text-align: left !important; color: var(--ink-faint) !important; font-weight: 600 !important; }
+.mtb tbody th {
+  text-align: left; white-space: nowrap;
+  font: 600 12px var(--font); color: var(--ink);
+  border-bottom: 1px solid rgba(255,255,255,.05);
+}
+.mtb-punkt {
+  display: inline-block; width: 9px; height: 3px; border-radius: 2px;
+  margin-right: 6px; vertical-align: 2px;
+}
+.mtb td { border-bottom: 1px solid rgba(255,255,255,.05); }
+.mtb td em { font-style: normal; font-size: 17px; display: block; line-height: 1.1; }
+.mtb td i {
+  font-style: normal; display: block; margin-top: 3px;
+  font-size: 10px; color: #8fd0f5; font-variant-numeric: tabular-nums;
+}
+.mtb-tr { color: var(--ink-faint) !important; }
+.mtb-nass { background: rgba(90,200,250,.07); }
+.mtb-leer { color: var(--ink-faint); font-size: 15px; }
+.mtb-hinweis { margin: 10px 2px 0; font-size: 11px; line-height: 1.55; color: var(--ink-faint); }

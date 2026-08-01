@@ -2145,7 +2145,7 @@ function modellCharakter(H, mid, tagISO) {
     ? `${String(f.von).padStart(2, '0')} Uhr`
     : `${String(f.von).padStart(2, '0')}–${String(f.bis + 1).padStart(2, '0')} Uhr`);
 
-  const basis = { mm: regen, zeiten };
+  const basis = { mm: regen, zeiten, stunden: nasseStunden };
   if (regen >= 1) return { ...basis, zeichen: '🌧', wort: 'Regen', grob: 'nass' };
   const wm = wolken.length ? wolken.reduce((a, b) => a + b, 0) / wolken.length : null;
   if (wm == null) return null;
@@ -2156,6 +2156,20 @@ function modellCharakter(H, mid, tagISO) {
 }
 
 const GROB_WORT = { freundlich: 'freundlich', trüb: 'bedeckt', nass: 'Regen' };
+
+/* Tageszeit-Fenster eines Modells in Worte: „vormittags", „ab 16 Uhr".
+   Für die Planung zählt der Abschnitt, nicht die Minute. */
+function zeitFensterWort(stunden) {
+  if (!stunden.length) return '';
+  const bloecke = [];
+  for (const st of stunden) {
+    const l = bloecke[bloecke.length - 1];
+    if (l && st === l.bis + 1) l.bis = st; else bloecke.push({ von: st, bis: st });
+  }
+  const p2 = (n) => String(n).padStart(2, '0');
+  return bloecke.slice(0, 2).map(b => `${p2(b.von)}–${p2(b.bis + 1)}`).join(', ')
+       + (bloecke.length > 2 ? ' …' : '');
+}
 
 function renderModellTage(H) {
   const box = $('#modelTage');
@@ -2208,7 +2222,43 @@ function renderModellTage(H) {
     </div>`;
   }).join('');
 
-  box.innerHTML = zeilen;
+  /* Zweite Ansicht: die Tabelle. Modelle als Zeilen, Tage als Spalten —
+     so liest man waagerecht, was ein Modell über die Woche sagt, und
+     senkrecht, wie einig sich alle über einen Tag sind. Unter jedem Zeichen
+     steht das Zeitfenster: Für einen Biergarten ist „13–17 Uhr" eine ganz
+     andere Auskunft als „ab 20 Uhr", auch wenn beide „Regen" heißen. */
+  const kopf = tage.map((d, i) => `<th>${i === 0 ? 'heute' : i === 1 ? 'morgen' : weekday(d)}
+    <i>${d.getDate()}.${d.getMonth() + 1}.</i></th>`).join('');
+
+  const koerper = MODELS.map(m => {
+    const zellen = tage.map((d) => {
+      const c = modellCharakter(H, m.id, iso(d));
+      if (!c) return `<td class="mtb-leer">·</td>`;
+      const nass = c.zeiten.length > 0;
+      return `<td class="${nass ? 'mtb-nass' : ''}">
+        <em>${c.zeichen}</em>
+        ${nass ? `<i>${zeitFensterWort(c.stunden)}</i>` : `<i class="mtb-tr">trocken</i>`}
+      </td>`;
+    }).join('');
+    return `<tr><th scope="row"><span class="mtb-punkt" style="background:${m.color}"></span>
+      ${esc(m.name)}</th>${zellen}</tr>`;
+  }).join('');
+
+  box.innerHTML = `
+    <div class="mt-umschalter" role="tablist">
+      <button class="mt-tab is-an" data-ansicht="uebersicht">Überblick</button>
+      <button class="mt-tab" data-ansicht="tabelle">Alle Modelle</button>
+    </div>
+    <div class="mt-uebersicht">${zeilen}</div>
+    <div class="mt-tabelle" hidden>
+      <table class="mtb">
+        <thead><tr><th class="mtb-ecke">Modell</th>${kopf}</tr></thead>
+        <tbody>${koerper}</tbody>
+      </table>
+      <p class="mtb-hinweis">Waagerecht lesen: Was sagt ein Modell über die Woche?
+        Senkrecht: Wie einig sind sich alle über einen Tag? Die Zeit darunter ist
+        das Fenster, in dem dieses Modell Niederschlag rechnet.</p>
+    </div>`;
 
   // Antippen erklärt, was das Zeichen bedeutet — auf dem Telefon gibt es
   // kein Überfahren mit der Maus, `title` blieb dort unsichtbar.
@@ -2218,6 +2268,18 @@ function renderModellTage(H) {
     toast(`${name}: ${wort}${mm ? ` · ${mm}` : ''}${
       zeiten ? ` · nass ${zeiten}` : ''}`, 4500);
   }));
+
+  $$('.mt-tab', box).forEach(t => t.addEventListener('click', (e) => {
+    e.stopPropagation();
+    const tab = t.dataset.ansicht;
+    $$('.mt-tab', box).forEach(x => x.classList.toggle('is-an', x === t));
+    box.querySelector('.mt-uebersicht').hidden = tab !== 'uebersicht';
+    box.querySelector('.mt-tabelle').hidden = tab !== 'tabelle';
+    store.set('wf.modellAnsicht', tab);
+  }));
+  const gemerkt = store.get('wf.modellAnsicht', 'uebersicht');
+  if (gemerkt === 'tabelle') box.querySelector('[data-ansicht="tabelle"]')?.click();
+
   return { streit: ersterStreit };
 }
 
