@@ -766,11 +766,19 @@ async function regenLage(lat, lon) {
   if (ab < 0) return null;
   const horizont = Math.min(zeiten.length, ab + 24);   // sechs Stunden voraus
 
-  /* 0,1 mm je Viertelstunde ist 0,4 mm in der Stunde — draußen eine
-     fleckig feuchte Straße, für die niemand eine Meldung braucht. Gemeldet
-     wird erst, was man auch merkt. Die App zeigt Tröpfeln weiterhin an,
-     nur klingelt dafür nichts mehr. */
-  const NASS = 0.25;               // je Viertelstunde, entspricht 1 mm/h
+  /* Zwei Bedingungen statt einer hohen Schwelle.
+
+     Die Rate allein taugt nicht: Bei 0,25 mm je Viertelstunde (1 mm/h)
+     bliebe echter leichter Regen unerwähnt — und darin wird man nass, wenn
+     man zwanzig Minuten unterwegs ist. Bei 0,1 mm meldete die App dagegen
+     einen einzelnen Tropfer um halb fünf nachts.
+
+     Deshalb: leichter Regen zählt ab 0,1 mm je Viertelstunde, aber gemeldet
+     wird eine Phase erst, wenn insgesamt mindestens 0,3 mm zusammenkommen.
+     Ein einzelner Spritzer fällt damit heraus, eine halbe Stunde Nieselregen
+     nicht. */
+  const NASS = 0.1;                // je Viertelstunde — leichter Regen zählt mit
+  const MELDE_SUMME = 0.3;         // so viel muss die Phase insgesamt bringen
   const phasen = [];
   let i = ab;
   while (i < horizont) {
@@ -789,6 +797,12 @@ async function regenLage(lat, lon) {
     });
     i = j + 1;
   }
+  /* Phasen, die insgesamt zu wenig bringen, werden verworfen — sie stehen
+     in der App weiterhin als „ein paar Tropfen", lösen aber nichts aus. */
+  const echte = phasen.filter(p => p.summe >= MELDE_SUMME);
+  if (!echte.length) return { laeuft: null, naechste: null };
+  phasen.length = 0;
+  phasen.push(...echte);
   if (!phasen.length) return { laeuft: null, naechste: null };
 
   // Regnet es jetzt schon, ist die erste Phase die laufende

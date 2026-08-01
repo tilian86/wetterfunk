@@ -2379,3 +2379,19 @@ body.ar-offen { overflow: hidden; }
 .klapp-kopf.offen { margin-bottom: 13px; }
 .klapp-body[hidden] { display: none; }
 .cams-add { margin-top: 10px; }
+
+/* Ortskorrektur — kleine Zeile unter der Stundenleiste */
+.versatz-zeile {
+  width: 100%; margin-top: 10px; padding: 8px 12px;
+  background: rgba(108,198,255,.08); border: 1px solid rgba(108,198,255,.22);
+  border-radius: var(--r-sm); color: var(--ink-dim);
+  font: 500 11.5px var(--font); text-align: left; cursor: pointer;
+}
+.versatz-zeile[hidden] { display: none; }
+.versatz-zeile b { color: var(--accent); font-weight: 700; }
+.versatz-zeile i {
+  font-style: normal; display: inline-grid; place-items: center;
+  width: 13px; height: 13px; margin-left: 6px; border-radius: 50%;
+  background: rgba(255,255,255,.14); color: var(--ink-dim);
+  font-size: 9px; font-weight: 700; vertical-align: -2px;
+}
