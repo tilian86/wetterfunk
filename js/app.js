@@ -31,8 +31,8 @@ const DWD      = 'https://www.dwd.de/DWD/warnungen/warnapp/json/warnings.json';
    Alle Zahlen beziehen sich auf eine Stunde; Viertelstundenwerte werden
    entsprechend umgerechnet. */
 const REGEN = {
-  nichts:   0.15,   // darunter gilt es als trocken
-  troepfeln: 0.4,   // darunter „ein paar Tropfen", kein Regen
+  nichts:   0.15,   // darunter im Text nicht erwähnt
+  troepfeln: 0.6,   // darunter „ein paar Tropfen", kein Regen
   kraeftig:  2.5
 };
 /** Viertelstundenwert auf Stundenmaß bringen. */
@@ -435,7 +435,12 @@ function renderVerdict() {
        Die Viertelstundenwerte reichen zwei Stunden voraus — daraus eine
        Leiste, die den nassen Rest zeigt und wo er aufhört. */
     const dry = near.find(x => x.t > now && proStunde(x.mm) < REGEN.nichts);
-    const word = WX.precipWord(data.current.weather_code);
+    /* Wortwahl nach Menge, nicht nach Wettercode: Der Code nennt schon
+       0,1 mm „Regen", und dann stand hier „Regen gerade", während draußen
+       ein paar Tropfen fielen. */
+    const jetztStaerke = Math.max(proStunde(jetztBlock?.mm), data.current.precipitation ?? 0);
+    const word = jetztStaerke < REGEN.troepfeln
+      ? 'Ein paar Tropfen' : WX.precipWord(data.current.weather_code);
     const bis = dry ? dry.t : null;
     const restMin = bis ? Math.max(0, Math.round((bis - now) / 60000)) : null;
 

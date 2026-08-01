@@ -684,11 +684,12 @@ function entscheide(lage, eintrag) {
 
     /* Kurz halten: Der Sperrbildschirm des iPhones zeigt rund zwei Zeilen,
        alles Weitere wird abgeschnitten. Das Wichtigste gehört nach vorn. */
+    const was = lage.laeuft.leicht ? 'Tropfen' : 'Regen';
     return {
       art: 'ende',
-      titel: `Regen hört gegen ${lage.laeuft.endeUhr} auf`,
-      text: `Noch etwa ${minuten} Min.${lage.naechste
-        ? ` · ab ${lage.naechste.startUhr} wieder` : ''}`,
+      titel: `${was} bis etwa ${lage.laeuft.endeUhr}`,
+      text: `Noch ${minuten} Min.${lage.laeuft.leicht ? ' · nur ein paar Tropfen' : ''}${
+        lage.naechste ? ` · ab ${lage.naechste.startUhr} wieder` : ''}`,
       merker: { art: 'ende', ende: lage.laeuft.ende, wann: Date.now(), regnete: true }
     };
   }
@@ -699,9 +700,9 @@ function entscheide(lage, eintrag) {
   if (alt.regnete) {
     return {
       art: 'vorbei',
-      titel: 'Regen ist durch',
+      titel: 'Von oben kommt nichts mehr',
       text: lage.naechste
-        ? `Trocken · ab ${lage.naechste.startUhr} kommt ${lage.naechste.staerke}`
+        ? `Trocken · ab ${lage.naechste.startUhr} ${lage.naechste.staerke}`
         : 'Trocken, es kommt nichts nach',
       merker: { art: 'vorbei', wann: Date.now(), regnete: false }
     };
@@ -731,10 +732,15 @@ function entscheide(lage, eintrag) {
     if (!erinnerungFaellig) return null;
   }
 
+  /* Großschreibung am Satzanfang: „Gleich ein paar Tropfen" liest sich
+     richtig, „In 20 Min. Ein paar Tropfen" nicht. */
+  const wort = minuten <= 20 ? p.staerke
+             : p.staerke.charAt(0).toUpperCase() + p.staerke.slice(1);
   return {
     art: 'start',
-    titel: minuten <= 20 ? `Gleich ${p.staerke}` : `In ${minuten} Min. ${p.staerke}`,
-    text: `${p.startUhr}–${p.endeUhr} Uhr · rund ${p.summe.toFixed(1)} mm`,
+    titel: minuten <= 20 ? `Gleich ${wort}` : `${wort} in ${minuten} Min.`,
+    text: `${p.startUhr}–${p.endeUhr} Uhr · ${p.summe < 0.3
+      ? 'kaum messbar' : `rund ${p.summe.toFixed(1)} mm`}`,
     merker: { art: 'start', start: p.start, vorlauf: minuten, wann: Date.now(), regnete: false }
   };
 }
@@ -766,19 +772,17 @@ async function regenLage(lat, lon) {
   if (ab < 0) return null;
   const horizont = Math.min(zeiten.length, ab + 24);   // sechs Stunden voraus
 
-  /* Zwei Bedingungen statt einer hohen Schwelle.
+  /* Empfindlich wie ein Regenalarm: Sobald von oben etwas kommt, wird es
+     gemeldet. Die Schwelle liegt deshalb an der Nachweisgrenze der Modelle.
 
-     Die Rate allein taugt nicht: Bei 0,25 mm je Viertelstunde (1 mm/h)
-     bliebe echter leichter Regen unerwähnt — und darin wird man nass, wenn
-     man zwanzig Minuten unterwegs ist. Bei 0,1 mm meldete die App dagegen
-     einen einzelnen Tropfer um halb fünf nachts.
-
-     Deshalb: leichter Regen zählt ab 0,1 mm je Viertelstunde, aber gemeldet
-     wird eine Phase erst, wenn insgesamt mindestens 0,3 mm zusammenkommen.
-     Ein einzelner Spritzer fällt damit heraus, eine halbe Stunde Nieselregen
-     nicht. */
-  const NASS = 0.1;                // je Viertelstunde — leichter Regen zählt mit
-  const MELDE_SUMME = 0.3;         // so viel muss die Phase insgesamt bringen
+     Der Fehler in der Nacht zum 1. August war nicht die Empfindlichkeit,
+     sondern die Wortwahl: Bei 0,1 mm hieß es „Regen hört gegen 05:00 auf" —
+     das klingt nach Schütten, draußen waren es ein paar Tropfen. Gemeldet
+     wird jetzt alles, aber mit dem Wort, das zur Menge passt. Wer „ein paar
+     Tropfen" liest, weiß, dass die Jacke reicht; wer „Regen" liest, nimmt
+     den Schirm. */
+  const NASS = 0.05;               // je Viertelstunde = 0,2 mm/h, Nachweisgrenze
+  const MELDE_SUMME = 0.05;        // ein einzelner nasser Abschnitt genügt
   const phasen = [];
   let i = ab;
   while (i < horizont) {
@@ -793,7 +797,13 @@ async function regenLage(lat, lon) {
       startUhr: uhr(i),
       endeUhr: uhr(Math.min(j, zeiten.length - 1)),
       summe, spitze,
-      staerke: spitze >= 2.5 ? 'kräftiger Regen' : spitze >= 0.8 ? 'Regen' : 'leichter Regen'
+      /* Vier Stufen statt drei, und die unterste heißt nicht „Regen".
+         Bezug ist die Spitze je Viertelstunde: 0,15 entspricht 0,6 mm/h. */
+      staerke: spitze >= 2.5 ? 'kräftiger Regen'
+             : spitze >= 0.8 ? 'Regen'
+             : spitze >= 0.15 ? 'leichter Regen'
+             : 'ein paar Tropfen',
+      leicht: spitze < 0.15
     });
     i = j + 1;
   }
