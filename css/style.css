@@ -2339,3 +2339,21 @@ body.ar-offen { overflow: hidden; }
 .mt-urteil[data-tone="ok"]   { background: rgba(255,193,94,.14); color: #ffc95e; }
 .mt-urteil[data-tone="bad"]  { background: rgba(255,107,107,.16); color: #ff8f8f; }
 .mt-hinweis { margin-top: 4px; }
+
+/* ── Lernwertung in der Trefferquote ───────────────────────── */
+.rueck-modelle { margin: 14px 0 4px; }
+.rm-kopf {
+  margin: 0 0 8px; font-size: 11px; font-weight: 700;
+  letter-spacing: .07em; text-transform: uppercase; color: var(--ink-faint);
+}
+.rm-reihe { display: flex; flex-wrap: wrap; gap: 7px; }
+.rm-eintrag {
+  display: grid; gap: 1px; padding: 7px 11px;
+  background: rgba(255,255,255,.05); border: 1px solid var(--card-line);
+  border-radius: var(--r-sm);
+}
+.rm-eintrag b { font-size: 12px; color: var(--ink); }
+.rm-eintrag i { font-style: normal; font-size: 10.5px; color: var(--ink-faint);
+                font-variant-numeric: tabular-nums; }
+.rm-sieger { border-color: rgba(108,198,255,.45); background: rgba(108,198,255,.1); }
+.rm-text { margin: 9px 0 0; font-size: 12px; line-height: 1.55; color: var(--ink-dim); }
