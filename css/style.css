@@ -106,12 +106,20 @@ body[data-mood="night"]   .sky-grad { background: linear-gradient(178deg,#1b2647
 }
 
 /* ── Kopfzeile ────────────────────────────────────────────── */
+/* Höhe der Kopfzeile an einer Stelle: 8 oben + 36 Knopf + 19 unten.
+   Die 19 unten schaffen Platz für den Stand der Daten („vor 2 Min."), der
+   unter dem Aktualisieren-Knopf hängt. Mit den früheren 8 ragte er 2,5 px
+   über die Leiste hinaus — in den dunklen Bereich darunter. */
+:root { --topbar-h: 63px; }
 .topbar {
   position: fixed; top: 0; left: 0; right: 0; z-index: 40;
   display: flex; align-items: center; gap: 10px;
   /* Beide Knöpfe auf einer Linie halten, auch wenn der Stand darunter steht */
-  padding: calc(var(--sat) + 8px) calc(var(--pad) + var(--sar)) 8px calc(var(--pad) + var(--sal));
-  background: linear-gradient(#0b1220e6, #0b122000);
+  padding: calc(var(--sat) + 8px) calc(var(--pad) + var(--sar)) 19px calc(var(--pad) + var(--sal));
+  /* Nicht bis auf null ausblenden: Der Stand stand sonst am unteren Rand
+     auf faktisch durchsichtigem Grund. Die Sprungleiste darunter bringt
+     ihren eigenen Verlauf mit. */
+  background: linear-gradient(#0b1220f2, #0b1220e4);
   backdrop-filter: blur(14px) saturate(140%);
   -webkit-backdrop-filter: blur(14px) saturate(140%);
 }
@@ -490,6 +498,20 @@ svg { fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round
 }
 .dwd-more:active { transform: scale(.99); }
 .dwd-more[hidden] { display: none; }
+
+/* Verweis auf das Wettervideo des DWD */
+.dwd-video {
+  display: flex; align-items: center; gap: 11px;
+  margin-top: 11px; padding: 11px 13px;
+  background: rgba(255,255,255,.05); border: 1px solid var(--card-line);
+  border-radius: var(--r-md); color: var(--ink); text-decoration: none;
+}
+.dwd-video:active { background: rgba(255,255,255,.09); }
+.dwd-video > svg:first-child { width: 22px; height: 22px; flex: none; color: var(--accent); }
+.dwd-video span { flex: 1; min-width: 0; display: grid; gap: 2px; }
+.dwd-video b { font-size: 13.5px; font-weight: 600; }
+.dwd-video i { font-style: normal; font-size: 11.5px; color: var(--ink-faint); }
+.dwd-video-chev { width: 15px; height: 15px; flex: none; opacity: .5; }
 .dwd-foot {
   margin-top: 10px; font-size: 10.5px; color: var(--ink-faint); opacity: .8;
 }
@@ -922,6 +944,14 @@ select#bfModel {
 .src-dot {
   width: 7px; height: 7px; flex: none; border-radius: 50%;
   background: var(--good); box-shadow: 0 0 7px rgba(79,212,138,.7);
+}
+/* Ortskorrektur, in derselben Zeile mitgeführt statt als eigener Kasten */
+.src-korr { font-style: normal; color: var(--accent); white-space: nowrap; }
+.src-korr u {
+  display: inline-grid; place-items: center;
+  width: 12px; height: 12px; margin-left: 5px; border-radius: 50%;
+  background: rgba(108,198,255,.22); color: var(--accent);
+  font-size: 8.5px; font-weight: 700; text-decoration: none; vertical-align: 1px;
 }
 
 .model-list { display: grid; gap: 7px; margin-bottom: 14px; }
@@ -1484,10 +1514,9 @@ body.loading .hero-temp, body.loading .hero-desc { opacity: .45; }
 
   .model-chart .mchart { height: 220px; }
 
-  /* Der Tagesfortschritt und die Uhr gehören zusammen und dürfen
-     nebeneinander stehen, statt zwei Zeilen zu verbrauchen. */
+  /* Der Tagesfortschritt läuft über die ganze Breite. Die Uhrzeile darunter
+     ist entfallen, seit die Ringuhr im Kopf die Zeit zeigt. */
   .day-progress { grid-column: 1 / -1; }
-  .topclock { grid-column: 1 / -1; }
 }
 
 /* Sehr breite Schirme: drei Spalten. Zweispaltig blieb rechts viel Luft,
@@ -1627,19 +1656,10 @@ body.loading .hero-temp, body.loading .hero-desc { opacity: .45; }
 }
 .foot-clock b { color: var(--ink); font-weight: 600; }
 
-/* Funkuhr oben — bewusst zurückhaltend, sie soll den Wetterblick nicht stören */
-/* Steht ohne Kartenfläche direkt auf dem Himmelsverlauf — dort trägt die
-   normale Nebentextfarbe nicht, deshalb eigene, hellere Werte. */
-.topclock {
-  text-align: center; font-size: 12.5px; letter-spacing: .05em;
-  font-variant-numeric: tabular-nums; color: #c9d7e8;
-  margin: -2px 0 2px; text-shadow: 0 1px 3px rgba(4,10,22,.45);
-}
-.topclock b { color: #fff; font-weight: 600; font-size: 14px; }
-.topclock, .foot-clock { cursor: pointer; }
-.topclock::after {
-  content: ' · Zeitzonen'; font-size: 10px; color: #a9bcd4;
-}
+/* Die Funkuhr unter dem Tagesbalken ist entfallen — seit die Ringuhr im Kopf
+   die Zeit zeigt, stand dieselbe Angabe zweimal untereinander. Im Fuß bleibt
+   sie, dort stört sie den Wetterblick nicht. */
+.foot-clock { cursor: pointer; }
 
 /* Tag-Nacht-Kugel */
 .globus-wrap {
@@ -1835,6 +1855,18 @@ body.loading .hero-temp, body.loading .hero-desc { opacity: .45; }
 }
 .ds-span b { font-weight: 600; color: var(--ink); font-variant-numeric: tabular-nums; }
 
+/* Zweizeilige Fassung im Tagesblatt: oben Zeitraum und Wetterwort, darunter
+   Temperatur, Wind und Regenmenge für genau diesen Abschnitt. */
+.ds-span.ds-zwei { display: grid; gap: 3px; }
+.ds-kopf { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.ds-wort { flex: none; }
+.ds-zahlen {
+  display: flex; flex-wrap: wrap; align-items: baseline;
+  font-size: 11.5px; color: var(--ink-faint); font-variant-numeric: tabular-nums;
+}
+.ds-zahlen i { font-style: normal; }
+.ds-zahlen i + i::before { content: '·'; margin: 0 6px; opacity: .7; }
+
 .ds-facts {
   display: grid; grid-template-columns: auto 1fr; gap: 5px 14px;
   font-size: 13px; margin: 0 0 14px;
@@ -1865,28 +1897,32 @@ body.loading .hero-temp, body.loading .hero-desc { opacity: .45; }
 .explain-link[hidden] { display: none; }
 
 /* ── Sprungleiste ─────────────────────────────────────────── */
+/* Früher eine Zeile zum seitwärts Schieben. Damit sah man von dreizehn
+   Abschnitten immer nur vier — die hinteren fand man nur, wenn man ahnte,
+   dass es sie gibt. Jetzt bricht die Leiste um und zeigt alle.
+
+   Zwei Zeilen gehen nicht: Ausgemessen brauchen die dreizehn Reiter das
+   Dreifache der Bildbreite; für zwei Zeilen müsste die Schrift auf 8,5 px
+   schrumpfen. Also drei Zeilen — und damit die nicht dauerhaft ein Fünftel
+   des Bildschirms belegen, fährt die Leiste beim Herunterscrollen ein und
+   beim Hochscrollen wieder heraus. */
 .nav {
   position: fixed; z-index: 39;
-  top: calc(var(--sat) + 52px); left: 0; right: 0;
-  display: flex; gap: 6px; overflow-x: auto; scrollbar-width: none;
-  padding: 7px calc(var(--pad) + var(--sar)) 8px calc(var(--pad) + var(--sal));
-  background: linear-gradient(#0b1220f0, #0b1220d0 70%, #0b122000);
+  top: calc(var(--sat) + var(--topbar-h)); left: 0; right: 0;
+  display: flex; flex-wrap: wrap; justify-content: center; gap: 5px;
+  padding: 6px calc(12px + var(--sar)) 8px calc(12px + var(--sal));
+  background: linear-gradient(#0b1220f2, #0b1220ea 78%, #0b122000);
   backdrop-filter: blur(14px) saturate(140%);
   -webkit-backdrop-filter: blur(14px) saturate(140%);
+  transition: transform .22s ease, opacity .22s ease;
 }
-.nav::-webkit-scrollbar { display: none; }
-/* Weiche Kante an beiden Seiten: zeigt, dass die Leiste weitergeht,
-   statt die Reiter einfach abzuschneiden. */
-.nav {
-  -webkit-mask-image: linear-gradient(to right, transparent 0, #000 14px,
-                      #000 calc(100% - 20px), transparent 100%);
-  mask-image: linear-gradient(to right, transparent 0, #000 14px,
-              #000 calc(100% - 20px), transparent 100%);
-}
+/* Beim Lesen aus dem Weg — beim Hochscrollen sofort wieder da */
+body.nav-weg .nav { transform: translateY(-100%); opacity: 0; pointer-events: none; }
+
 .nav-chip {
-  flex: none; padding: 6px 13px; border-radius: 30px;
+  flex: none; padding: 6px 9px; border-radius: 30px;
   background: rgba(255,255,255,.07); border: 1px solid transparent;
-  color: var(--ink-faint); font: 600 12.5px var(--font);
+  color: var(--ink-faint); font: 600 11.5px var(--font);
   cursor: pointer; white-space: nowrap;
   transition: background .15s, color .15s, border-color .15s;
 }
@@ -1896,8 +1932,22 @@ body.loading .hero-temp, body.loading .hero-desc { opacity: .45; }
 }
 .nav-chip:active { transform: scale(.95); }
 
-/* Platz für die Leiste schaffen */
-body { padding-top: calc(var(--sat) + 96px); }
+/* Auf schmalen Geräten (iPhone SE, 13 mini) rutschte sonst ein einzelner
+   Reiter in eine vierte Zeile — für eine Zeile mit einem Wort darin ist der
+   Platz zu schade. Etwas engere Reiter halten es bei dreien. */
+@media (max-width: 389px) {
+  .nav {
+    gap: 4px;
+    padding-left: calc(8px + var(--sal));
+    padding-right: calc(8px + var(--sar));
+  }
+  .nav-chip { padding: 6px 7px; font-size: 11px; }
+}
+
+/* Platz für die Leiste schaffen — die Höhe misst renderNav() und schreibt
+   sie als --nav-h fort. Fest verdrahtet stimmte sie nicht mehr, sobald das
+   Gerät auf größere Schrift gestellt ist. */
+body { padding-top: calc(var(--sat) + var(--topbar-h) + var(--nav-h, 104px)); }
 
 /* ── Karte auf Vollbild ───────────────────────────────────── */
 .radar-full {
@@ -1936,7 +1986,7 @@ body.map-full > *:not(.card-radar):not(.sky):not(.topbar):not(.toast) { visibili
    sicher treffen — untereinander stören sie nichts. */
 .card-radar.is-full .layer-pick {
   position: absolute; z-index: 20; margin: 0;
-  top: calc(var(--sat) + 56px); left: 10px; right: auto;
+  top: calc(var(--sat) + var(--topbar-h) + 4px); left: 10px; right: auto;
   display: grid; gap: 7px; width: 42px;
 }
 .card-radar.is-full .lchip {
@@ -1983,7 +2033,7 @@ body.map-full > *:not(.card-radar):not(.sky):not(.topbar):not(.toast) { visibili
 }
 
 /* Rechte Knopfreihe über den Reglern, Legende darüber */
-.card-radar.is-full .radar-full { bottom: auto; top: calc(var(--sat) + 56px); }
+.card-radar.is-full .radar-full { bottom: auto; top: calc(var(--sat) + var(--topbar-h) + 4px); }
 .card-radar.is-full .radar-globe { bottom: calc(var(--sab) + 148px); }
 .card-radar.is-full .radar-locate { bottom: calc(var(--sab) + 108px); }
 .card-radar.is-full .radar-legend {
@@ -1991,7 +2041,7 @@ body.map-full > *:not(.card-radar):not(.sky):not(.topbar):not(.toast) { visibili
 }
 .card-radar.is-full .map-mode { top: calc(var(--sat) + 8px); }
 /* Der Hinweis „keine Daten" darf die Zeitangabe nicht überdecken */
-.card-radar.is-full .radar-empty { top: calc(var(--sat) + 44px); }
+.card-radar.is-full .radar-empty { top: calc(var(--sat) + var(--topbar-h) - 8px); }
 
 /* KI-Stimme freischalten */
 .bf-kian, .bf-kiaus {
@@ -2243,39 +2293,71 @@ body.ar-offen { overflow: hidden; }
   font-size: 12px; font-weight: 600; color: var(--ink);
 }
 
-/* Was die nächste DWD-Station wirklich gemessen hat — unter der
-   gerechneten Zahl, klar als Messung ausgewiesen. */
+/* Was die nächste DWD-Station gerade misst — als schmale Zeile unter der
+   großen Zahl. Sie war früher ein zweiter Kasten mit eigener Temperatur;
+   das war dieselbe Aussage zweimal. Jetzt steht hier nur, was die große
+   Zahl nicht sagt, der Rest kommt beim Antippen. */
 .hero-mess {
-  display: grid; gap: 6px; width: 100%;
-  margin: 14px 0 0; padding: 10px 14px;
-  background: rgba(255,255,255,.06); border: 1px solid var(--card-line);
-  border-radius: var(--r-md); color: var(--ink-dim);
-  font: 500 12px var(--font); cursor: pointer; text-align: left;
+  display: inline-flex; align-items: center; justify-content: center;
+  gap: 8px; max-width: 100%;
+  margin: 10px auto 0; padding: 5px 11px 5px 10px;
+  background: rgba(255,255,255,.07); border: 1px solid var(--card-line);
+  border-radius: 30px; color: var(--ink-dim);
+  font: 500 11.5px var(--font); cursor: pointer; text-align: left;
 }
 .hero-mess[hidden] { display: none; }
 .hero-mess:active { opacity: .65; }
-.hm-kopf {
-  font-size: 10px; font-weight: 700; letter-spacing: .07em;
-  text-transform: uppercase; color: var(--ink-faint);
+
+/* Der Punkt sagt: gemessen, nicht gerechnet — wie die Aufnahmeleuchte
+   an einem Gerät. Er blinkt langsam, damit er nicht ablenkt. */
+.hm-dot {
+  width: 6px; height: 6px; flex: none; border-radius: 50%;
+  background: #ff5f56; box-shadow: 0 0 6px rgba(255,95,86,.75);
+  animation: hmPuls 3s ease-in-out infinite;
 }
-.hm-kopf i {
-  font-style: normal; display: inline-grid; place-items: center;
-  width: 13px; height: 13px; margin-left: 6px; border-radius: 50%;
-  background: rgba(255,255,255,.14); color: var(--ink-dim);
-  font-size: 9px; font-weight: 700; vertical-align: -2px; letter-spacing: 0;
-}
-/* Je Station eine Zeile: Werte links, Herkunft rechts darunter */
-.hm-zeile { display: grid; gap: 1px; }
-.hm-quelle { font-size: 10.5px; color: var(--ink-faint); }
+@keyframes hmPuls { 0%, 100% { opacity: 1; } 50% { opacity: .3; } }
+@media (prefers-reduced-motion: reduce) { .hm-dot { animation: none; } }
+
+.hm-mehr { flex: none; color: var(--ink-faint); font-size: 13px; line-height: 1; }
+
 /* Die Werte umbrechen bei Bedarf, mit Trennpunkten dazwischen */
 .hm-werte {
-  display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 0;
-  color: var(--ink); font-variant-numeric: tabular-nums; line-height: 1.4;
+  display: flex; flex-wrap: wrap; align-items: baseline; gap: 0 0;
+  color: var(--ink); font-variant-numeric: tabular-nums; line-height: 1.5;
 }
 .hm-werte > span + span::before {
-  content: '·'; margin: 0 7px; color: var(--ink-faint);
+  content: '·'; margin: 0 6px; color: var(--ink-faint);
 }
-.hm-werte b { font-size: 15px; font-weight: 700; }
+.hm-werte > span:first-child { color: var(--ink-faint); }
+.hm-werte b { font-weight: 700; }
+
+/* Messblatt: gerechnet und gemessen nebeneinander */
+.ms-kopf {
+  display: flex; align-items: center; justify-content: center; gap: 12px;
+  margin: 0 0 12px; padding: 13px 10px;
+  background: rgba(255,255,255,.05); border: 1px solid var(--card-line);
+  border-radius: var(--r-md);
+}
+.ms-paar { display: grid; justify-items: center; gap: 2px; text-align: center; flex: 1; min-width: 0; }
+.ms-paar b { font-size: 26px; font-weight: 300; color: var(--ink); letter-spacing: -.02em; }
+.ms-paar i { font-style: normal; font-size: 10.5px; line-height: 1.35; color: var(--ink-faint); }
+.ms-pfeil { flex: none; color: var(--ink-faint); font-size: 15px; }
+.ms-satz { margin: 0 0 14px; font-size: 13px; line-height: 1.5; color: var(--ink-dim); }
+.ms-satz b { color: var(--ink); }
+
+.ms-liste { display: grid; gap: 1px; margin-bottom: 12px; }
+.ms-zeile {
+  display: flex; align-items: center; gap: 10px;
+  padding: 7px 0; border-bottom: 1px solid var(--card-line);
+}
+.ms-zeile:last-child { border-bottom: 0; }
+.ms-ort { flex: 1; min-width: 0; display: grid; gap: 1px; }
+.ms-ort b { font-size: 13px; font-weight: 600; color: var(--ink); }
+.ms-ort i { font-style: normal; font-size: 10.5px; color: var(--ink-faint); }
+.ms-grad {
+  flex: none; font-size: 15px; font-weight: 600; color: var(--ink);
+  font-variant-numeric: tabular-nums;
+}
 
 /* Stand der Daten im Tagesblatt — beantwortet die Frage, ob das aktuell ist */
 .ds-stand {
@@ -2468,21 +2550,8 @@ body.ar-offen { overflow: hidden; }
 .klapp-body[hidden] { display: none; }
 .cams-add { margin-top: 10px; }
 
-/* Ortskorrektur — kleine Zeile unter der Stundenleiste */
-.versatz-zeile {
-  width: 100%; margin-top: 10px; padding: 8px 12px;
-  background: rgba(108,198,255,.08); border: 1px solid rgba(108,198,255,.22);
-  border-radius: var(--r-sm); color: var(--ink-dim);
-  font: 500 11.5px var(--font); text-align: left; cursor: pointer;
-}
-.versatz-zeile[hidden] { display: none; }
-.versatz-zeile b { color: var(--accent); font-weight: 700; }
-.versatz-zeile i {
-  font-style: normal; display: inline-grid; place-items: center;
-  width: 13px; height: 13px; margin-left: 6px; border-radius: 50%;
-  background: rgba(255,255,255,.14); color: var(--ink-dim);
-  font-size: 9px; font-weight: 700; vertical-align: -2px;
-}
+/* Die eigene Zeile für die Ortskorrektur ist entfallen — der Hinweis läuft
+   jetzt in der Quellenzeile mit (.src-korr weiter oben). */
 
 /* ── Regen im Detail ───────────────────────────────────────── */
 .rs-kopf {
@@ -2620,6 +2689,9 @@ body.ar-offen { overflow: hidden; }
   fill: #fff; stroke: rgba(10,16,26,.85); stroke-width: 1.5;
   filter: drop-shadow(0 0 4px rgba(255,214,10,.9));
 }
+/* Stundenmarken außen am Ring — 9, 12, 15, 18 Uhr, Mittag etwas länger */
+.hu-marke { stroke: rgba(255,255,255,.55); stroke-width: 1.4; fill: none; }
+.hu-marke.ist-mittag { stroke: rgba(255,255,255,.85); stroke-width: 1.8; }
 .hu-mitte {
   position: absolute; inset: 0; display: grid; place-content: center;
   justify-items: center; gap: 0; pointer-events: none; text-align: center;
