@@ -228,6 +228,61 @@ export default {
       }
     }
 
+    /* ── Regenverlauf für einen Punkt ─────────────────────────
+       Der DWD kann aus dem RV-Komposit den Wert an einer Koordinate
+       herausgeben — für jeden Fünf-Minuten-Schritt, gemessen wie
+       vorhergesagt. Damit lässt sich sagen: „Bei dir fängt es um 06:35 an",
+       statt nur ein Regengebiet auf der Karte zu zeigen.
+
+       Die Einheit ist Millimeter je fünf Minuten; mal zwölf ergibt die
+       gewohnte Angabe in mm/h. Werte um -0.001 bedeuten „kein Echo". */
+    if (url.pathname === '/dwdverlauf') {
+      const lat = +url.searchParams.get('lat');
+      const lon = +url.searchParams.get('lon');
+      if (!isFinite(lat) || !isFinite(lon) || Math.abs(lat) > 90 || Math.abs(lon) > 180) {
+        return json({ error: 'lat/lon fehlen' }, 400, origin);
+      }
+      // Nur Deutschland und Umgebung — anderswo gibt es kein Komposit
+      if (lat < 46.5 || lat > 56 || lon < 4.5 || lon > 16.5) {
+        return json({ error: 'außerhalb der Radarabdeckung' }, 404, origin);
+      }
+      if (await zuVieleAnfragen(env, request, 'punkt', 120, 3600)) {
+        return json({ error: 'Zu viele Anfragen' }, 429, origin);
+      }
+
+      const jetzt = Math.floor(Date.now() / 300000) * 300000;
+      const schritte = [];
+      for (let m = -10; m <= 90; m += 5) schritte.push(jetzt + m * 60000);
+
+      const bb = `${(lon - 0.05).toFixed(4)},${(lat - 0.05).toFixed(4)},`
+               + `${(lon + 0.05).toFixed(4)},${(lat + 0.05).toFixed(4)}`;
+
+      const holen = async (t) => {
+        const zeit = new Date(t).toISOString().replace(/\.\d+Z$/, '.000Z');
+        const u = 'https://maps.dwd.de/geoserver/dwd/wms?service=WMS&version=1.3.0'
+          + '&request=GetFeatureInfo&layers=dwd:Radar_rv_product_1x1km_ger'
+          + '&query_layers=dwd:Radar_rv_product_1x1km_ger&crs=CRS:84'
+          + `&bbox=${bb}&width=101&height=101&i=50&j=50`
+          + `&info_format=application/json&time=${encodeURIComponent(zeit)}`;
+        try {
+          const r = await withTimeout(
+            fetch(u, { cf: { cacheTtl: 240, cacheEverything: true } }), 8000);
+          if (!r.ok) return null;
+          const d = await r.json();
+          const v = d?.features?.[0]?.properties?.RV_ANALYSIS;
+          if (typeof v !== 'number' || v < 0) return { t, mm: 0 };
+          return { t, mm: +(v * 12).toFixed(2) };        // mm/5min → mm/h
+        } catch { return null; }
+      };
+
+      const werte = (await Promise.all(schritte.map(holen))).filter(Boolean);
+      if (werte.length < schritte.length / 2) {
+        return json({ error: 'DWD antwortet nicht vollständig' }, 502, origin);
+      }
+      return json({ punkte: werte, einheit: 'mm/h', quelle: 'DWD RV 1 km' }, 200, origin,
+                  'public, max-age=120');
+    }
+
     /* ── Amtlicher Regionalwetterbericht des DWD ──────────────
        Von Meteorologen geschriebene Texte, offene Daten. Der Server setzt
        keine CORS-Freigabe und liefert Latin-1, deshalb der Umweg hier. */

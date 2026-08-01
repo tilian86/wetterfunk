@@ -284,6 +284,90 @@ async function reverseGeocode(lat, lon) {
   };
 }
 
+/* ── Kleine Ringuhr im Kopf ────────────────────────────────
+   Florians Idee war, die große Ringuhr ganz nach oben zu holen und die
+   Temperatur hineinzuschreiben. Die große Zahl ist aber der Anker der App —
+   in einem Ring würde sie kleiner und müsste sich den Platz teilen, und
+   300 Pixel Ring ganz oben drücken alles andere nach unten.
+
+   Deshalb der Mittelweg: ein kleiner Ring neben der Zahl. Er zeigt
+   dasselbe wie der große — Nacht, Dämmerung, Tag als Ring, dazu der
+   Sonnenpunkt an seiner Stelle — nur auf 76 Pixeln, ohne Beschriftung.
+   In der Mitte steht, wie weit der Tag ist. Ein Tippen führt zum vollen
+   Abschnitt. Damit sieht man beim Öffnen sofort, wo im Tag man steht. */
+const MINI = { r: 30, ring: 7, mitte: 38 };
+
+function renderHeroUhr() {
+  const el = $('#heroUhr');
+  if (!el || !place || !data?.daily) { if (el) el.hidden = true; return; }
+
+  const jetzt = new Date();
+  const tagStart = new Date(jetzt); tagStart.setHours(0, 0, 0, 0);
+  const ev = sunEvents(jetzt, place.lat, place.lon);
+  const w = (t) => (t ? uhrWinkel(new Date(t), tagStart) : null);
+
+  const polarMini = (grad, radius) => {
+    const b = (grad - 90) * Math.PI / 180;
+    return [MINI.mitte + radius * Math.cos(b), MINI.mitte + radius * Math.sin(b)];
+  };
+  const segMini = (von, bis, farbe) => {
+    let spanne = bis - von;
+    if (spanne <= 0) spanne += 360;
+    if (spanne >= 359.9) {
+      return `<circle cx="${MINI.mitte}" cy="${MINI.mitte}" r="${MINI.r}"
+        fill="none" stroke="${farbe}" stroke-width="${MINI.ring}"/>`;
+    }
+    const [x1, y1] = polarMini(von, MINI.r);
+    const [x2, y2] = polarMini(von + spanne, MINI.r);
+    return `<path d="M${x1.toFixed(1)} ${y1.toFixed(1)} A ${MINI.r} ${MINI.r} 0 ${
+      spanne > 180 ? 1 : 0} 1 ${x2.toFixed(1)} ${y2.toFixed(1)}"
+      fill="none" stroke="${farbe}" stroke-width="${MINI.ring}"/>`;
+  };
+
+  const stufen = [
+    { bis: w(ev.astroDaemmerung),      farbe: '#141d16' },
+    { bis: w(ev.blaueStundeMorgen),    farbe: '#1b3a6b' },
+    { bis: w(ev.aufgang),              farbe: '#3f7fd4' },
+    { bis: w(ev.goldenEndeMorgen),     farbe: '#ffb347' },
+    { bis: w(ev.goldenStartAbend),     farbe: '#ffd60a' },
+    { bis: w(ev.untergang),            farbe: '#ffb347' },
+    { bis: w(ev.blaueStundeEndeAbend), farbe: '#3f7fd4' },
+    { bis: w(ev.astroNacht),           farbe: '#1b3a6b' },
+    { bis: 180,                        farbe: '#141d16' }
+  ].filter(x => x.bis != null);
+
+  let ring = segMini(-180, 179.99, '#141d16');
+  let start = -180;
+  for (const st of stufen) {
+    if (st.bis > start) ring += segMini(start, st.bis, st.farbe);
+    start = st.bis;
+  }
+
+  const jetztW = uhrWinkel(jetzt, tagStart);
+  const [px, py] = polarMini(jetztW, MINI.r);
+
+  // Anteil des hellen Tages, der schon vorbei ist
+  const sr = new Date(data.daily.sunrise[0]).getTime();
+  const ss = new Date(data.daily.sunset[0]).getTime();
+  const n = jetzt.getTime();
+  const tagsueber = n >= sr && n <= ss;
+  const anteil = tagsueber ? Math.round(((n - sr) / (ss - sr)) * 100) : null;
+  const rest = tagsueber ? restZeit(ss) : restZeit(n < sr ? sr : sr + 864e5);
+
+  el.hidden = false;
+  el.innerHTML = `
+    <svg viewBox="0 0 76 76" class="hu-svg" aria-hidden="true">
+      ${ring}
+      <circle class="hu-punkt" cx="${px.toFixed(1)}" cy="${py.toFixed(1)}" r="3.6"/>
+    </svg>
+    <span class="hu-mitte">
+      ${tagsueber ? `<b>${anteil} %</b><i>vom Tag</i>` : `<b>Nacht</b><i>${rest}</i>`}
+    </span>`;
+  el.title = tagsueber
+    ? `Tag zu ${anteil} % vorbei — noch ${rest} bis Sonnenuntergang`
+    : `Sonnenaufgang in ${rest}`;
+}
+
 // ══ Rendering: Jetzt ═══════════════════════════════════════
 function renderHero() {
   const c = data.current, d = data.daily;
@@ -306,6 +390,7 @@ function renderHero() {
   $('#heroMax').textContent = `${round(d.temperature_2m_max[0])}°`;
   $('#heroMin').textContent = `${round(d.temperature_2m_min[0])}°`;
   setMood(WX.mood(zeigeCode, c.is_day), c.is_day);
+  renderHeroUhr();
 }
 
 /** Zeigt oben, wie weit Tag oder Nacht fortgeschritten sind — als Anhalt
@@ -475,6 +560,15 @@ function renderVerdict() {
            : `Noch etwa <b class="rp-rest">${restMin} Minuten</b>, bis gegen ${hhmm(bis)}.${nachsatz}`)
         : 'Hält die nächsten zwei Stunden an.'}${leiste}`;
     el.dataset.tone = 'wet';
+    return;
+  }
+
+  /* Liegt der Punktverlauf des DWD vor, hat er Vorrang: Er misst, wo das
+     Modell nur rechnet, und gilt für den Standort statt für die Masche. */
+  const pv = punktSatz();
+  if (pv && !raining && pv.start) {
+    el.innerHTML = `<b>${pv.text}</b>`;
+    el.dataset.tone = 'soon';
     return;
   }
 
@@ -1200,6 +1294,57 @@ function regenStufe(mmProStunde) {
   return { wort: 'kräftiger Regen', farbe: '#8b3fd6' };
 }
 
+/* ── Regen genau bei dir ───────────────────────────────────
+   Bis hierher zeigte die App Regengebiete auf der Karte und Modellwerte für
+   die Rastermasche. Der DWD kann aber den Wert an einer einzelnen
+   Koordinate herausgeben — für jeden Fünf-Minuten-Schritt, gemessen und
+   90 Minuten voraus. Damit steht dort nicht mehr „im Raum Tübingen regnet
+   es", sondern „bei dir fängt es um 06:35 an und hört um 07:10 auf".
+
+   Das ist der Punkt, an dem die App mehr kann als die DWD-App: Die zeigt
+   Schirme an Messstationen — hier steht der Wert für deinen Standort. */
+let punktVerlauf = null;          // { punkte: [{t, mm}], geholt }
+
+async function ladePunktVerlauf(lat, lon) {
+  const proxy = (store.get('wf.proxy', '') || 'https://wetterfunk.florian-s-thiel.workers.dev')
+    .replace(/\/+$/, '');
+  try {
+    const r = await fetch(`${proxy}/dwdverlauf?lat=${lat.toFixed(3)}&lon=${lon.toFixed(3)}`);
+    if (!r.ok) { punktVerlauf = null; return; }
+    const d = await r.json();
+    punktVerlauf = Array.isArray(d?.punkte) && d.punkte.length
+      ? { punkte: d.punkte, geholt: Date.now() } : null;
+  } catch { punktVerlauf = null; }
+}
+
+/** Aus dem Verlauf einen Satz machen: Wann fängt es an, wann hört es auf? */
+function punktSatz() {
+  if (!punktVerlauf) return null;
+  const jetzt = Date.now();
+  const p = punktVerlauf.punkte.filter(x => x.t >= jetzt - 6 * 60000);
+  if (!p.length) return null;
+
+  const nass = (x) => x.mm >= 0.2;                 // darunter merkt man nichts
+  const uhr = (t) => hhmm(t);
+  const inMin = (t) => Math.max(0, Math.round((t - jetzt) / 60000));
+
+  if (nass(p[0])) {
+    const trocken = p.find(x => x.t > jetzt && !nass(x));
+    const staerke = Math.max(...p.slice(0, 3).map(x => x.mm));
+    return { regnet: true, staerke,
+      text: trocken
+        ? `Bei dir regnet es — bis etwa <b>${uhr(trocken.t)}</b> (${inMin(trocken.t)} Min.).`
+        : `Bei dir regnet es und hält die nächste Stunde an.` };
+  }
+  const start = p.find(x => x.t > jetzt && nass(x));
+  if (!start) return { regnet: false, text: 'Bei dir bleibt es die nächsten anderthalb Stunden trocken.' };
+  const ende = p.find(x => x.t > start.t && !nass(x));
+  const spitze = Math.max(...p.filter(x => x.t >= start.t && (!ende || x.t < ende.t)).map(x => x.mm));
+  return { regnet: false, start: start.t, staerke: spitze,
+    text: `Bei dir fängt es gegen <b>${uhr(start.t)}</b> an — in ${inMin(start.t)} Minuten.`
+        + (ende ? ` Vorbei gegen <b>${uhr(ende.t)}</b>.` : '') };
+}
+
 function openRegenSheet() {
   const inhalt = $('#regenInhalt');
   if (!inhalt || !data?.hourly) return;
@@ -1298,8 +1443,35 @@ function openRegenSheet() {
     }
   }
 
+  /* Der Punktverlauf steht ganz oben — er ist die genaueste Auskunft, die
+     die App geben kann, und beantwortet die Frage direkt. */
+  let punktTeil = '';
+  if (punktVerlauf) {
+    const jetzt = Date.now();
+    const p = punktVerlauf.punkte.filter(x => x.t >= jetzt - 6 * 60000);
+    const maxMm = Math.max(0.6, ...p.map(x => x.mm));
+    const satz = punktSatz();
+    punktTeil = `
+      <p class="rs-kopf">Genau bei dir <span class="rs-neu">DWD 1 km</span></p>
+      <p class="rs-punktsatz${satz?.regnet ? ' ist-nass' : ''}">${satz?.text || ''}</p>
+      <div class="rs-fein rs-punktbild">
+        ${p.map((x, k) => {
+          const st = regenStufe(x.mm);
+          const hoch = x.mm < 0.2 ? 3 : Math.max(12, (x.mm / maxMm) * 100);
+          const beschriften = k === 0 || new Date(x.t).getMinutes() % 30 === 0;
+          return `<span class="rs-saeule">
+            <i style="height:${hoch.toFixed(0)}%;background:${st.farbe || 'rgba(255,255,255,.22)'}"></i>
+            <em>${beschriften ? hhmm(x.t) : ''}</em></span>`;
+        }).join('')}
+      </div>
+      <p class="rs-legende">Fünf-Minuten-Schritte vom Radar des Deutschen Wetterdienstes,
+        1 km Auflösung — gemessen bis jetzt, danach gerechnet bis anderthalb Stunden voraus.
+        Nicht für die Region, sondern für deinen Punkt.</p>`;
+  }
+
   $('#regenTitel').textContent = tagesSumme < 0.1 ? 'Heute bleibt es trocken' : 'Regen heute';
   inhalt.innerHTML = `
+    ${punktTeil}
     ${feinTeil}
     <p class="rs-kopf">Heute insgesamt</p>
     <p class="rs-tag">${tagesSumme < 0.1
@@ -4762,6 +4934,7 @@ async function refresh(leise = false) {
   loadDwdText(place.lat, place.lon);
   ladeStationen(place.lat, place.lon);
   ladeRueckblick(place.lat, place.lon);
+  ladePunktVerlauf(place.lat, place.lon).then(() => renderVerdict());
   renderPush();
 
   try {
@@ -5996,6 +6169,9 @@ function wire() {
     el.setAttribute('role', 'button');
     el.tabIndex = 0;
     el.addEventListener('click', openZonen);
+  });
+  $('#heroUhr')?.addEventListener('click', () => {
+    document.querySelector('.card-cd')?.scrollIntoView({ block: 'start', behavior: 'smooth' });
   });
   $('#heroMess')?.addEventListener('click', () => openExplain('messung'));
   $('#versatzZeile')?.addEventListener('click', () => openExplain('versatz'));

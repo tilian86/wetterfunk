@@ -2567,3 +2567,39 @@ body.ar-offen { overflow: hidden; }
 .mtb-nass { background: rgba(90,200,250,.07); }
 .mtb-leer { color: var(--ink-faint); font-size: 15px; }
 .mtb-hinweis { margin: 10px 2px 0; font-size: 11px; line-height: 1.55; color: var(--ink-faint); }
+/* Punktgenauer Verlauf im Regenblatt */
+.rs-neu {
+  margin-left: 7px; padding: 2px 7px; border-radius: 20px;
+  background: rgba(108,198,255,.18); color: var(--accent);
+  font-size: 9px; letter-spacing: .04em;
+}
+.rs-punktsatz {
+  margin: 0 0 12px; padding: 11px 14px; border-radius: var(--r-sm);
+  background: rgba(255,255,255,.05); border: 1px solid var(--card-line);
+  font-size: 14px; line-height: 1.5; color: var(--ink);
+}
+.rs-punktsatz.ist-nass { background: rgba(90,200,250,.12); border-color: rgba(90,200,250,.3); }
+.rs-punktsatz b { color: var(--accent); }
+.rs-punktbild { height: 60px; gap: 2px; }
+.rs-punktbild em { font-size: 8.5px; }
+
+/* ── Kleine Ringuhr im Kopfbereich ─────────────────────────── */
+.hero-uhr {
+  position: relative; width: 76px; height: 76px;
+  margin: 14px auto 0; padding: 0;
+  background: none; border: 0; cursor: pointer; display: block;
+}
+.hero-uhr[hidden] { display: none; }
+.hero-uhr:active { transform: scale(.95); }
+.hu-svg { width: 100%; height: 100%; display: block; overflow: visible; }
+.hu-svg circle, .hu-svg path { stroke-linecap: butt; }
+.hu-punkt {
+  fill: #fff; stroke: rgba(10,16,26,.85); stroke-width: 1.5;
+  filter: drop-shadow(0 0 4px rgba(255,214,10,.9));
+}
+.hu-mitte {
+  position: absolute; inset: 0; display: grid; place-content: center;
+  justify-items: center; gap: 0; pointer-events: none; text-align: center;
+}
+.hu-mitte b { font-size: 15px; font-weight: 700; color: var(--ink); line-height: 1.05; }
+.hu-mitte i { font-style: normal; font-size: 8.5px; color: var(--ink-faint); }
