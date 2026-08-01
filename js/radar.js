@@ -68,12 +68,10 @@ const Radar = (() => {
     /* Scheitert das Laden eines Bildes, blieb die Karte bisher stumm leer —
        und es sah aus, als gäbe es keine Vorhersage. Jetzt sagt sie es. */
     map.on('error', (e) => {
-      const txt = String(e?.error?.message || e?.error || '');
-      console.warn('Karte:', txt);
-      if (/image|fc/i.test(txt) && els.mode) {
-        els.mode.innerHTML = '<span class="mm-art">Vorhersagebild ließ sich nicht laden</span>';
-        els.mode.dataset.mode = 'none';
-      }
+      /* Nur protokollieren. Die Meldung überschrieb früher die Zeitangabe
+         auf der Karte — bei einem vorübergehenden Kachelfehler stand dann
+         „ließ sich nicht laden", obwohl gleich darauf alles da war. */
+      console.warn('Karte:', String(e?.error?.message || e?.error || ''));
     });
     map.on('moveend', () => els.onMoveEnd?.(map.getCenter(), map.getZoom()));
     // Das DWD-Detailbild gilt nur für den gezeigten Ausschnitt — nach dem
@@ -96,6 +94,42 @@ const Radar = (() => {
      fällt zeitweise ganz aus. Gepuffert kommt dasselbe Bild sofort zurück. */
   const DWD_PX = 768;
   let dwdCanvas = null, dwdCtx = null, dwdLauf = 0, dwdSichtbar = false, dwdTimer = null;
+
+  /* ── Fünf-Minuten-Nowcast des DWD ────────────────────────
+     Das RV-Komposit („Analyse und Vorhersage") liefert 1-km-Radarbilder im
+     Fünf-Minuten-Takt und reicht rund 90 Minuten voraus. Damit lässt sich
+     ein Regengebiet minutengenau heranziehen sehen — die Frage, wegen der
+     man aufs Radar schaut. Vorher zeigte die App dort Viertelstunden aus
+     einem 20×20-Raster: viel zu grob, um zu erkennen, wann der Schauer den
+     eigenen Ort erreicht.
+
+     Die Bilder werden je Ausschnitt und Zeitpunkt zwischengespeichert; sie
+     sind klein (2–20 kB) und liegen zusätzlich im Worker-Puffer. */
+  const RV_SCHRITT = 5 * 60000;                 // Fünf-Minuten-Raster
+  const RV_VORAUS = 90;                         // so weit reicht die Vorhersage
+  const RV_ZURUECK = 60;                        // so weit zurück wird angeboten
+  const rvBilder = new Map();                   // "bbox|zeit" → Daten-URL
+  let rvLauf = 0, rvAktiv = false;
+
+  /** Zeitpunkt auf das Fünf-Minuten-Raster des DWD legen. */
+  const rvRaster = (ms) => Math.floor(ms / RV_SCHRITT) * RV_SCHRITT;
+  const rvStempel = (ms) => new Date(rvRaster(ms)).toISOString().replace(/\.\d+Z$/, '.000Z');
+
+  /** Reicht der Nowcast für diesen Zeitpunkt? */
+  function rvMoeglich(ms) {
+    if (!map || !inDeutschland(map.getBounds()) || map.getZoom() < 5.5) return false;
+    const min = (ms - Date.now()) / 60000;
+    return min >= -RV_ZURUECK - 5 && min <= RV_VORAUS;
+  }
+
+  /** Alle Zeitpunkte, die der Nowcast abdeckt — für den Zeitstrahl. */
+  function rvZeiten() {
+    if (!map || !inDeutschland(map.getBounds())) return [];
+    const jetzt = rvRaster(Date.now());
+    const aus = [];
+    for (let m = -RV_ZURUECK; m <= RV_VORAUS; m += 5) aus.push(jetzt + m * 60000);
+    return aus;
+  }
 
   /** Deutschland grob — außerhalb lohnt der Abruf nicht. */
   const inDeutschland = (b) =>
@@ -130,8 +164,9 @@ const Radar = (() => {
     return farbig;
   }
 
-  /** Bild für den aktuellen Ausschnitt holen, filtern, einhängen. */
-  async function ladeDwdBild() {
+  /** Bild für den aktuellen Ausschnitt holen, filtern, einhängen.
+      Mit `zeitMs` das RV-Produkt für diesen Zeitpunkt, sonst das Messbild. */
+  async function ladeDwdBild(zeitMs = null) {
     if (!ready || !map) return;
     const b = map.getBounds();
     if (!inDeutschland(b) || map.getZoom() < 5.5) { setzeDwdSichtbar(false); return; }
@@ -152,7 +187,9 @@ const Radar = (() => {
     const bbox = `${r(x0)},${r(y0)},${r(x1)},${r(y1)}`;
     const proxy = (localStorage.getItem('wf.proxy') || '').replace(/^"|"$/g, '')
       || 'https://wetterfunk.florian-s-thiel.workers.dev';
-    const url = `${proxy.replace(/\/+$/, '')}/dwdradar?bbox=${bbox}&px=${DWD_PX}`;
+    const zeitTeil = zeitMs ? `&time=${encodeURIComponent(rvStempel(zeitMs))}` : '';
+    const url = `${proxy.replace(/\/+$/, '')}/dwdradar?bbox=${bbox}&px=${DWD_PX}${zeitTeil}`;
+    const speicherKey = `${bbox}|${zeitMs ? rvRaster(zeitMs) : 'jetzt'}`;
 
     // Ecken passend zur gerundeten Anfrage, sonst läge das Bild leicht versetzt
     const zuGrad = (mx, my) => {
@@ -162,6 +199,23 @@ const Radar = (() => {
     };
     const [gw, gs] = zuGrad(+r(x0), +r(y0));
     const [ge, gn] = zuGrad(+r(x1), +r(y1));
+
+    const ecken = [[gw, gn], [ge, gn], [ge, gs], [gw, gs]];
+
+    // Schon einmal geholt? Dann sofort zeigen, ohne Netz und ohne Filtern.
+    const fertig = rvBilder.get(speicherKey);
+    if (fertig) {
+      if (!map.getSource('dwd')) {
+        map.addSource('dwd', { type: 'image', url: fertig, coordinates: ecken });
+        map.addLayer({ id: 'dwd-layer', type: 'raster', source: 'dwd',
+          paint: { 'raster-opacity': 0, 'raster-opacity-transition': { duration: 200 } } },
+          unterBeschriftung());
+      } else {
+        map.getSource('dwd').updateImage({ url: fertig, coordinates: ecken });
+      }
+      updateSharp();
+      return;
+    }
 
     try {
       const bild = await new Promise((ok, fehler) => {
@@ -174,8 +228,15 @@ const Radar = (() => {
       if (lauf !== dwdLauf) return;              // inzwischen weitergeschoben
 
       dwdFiltern(bild);
-      const daten = dwdCanvas.toDataURL('image/png');
-      const ecken = [[gw, gn], [ge, gn], [ge, gs], [gw, gs]];
+      /* Blob statt Daten-Adresse — genau die Falle, die schon die
+         Vorhersagebilder leer ließ: MapLibre bricht bei Base64-Adressen mit
+         „Failed to fetch" ab, und die Karte bleibt ohne Bild. */
+      const daten = await new Promise((ok) =>
+        dwdCanvas.toBlob((b) => ok(b ? URL.createObjectURL(b) : null), 'image/png'));
+      if (!daten) throw new Error('Bild konnte nicht erzeugt werden');
+      if (lauf !== dwdLauf) { URL.revokeObjectURL(daten); return; }
+      if (rvBilder.size > 120) leereNowcastSpeicher();
+      rvBilder.set(speicherKey, daten);
 
       if (!map.getSource('dwd')) {
         map.addSource('dwd', { type: 'image', url: daten, coordinates: ecken });
@@ -366,19 +427,31 @@ const Radar = (() => {
       type: 'geojson',
       data: { type: 'Feature', geometry: { type: 'Point', coordinates: here } }
     });
+    /* Der Punkt war blau — dieselbe Farbe wie leichter Regen, und mitten in
+       einem blauen Regengebiet ging er unter. Jetzt ein kräftiges Magenta:
+       Diese Farbe kommt in keiner Radarskala vor, also kann sie nie mit
+       Niederschlag verwechselt werden. Dazu ein weißer Ring, damit er auch
+       auf dunklen Gewitterflächen steht. */
     map.addLayer({
       id: 'here-halo', type: 'circle', source: 'here',
       paint: {
-        // Auf der hellen Karte braucht der Hof mehr Deckkraft als auf dunkler
-        'circle-radius': 13, 'circle-color': '#2f9fe0', 'circle-opacity': .22,
-        'circle-stroke-width': 0
+        'circle-radius': 15, 'circle-color': '#ff2d95', 'circle-opacity': .18,
+        'circle-stroke-width': 1.5, 'circle-stroke-color': '#ff2d95',
+        'circle-stroke-opacity': .35
+      }
+    });
+    map.addLayer({
+      id: 'here-ring', type: 'circle', source: 'here',
+      paint: {
+        'circle-radius': 8, 'circle-color': 'rgba(0,0,0,0)',
+        'circle-stroke-width': 2.5, 'circle-stroke-color': '#ffffff'
       }
     });
     map.addLayer({
       id: 'here-dot', type: 'circle', source: 'here',
       paint: {
-        'circle-radius': 5.5, 'circle-color': '#ffffff',
-        'circle-stroke-width': 3, 'circle-stroke-color': '#2f9fe0'
+        'circle-radius': 5, 'circle-color': '#ff2d95',
+        'circle-stroke-width': 1.5, 'circle-stroke-color': 'rgba(255,255,255,.9)'
       }
     });
   }
@@ -625,6 +698,11 @@ const Radar = (() => {
      Rasters unter gleicher Stunde wäre sonst ein Treffer — und würde auf die
      neuen Eckkoordinaten gespannt, also die falsche Gegend zeigen. */
   const fcSchluessel = (h, ebenen) => `${Forecast.stamp()}|${h}|${[...ebenen].sort().join(',')}`;
+  function leereNowcastSpeicher() {
+    for (const u of rvBilder.values()) { try { URL.revokeObjectURL(u); } catch {} }
+    rvBilder.clear();
+  }
+
   function leereBildSpeicher() {
     // Blob-Adressen belegen Speicher, bis sie ausdrücklich freigegeben werden
     for (const u of fcBilder.values()) { try { URL.revokeObjectURL(u); } catch {} }
@@ -728,9 +806,41 @@ const Radar = (() => {
     updateSharp();
   }
 
+  /** Nowcast für einen Zeitpunkt zeigen. Gibt zurück, ob es geklappt hat. */
+  function zeigeNowcast(zeitMs) {
+    if (!rvMoeglich(zeitMs)) { rvAktiv = false; return false; }
+    rvAktiv = true;
+    // Grobe Ebenen ausblenden — der Nowcast ist genauer als beides
+    if (map?.getLayer('fc-layer')) map.setLayoutProperty('fc-layer', 'visibility', 'none');
+    if (sichtbaresBild >= 0 && map?.getLayer(layerId(sichtbaresBild))) {
+      map.setPaintProperty(layerId(sichtbaresBild), 'raster-opacity', 0);
+      sichtbaresBild = -1;
+    }
+    fcVisible = false;
+    ladeDwdBild(zeitMs);
+    if (map?.getLayer('dwd-layer')) map.setPaintProperty('dwd-layer', 'raster-opacity', 0.92);
+    if (els.sharp) { els.sharp.hidden = false; els.sharp.textContent = 'DWD 1 km · 5 Min.'; }
+    return true;
+  }
+
+  /** Bilder des Nowcasts still vorladen, damit das Abspielen flüssig läuft. */
+  function nowcastVorwaermen() {
+    const zeiten = rvZeiten();
+    if (!zeiten.length) return;
+    let i = 0;
+    const naechstes = () => {
+      if (i >= zeiten.length) return;
+      const t = zeiten[i++];
+      ladeDwdBild(t).finally(() => setTimeout(naechstes, 120));
+    };
+    setTimeout(naechstes, 400);
+  }
+
   return { init, load, setCenter, play, pause, toggle, show, isPlaying,
            showForecast, showRadar, updateLabels, frameTimes, showAt, lastMeasured,
            leereBildSpeicher, vorwaermen,
+           zeigeNowcast, nowcastVorwaermen, rvZeiten, rvMoeglich, leereNowcastSpeicher,
+           get nowcastAktiv() { return rvAktiv; },
            updateLegend: renderLegend,
            get map() { return map; } };
 })();
