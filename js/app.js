@@ -484,6 +484,28 @@ function renderSkyFx(mood) {
   }).join('');
 }
 
+/* ── Was Millimeter im Alltag bedeuten ─────────────────────
+   „Regen (65 %)" sagt einem Laien nichts darüber, ob die Kapuze reicht.
+   Millimeter je Stunde sind eine Größe, mit der außerhalb der Meteorologie
+   niemand rechnet — also wird sie übersetzt. Die Stufen orientieren sich
+   daran, wie schnell man ohne Schutz nass wird. */
+function regenKlartext(mmProStunde) {
+  const mm = mmProStunde ?? 0;
+  if (mm < REGEN.nichts)  return { wort: 'trocken',            rat: '',                                     kurz: '' };
+  if (mm < 0.5)           return { wort: 'ein paar Tropfen',   rat: 'Kapuze reicht',                        kurz: 'Kapuze' };
+  if (mm < 2)             return { wort: 'leichter Regen',     rat: 'kleiner Schirm genügt',                kurz: 'kleiner Schirm' };
+  if (mm < 5)             return { wort: 'Regen',              rat: 'Schirm mitnehmen',                     kurz: 'Schirm' };
+  if (mm < 10)            return { wort: 'kräftiger Regen',    rat: 'ohne Schirm in Minuten durchnässt',    kurz: 'großer Schirm' };
+  return                         { wort: 'Platzregen',         rat: 'Unterstand suchen, Schirm hilft kaum', kurz: 'Unterstand' };
+}
+
+/** Menge und Rat in einem Satzteil: „leichter Regen, 1,2 mm — kleiner Schirm genügt". */
+function regenSatzteil(mmProStunde, summe = null) {
+  const k = regenKlartext(mmProStunde);
+  const menge = summe != null && summe >= 0.1 ? `, ${dez(summe)} mm` : '';
+  return `${k.wort}${menge}${k.rat ? ` — ${k.rat}` : ''}`;
+}
+
 // ══ Rendering: Klartext-Prognose ═══════════════════════════
 /** Beantwortet die eine Frage, die man wirklich hat: Wann regnet es? */
 function renderVerdict() {
@@ -554,11 +576,13 @@ function renderVerdict() {
     const wieder = bis ? near.find(x => x.t > bis && proStunde(x.mm) >= REGEN.nichts) : null;
     const nachsatz = wieder ? ` Dann ab ${hhmm(wieder.t)} wieder.` : '';
 
-    el.innerHTML = `<b>${word} gerade.</b> ${
+    const kJetzt = regenKlartext(jetztStaerke);
+    el.innerHTML = `<b>${kJetzt.wort.charAt(0).toUpperCase()}${kJetzt.wort.slice(1)} gerade.</b> ${
       restMin != null
         ? (restMin <= 5 ? `Hört gleich auf.${nachsatz}`
            : `Noch etwa <b class="rp-rest">${restMin} Minuten</b>, bis gegen ${hhmm(bis)}.${nachsatz}`)
-        : 'Hält die nächsten zwei Stunden an.'}${leiste}`;
+        : 'Hält die nächsten zwei Stunden an.'}${
+      kJetzt.rat ? ` <i>${kJetzt.rat}.</i>` : ''}${leiste}`;
     el.dataset.tone = 'wet';
     return;
   }
@@ -578,13 +602,20 @@ function renderVerdict() {
     /* Bei 0,2 mm in der Stunde von „Regen" zu sprechen, wäre übertrieben —
        das sind ein paar Tropfen, die kaum den Boden benetzen. */
     const staerke = proStunde(first.mm);
-    const wenig = staerke < REGEN.troepfeln;
-    const word = wenig ? 'Ein paar Tropfen' : WX.precipWord(first.code ?? 61);
+    const k = regenKlartext(staerke);
+    // Menge der ganzen Phase, nicht nur des ersten Blocks
+    let summe = 0;
+    for (const x of wet) {
+      if (x.t < first.t) continue;
+      if (proStunde(x.mm) < REGEN.nichts) break;
+      summe += x.mm;
+    }
+    const menge = summe >= 0.1 ? ` <i>${dez(summe)} mm — ${k.rat}.</i>` : '';
     el.innerHTML = mins <= 5
-      ? `<b>${word}${wenig ? '' : ' setzt gleich ein'}.</b>${wenig ? ' Kaum spürbar.' : ''}`
-      : `<b>${word} in etwa ${mins} Minuten</b> (gegen ${hhmm(first.t)}).${
-          wenig ? ' Kaum spürbar — Schirm lohnt nicht.' : ''}`;
-    el.dataset.tone = wenig ? 'later' : 'soon';
+      ? `<b>Gleich ${k.wort}.</b>${menge}`
+      : `<b>${k.wort.charAt(0).toUpperCase()}${k.wort.slice(1)} in etwa ${mins} Minuten</b>
+         (gegen ${hhmm(first.t)}).${menge}`;
+    el.dataset.tone = staerke < REGEN.troepfeln ? 'later' : 'soon';
     return;
   }
 
@@ -597,10 +628,18 @@ function renderVerdict() {
     if (mm >= 0.2 || prob >= 60) {
       const t = new Date(h.time[i]).getTime();
       const hrs = Math.round((t - now) / 3600e3);
-      const word = WX.precipWord(h.weather_code[i]);
+      /* Menge der Regenphase aufsummieren, nicht nur die erste Stunde —
+         zwei Stunden mit je 0,8 mm sind etwas anderes als eine mit 0,8. */
+      let summe = 0, spitze = 0;
+      for (let k = i; k < Math.min(i + 8, h.time.length); k++) {
+        const v = h.precipitation[k] ?? 0;
+        if (v < REGEN.nichts && k > i) break;
+        summe += v; spitze = Math.max(spitze, v);
+      }
+      const was = regenSatzteil(spitze, summe);
       el.innerHTML = hrs <= 1
-        ? `<b>Trocken bis etwa ${hhmm(t)}</b>, dann ${word} (${prob} %).`
-        : `<b>Bleibt ${hrs} Std. trocken.</b> ${word} ab ca. ${hhmm(t)} (${prob} %).`;
+        ? `<b>Trocken bis etwa ${hhmm(t)}</b>, dann ${was}. <i>${prob} % Wahrscheinlichkeit.</i>`
+        : `<b>Bleibt ${hrs} Std. trocken.</b> Ab ca. ${hhmm(t)} ${was}. <i>${prob} %.</i>`;
       el.dataset.tone = 'later';
       return;
     }
@@ -1331,17 +1370,21 @@ function punktSatz() {
   if (nass(p[0])) {
     const trocken = p.find(x => x.t > jetzt && !nass(x));
     const staerke = Math.max(...p.slice(0, 3).map(x => x.mm));
+    const k = regenKlartext(staerke);
     return { regnet: true, staerke,
-      text: trocken
-        ? `Bei dir regnet es — bis etwa <b>${uhr(trocken.t)}</b> (${inMin(trocken.t)} Min.).`
-        : `Bei dir regnet es und hält die nächste Stunde an.` };
+      text: (trocken
+        ? `Bei dir: <b>${k.wort}</b> bis etwa <b>${uhr(trocken.t)}</b> (${inMin(trocken.t)} Min.).`
+        : `Bei dir: <b>${k.wort}</b>, hält die nächste Stunde an.`)
+        + (k.rat ? ` ${k.rat.charAt(0).toUpperCase()}${k.rat.slice(1)}.` : '') };
   }
   const start = p.find(x => x.t > jetzt && nass(x));
   if (!start) return { regnet: false, text: 'Bei dir bleibt es die nächsten anderthalb Stunden trocken.' };
   const ende = p.find(x => x.t > start.t && !nass(x));
   const spitze = Math.max(...p.filter(x => x.t >= start.t && (!ende || x.t < ende.t)).map(x => x.mm));
+  const kk = regenKlartext(spitze);
   return { regnet: false, start: start.t, staerke: spitze,
-    text: `Bei dir fängt es gegen <b>${uhr(start.t)}</b> an — in ${inMin(start.t)} Minuten.`
+    text: `Bei dir fängt es gegen <b>${uhr(start.t)}</b> an — in ${inMin(start.t)} Minuten. `
+        + `${kk.wort.charAt(0).toUpperCase()}${kk.wort.slice(1)}${kk.rat ? `, ${kk.rat}` : ''}.`
         + (ende ? ` Vorbei gegen <b>${uhr(ende.t)}</b>.` : '') };
 }
 
@@ -1386,9 +1429,8 @@ function openRegenSheet() {
           </span>`;
         }).join('')}
       </div>
-      <p class="rs-summe">Zusammen rund <b>${dez(summe)} mm</b> — ${
-        summe < 0.5 ? 'die Straße wird fleckig feucht'
-        : summe < 2 ? 'ohne Schirm wird man langsam nass' : 'ohne Schirm wird man nass'}.</p>`;
+      <p class="rs-summe">Zusammen rund <b>${dez(summe)} mm</b> —
+        ${regenKlartext(maxMm).rat || 'kaum spürbar'}.</p>`;
   }
 
   // ── 2. Der ganze Tag in Stunden
@@ -1483,7 +1525,8 @@ function openRegenSheet() {
       : `<b>${dez(tagesSumme)} mm</b> über den Tag${nasse.length
           ? `, hauptsächlich ${String(nasse[0].stunde).padStart(2, '0')}–${
               String(nasse[nasse.length - 1].stunde + 1).padStart(2, '0')} Uhr` : ''}.
-         Die höchste Wahrscheinlichkeit liegt bei <b>${Math.max(...heutigeStunden.map(x => x.p))} %</b>.`}</p>
+         Die höchste Wahrscheinlichkeit liegt bei <b>${Math.max(...heutigeStunden.map(x => x.p))} %</b>.
+         Zur stärksten Stunde: ${regenSatzteil(Math.max(...heutigeStunden.map(x => x.mm)))}.`}</p>
     <div class="rs-stunden">
       ${(() => {
         /* Balken mit echter Höhe: Vorher hatten alle Stunden dieselbe Höhe

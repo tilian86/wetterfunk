@@ -806,8 +806,8 @@ function entscheide(lage, eintrag) {
   return {
     art: 'start',
     titel: minuten <= 20 ? `Gleich ${wort}` : `${wort} in ${minuten} Min.`,
-    text: `${p.startUhr}–${p.endeUhr} Uhr · ${p.summe < 0.3
-      ? 'kaum messbar' : `rund ${p.summe.toFixed(1)} mm`}`,
+    text: `${p.startUhr}–${p.endeUhr} · ${p.summe < 0.3
+      ? 'kaum messbar' : `${p.summe.toFixed(1)} mm`} · ${p.rat}`,
     merker: { art: 'start', start: p.start, vorlauf: minuten, wann: Date.now(), regnete: false }
   };
 }
@@ -870,6 +870,12 @@ async function regenLage(lat, lon) {
              : spitze >= 0.8 ? 'Regen'
              : spitze >= 0.15 ? 'leichter Regen'
              : 'ein paar Tropfen',
+      /* Was das im Alltag heißt — dieselben Stufen wie in der App. Eine
+         Meldung ohne Handlungshinweis zwingt zum Nachschauen. */
+      rat: spitze >= 2.5 ? 'ohne Schirm sofort nass'
+         : spitze >= 0.8 ? 'Schirm mitnehmen'
+         : spitze >= 0.15 ? 'kleiner Schirm genügt'
+         : 'Kapuze reicht',
       leicht: spitze < 0.15
     });
     i = j + 1;
