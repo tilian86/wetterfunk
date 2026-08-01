@@ -6480,11 +6480,6 @@ const geraeteZone = () => {
   catch { return 'Europe/Berlin'; }
 };
 
-/* Freiwilliger Name dieses Geräts. Ein Browser gibt keine Gerätekennung
-   heraus — ohne diesen Namen stehen in der Übersicht der angemeldeten Geräte
-   nur Gerätetyp und Ort, und zwei iPhones am selben Ort sind nicht
-   auseinanderzuhalten. */
-const geraetName = () => (store.get('wf.geraetName', '') || '').toString().trim().slice(0, 30);
 const alsAppInstalliert = () => window.matchMedia('(display-mode: standalone)').matches
   || window.navigator.standalone === true;
 
@@ -6519,7 +6514,7 @@ async function renderPush() {
       method: 'POST', headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ abo: abo.toJSON(), lat: place.lat, lon: place.lon,
                                 ort: place.name, kreis: place.county, arten: pushArten(),
-                                tz: geraeteZone(), geraet: geraetName() })
+                                tz: geraeteZone() })
     }).catch(() => {});
   }
 
@@ -6590,7 +6585,7 @@ async function pushUmschalten() {
       body: JSON.stringify({
         abo: abo.toJSON(), lat: place.lat, lon: place.lon,
         ort: place.name, kreis: place.county, arten: pushArten(),
-        tz: geraeteZone(), geraet: geraetName()
+        tz: geraeteZone()
       })
     });
     if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || `Server ${res.status}`);
@@ -6941,16 +6936,6 @@ function wire() {
     if (e.target.id === 'regenSheet' || e.target.classList.contains('sheet-x')) closeSheet('#regenSheet');
   });
   $('#pushToggle')?.addEventListener('click', pushUmschalten);
-
-  /* Gerätename: Beim Tippen nur merken, beim Verlassen des Feldes an den
-     Server. Bei jedem Tastendruck zu senden wäre eine Anfrage je Buchstabe. */
-  const nameFeld = $('#pushGeraet');
-  if (nameFeld) {
-    nameFeld.value = geraetName();
-    nameFeld.addEventListener('input', (e) => store.set('wf.geraetName', e.target.value.slice(0, 30)));
-    // renderPush() meldet den Namen mit an den Server — nur beim Verlassen
-    nameFeld.addEventListener('blur', () => renderPush());
-  }
 
   // Häkchen wirken sofort — auch bei bereits laufendem Abo
   PUSH_ARTEN.forEach(([, key, sel]) => {
