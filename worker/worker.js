@@ -375,7 +375,7 @@ export default {
     if (url.pathname === '/push/an' && request.method === 'POST') {
       let req;
       try { req = await request.json(); } catch { return json({ error: 'Ungültige Anfrage' }, 400, origin); }
-      const { abo, lat, lon, ort, kreis, arten, tz } = req || {};
+      const { abo, lat, lon, ort, kreis, arten, tz, geraet } = req || {};
       if (!abo?.endpoint || !abo?.keys?.p256dh || !abo?.keys?.auth) {
         return json({ error: 'Unvollständiges Abo' }, 400, origin);
       }
@@ -413,6 +413,13 @@ export default {
           untergang: arten?.untergang === true,
           mondaufgang: arten?.mondaufgang === true
         },
+        /* Freiwilliger Gerätename. Ein Browser gibt keine Gerätekennung
+           heraus — ohne diesen Namen sind zwei iPhones am selben Ort in der
+           Übersicht nicht auseinanderzuhalten. Steuerzeichen raus, damit die
+           Übersicht lesbar bleibt. Ein leeres Feld löscht den alten Namen. */
+        geraet: typeof geraet === 'string'
+          ? geraet.replace(/[\u0000-\u001f\u007f]/g, '').trim().slice(0, 30)
+          : (alt?.geraet || ''),
         seit: alt?.seit || Date.now(),
         zuletzt: alt?.zuletzt || 0,
         gemeldet: alt?.gemeldet || null,

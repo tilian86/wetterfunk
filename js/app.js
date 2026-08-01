@@ -5478,6 +5478,62 @@ function entfernungKm(lat1, lon1, lat2, lon2) {
   return 2 * R * Math.asin(Math.sqrt(a));
 }
 
+/* Verreist? Das lässt sich auch ohne Standortfreigabe erkennen: Open-Meteo
+   nennt die Zeitzone des eingestellten Orts, der Browser die des Geräts.
+   Weichen sie voneinander ab, steht das Gerät woanders.
+
+   Der Weg über die Standortfreigabe oben greift nämlich nur, wenn jemand
+   sie erteilt hat — und die meisten tun das nie. Ein Gerät stand deshalb
+   wochenlang in Südtirol und bekam weiter Regenwarnungen für Tübingen. */
+const ZONEN_STADT = {
+  'Europe/Berlin': 'Deutschland',
+  'Europe/Rome': 'Italien', 'Europe/Vienna': 'Österreich', 'Europe/Zurich': 'der Schweiz',
+  'Europe/Paris': 'Frankreich', 'Europe/Madrid': 'Spanien', 'Europe/Lisbon': 'Portugal',
+  'Europe/Athens': 'Griechenland', 'Europe/Prague': 'Tschechien', 'Europe/Warsaw': 'Polen',
+  'Europe/Copenhagen': 'Dänemark', 'Europe/Stockholm': 'Schweden', 'Europe/Oslo': 'Norwegen',
+  'Europe/Brussels': 'Belgien', 'Europe/Amsterdam': 'den Niederlanden',
+  'Europe/London': 'Großbritannien', 'Europe/Dublin': 'Irland', 'Europe/Istanbul': 'der Türkei',
+  'Europe/Budapest': 'Ungarn', 'Europe/Zagreb': 'Kroatien', 'Europe/Ljubljana': 'Slowenien'
+};
+const zonenWort = (z) => ZONEN_STADT[z]
+  || (z.split('/').pop() || z).replace(/_/g, ' ');
+
+function pruefeZeitzone() {
+  if (!place || !data?.timezone) return;
+  const geraet = geraeteZone();
+  if (!geraet || geraet === data.timezone) return;
+  if (store.get('wf.zoneAbgelehnt', '') === geraet) return;
+  if ($('#ortsFrage')) return;              // die Standortfrage steht schon
+  zeigeZonenFrage(geraet);
+}
+
+function zeigeZonenFrage(zone) {
+  const el = document.createElement('div');
+  el.className = 'orts-frage';
+  el.id = 'ortsFrage';
+  el.innerHTML = `
+    <span class="of-text">Dein Gerät ist auf die Zeit in <b>${esc(zonenWort(zone))}</b>
+      eingestellt — dein Wetterort ist aber <b>${esc(place.name)}</b>. Bist du verreist?
+      Auch die Meldungen gehen weiter nach ${esc(place.name)}.</span>
+    <span class="of-knoepfe">
+      <button class="of-ja">Ort ändern</button>
+      <button class="of-nein">${esc(place.name)} behalten</button>
+    </span>`;
+  document.querySelector('#app')?.prepend(el);
+
+  el.querySelector('.of-ja').onclick = () => {
+    el.remove();
+    renderSaved();
+    openSheet('#placeSheet');
+    $('#placeSearch')?.focus();
+  };
+  el.querySelector('.of-nein').onclick = () => {
+    // Nicht noch einmal für dieselbe Zeitzone fragen — die Antwort gilt
+    store.set('wf.zoneAbgelehnt', zone);
+    el.remove();
+  };
+}
+
 function zeigeOrtsFrage(p, km) {
   const alt = $('#ortsFrage');
   if (alt) alt.remove();
@@ -6423,6 +6479,12 @@ const geraeteZone = () => {
   try { return Intl.DateTimeFormat().resolvedOptions().timeZone || 'Europe/Berlin'; }
   catch { return 'Europe/Berlin'; }
 };
+
+/* Freiwilliger Name dieses Geräts. Ein Browser gibt keine Gerätekennung
+   heraus — ohne diesen Namen stehen in der Übersicht der angemeldeten Geräte
+   nur Gerätetyp und Ort, und zwei iPhones am selben Ort sind nicht
+   auseinanderzuhalten. */
+const geraetName = () => (store.get('wf.geraetName', '') || '').toString().trim().slice(0, 30);
 const alsAppInstalliert = () => window.matchMedia('(display-mode: standalone)').matches
   || window.navigator.standalone === true;
 
@@ -6456,7 +6518,8 @@ async function renderPush() {
     fetch(`${pushProxy()}/push/an`, {
       method: 'POST', headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ abo: abo.toJSON(), lat: place.lat, lon: place.lon,
-                                ort: place.name, kreis: place.county, arten: pushArten(), tz: geraeteZone() })
+                                ort: place.name, kreis: place.county, arten: pushArten(),
+                                tz: geraeteZone(), geraet: geraetName() })
     }).catch(() => {});
   }
 
@@ -6526,7 +6589,8 @@ async function pushUmschalten() {
       method: 'POST', headers: { 'content-type': 'application/json' },
       body: JSON.stringify({
         abo: abo.toJSON(), lat: place.lat, lon: place.lon,
-        ort: place.name, kreis: place.county, arten: pushArten(), tz: geraeteZone()
+        ort: place.name, kreis: place.county, arten: pushArten(),
+        tz: geraeteZone(), geraet: geraetName()
       })
     });
     if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || `Server ${res.status}`);
@@ -6877,6 +6941,17 @@ function wire() {
     if (e.target.id === 'regenSheet' || e.target.classList.contains('sheet-x')) closeSheet('#regenSheet');
   });
   $('#pushToggle')?.addEventListener('click', pushUmschalten);
+
+  /* Gerätename: Beim Tippen nur merken, beim Verlassen des Feldes an den
+     Server. Bei jedem Tastendruck zu senden wäre eine Anfrage je Buchstabe. */
+  const nameFeld = $('#pushGeraet');
+  if (nameFeld) {
+    nameFeld.value = geraetName();
+    nameFeld.addEventListener('input', (e) => store.set('wf.geraetName', e.target.value.slice(0, 30)));
+    // renderPush() meldet den Namen mit an den Server — nur beim Verlassen
+    nameFeld.addEventListener('blur', () => renderPush());
+  }
+
   // Häkchen wirken sofort — auch bei bereits laufendem Abo
   PUSH_ARTEN.forEach(([, key, sel]) => {
     $(sel)?.addEventListener('change', (e) => {
@@ -7078,6 +7153,10 @@ async function boot() {
   startClock();
   registerWorker();
   // Zum Schluss, damit die Frage nicht während des Aufbaus aufpoppt
+  /* Erst die Zeitzone — sie braucht keine Erlaubnis und ist sofort da. Die
+     Standortfrage kommt danach; sie kennt den Ortsnamen und ersetzt die
+     Zeitzonenfrage, falls die Freigabe vorliegt. */
+  setTimeout(pruefeZeitzone, 1800);
   setTimeout(pruefeStandortWechsel, 2500);
 }
 
