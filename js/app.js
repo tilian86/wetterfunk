@@ -2147,6 +2147,8 @@ function renderScrub() {
   const h = data.hourly, m = data.minutely_15;
   const punkte = buildScrubPoints();
   if (!punkte.length) return;
+  // Dieselbe Liste bekommt auch currentScrubTime() — siehe dort
+  scrubPunkte = punkte;
 
   const sl = $('#scrubSlider');
   sl.max = String(punkte.length - 1);
@@ -2391,8 +2393,18 @@ function renderLayerPicker() {
   }));
 }
 
+/* Der Zeitstrahl wurde an zwei Stellen unabhängig gebaut: renderScrub()
+   beschriftet aus seiner Fassung, currentScrubTime() baute jedes Mal eine
+   neue. Die Zahl der Radarbilder am linken Rand ändert sich aber mit jedem
+   Fünf-Minuten-Takt — danach bedeutet derselbe Reglerstand in beiden
+   Fassungen eine andere Stunde.
+
+   Sichtbar wurde das auf der Karte: Über dem Regler stand „Montag, 09:00",
+   die Zahlen im Bild gehörten zu Mittwoch 18:00. Beide lesen jetzt aus
+   derselben Liste, die renderScrub() beim Zeichnen hinterlegt. */
+let scrubPunkte = null;
 const currentScrubTime = () => {
-  const p = buildScrubPoints();
+  const p = scrubPunkte?.length ? scrubPunkte : buildScrubPoints();
   return p[Math.min(+($('#scrubSlider')?.value || 0), p.length - 1)]?.t;
 };
 
