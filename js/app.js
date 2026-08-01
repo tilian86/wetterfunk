@@ -346,26 +346,32 @@ function renderHeroUhr() {
   const jetztW = uhrWinkel(jetzt, tagStart);
   const [px, py] = polarMini(jetztW, MINI.r);
 
-  // Anteil des hellen Tages, der schon vorbei ist
-  const sr = new Date(data.daily.sunrise[0]).getTime();
-  const ss = new Date(data.daily.sunset[0]).getTime();
+  /* Dieselbe Rechnung wie der Balken darunter — nachts zählt der Anteil der
+     Nacht, nicht ein leerer Tageswert. Vorher stand dort nur „Nacht". */
+  const d = data.daily;
   const n = jetzt.getTime();
-  const tagsueber = n >= sr && n <= ss;
-  const anteil = tagsueber ? Math.round(((n - sr) / (ss - sr)) * 100) : null;
-  const rest = tagsueber ? restZeit(ss) : restZeit(n < sr ? sr : sr + 864e5);
+  const sr = new Date(d.sunrise[0]).getTime();
+  const ss = new Date(d.sunset[0]).getTime();
+  const srMorgen = d.sunrise[1] ? new Date(d.sunrise[1]).getTime() : sr + 864e5;
+  const ssGestern = ss - 864e5;
+
+  let phase, anteil, bis;
+  if (n >= sr && n < ss)      { phase = 'Tag';   anteil = (n - sr) / (ss - sr); bis = ss; }
+  else if (n >= ss)           { phase = 'Nacht'; anteil = (n - ss) / (srMorgen - ss); bis = srMorgen; }
+  else                        { phase = 'Nacht'; anteil = (n - ssGestern) / (sr - ssGestern); bis = sr; }
+  anteil = Math.round(Math.max(0, Math.min(1, anteil)) * 100);
+  const rest = restZeit(bis);
 
   el.hidden = false;
+  el.dataset.phase = phase === 'Tag' ? 'tag' : 'nacht';
   el.innerHTML = `
     <svg viewBox="0 0 76 76" class="hu-svg" aria-hidden="true">
       ${ring}
       <circle class="hu-punkt" cx="${px.toFixed(1)}" cy="${py.toFixed(1)}" r="3.6"/>
     </svg>
-    <span class="hu-mitte">
-      ${tagsueber ? `<b>${anteil} %</b><i>vom Tag</i>` : `<b>Nacht</b><i>${rest}</i>`}
-    </span>`;
-  el.title = tagsueber
-    ? `Tag zu ${anteil} % vorbei — noch ${rest} bis Sonnenuntergang`
-    : `Sonnenaufgang in ${rest}`;
+    <span class="hu-mitte"><b>${anteil} %</b><i>${phase === 'Tag' ? 'vom Tag' : 'der Nacht'}</i></span>
+    <span class="hu-rest">noch ${rest} bis ${phase === 'Tag' ? 'Sonnenuntergang' : 'Sonnenaufgang'}</span>`;
+  el.title = `${phase} zu ${anteil} % vorbei — noch ${rest}`;
 }
 
 // ══ Rendering: Jetzt ═══════════════════════════════════════
@@ -446,10 +452,11 @@ function renderDayProgress() {
                       behavior: 'smooth' });
   };
   el.innerHTML = `
+    <!-- Prozent und Restzeit stehen jetzt in der Ringuhr im Kopf; hier
+         bleiben die Angaben, die dort keinen Platz haben: Länge der Phase,
+         Trend und die beiden Uhrzeiten. -->
     <span class="dp-head">
-      <span class="dp-label">${phase === 'Tag' ? '☀ Tag' : '☾ Nacht'} zu
-        <b>${Math.round(anteil * 100)} %</b> vorbei</span>
-      <span class="dp-rest">noch ${rest} bis ${phase === 'Tag' ? 'Sonnenuntergang' : 'Sonnenaufgang'}</span>
+      <span class="dp-label">${phase === 'Tag' ? '☀ Tageslänge' : '☾ Nachtlänge'}</span>
     </span>
     <span class="dp-bar"><i style="width:${(anteil * 100).toFixed(1)}%"></i></span>
     <span class="dp-ends"><span>${hhmm(seit)}</span>
@@ -635,6 +642,18 @@ function renderVerdict() {
         const v = h.precipitation[k] ?? 0;
         if (v < REGEN.nichts && k > i) break;
         summe += v; spitze = Math.max(spitze, v);
+      }
+      /* Der Zweig löste auch bei reiner Wahrscheinlichkeit ohne Menge aus —
+         dann stand dort „Trocken bis etwa 08:00, dann trocken". Fällt zu
+         wenig für eine Aussage, wird die Wahrscheinlichkeit genannt und
+         sonst nichts behauptet. */
+      const k = regenKlartext(spitze);
+      if (k.wort === 'trocken') {
+        el.innerHTML = `<b>Bleibt trocken.</b> Gegen ${hhmm(t)} ist Regen zwar
+          nicht ausgeschlossen (${prob} %), gerechnet wird aber mit
+          <b>${summe < 0.05 ? 'nichts' : dez(summe) + ' mm'}</b> — das merkt man nicht.`;
+        el.dataset.tone = 'dry';
+        return;
       }
       const was = regenSatzteil(spitze, summe);
       el.innerHTML = hrs <= 1
@@ -1036,14 +1055,21 @@ function dayStrip(dayISO) {
 
 function renderDaily() {
   const d = data.daily;
-  const lo = Math.min(...d.temperature_2m_min), hi = Math.max(...d.temperature_2m_max);
+  /* Fehlende Tage (das Modell reicht nicht so weit) enthalten null. Ohne
+     Filter las Math.min das als 0 — im Kopf stand „0° bis 35°", obwohl der
+     kälteste Wert 14° war. */
+  const minWerte = d.temperature_2m_min.filter(v => v != null);
+  const maxWerte = d.temperature_2m_max.filter(v => v != null);
+  const lo = minWerte.length ? Math.min(...minWerte) : null;
+  const hi = maxWerte.length ? Math.max(...maxWerte) : null;
   const today = new Date().toDateString();
 
-  $('#dailyRange').textContent = `${round(lo)}° bis ${round(hi)}°`;
+  $('#dailyRange').textContent = lo != null ? `${round(lo)}° bis ${round(hi)}°` : '';
 
   $('#daily').innerHTML = d.time.map((day, i) => {
     const isToday = new Date(day).toDateString() === today;
     const min = d.temperature_2m_min[i], max = d.temperature_2m_max[i];
+    if (min == null || max == null) return '';      // Modell reicht nicht so weit
     const prob = d.precipitation_probability_max[i] ?? 0;
     const mm = d.precipitation_sum[i] ?? 0;
     const sun = Math.round(sonnenStunden(day));
@@ -1210,12 +1236,23 @@ function renderMeteogramm() {
   const h = data.hourly;
   const i0 = Math.max(0, nowIndex(h.time) - 2);      // zwei Stunden Vorlauf
   const bis = h.time.length;
-  const n = bis - i0;
-  if (n < 24) { ziel.innerHTML = ''; return; }
+  if (bis - i0 < 24) { ziel.innerHTML = ''; return; }
 
-  const zeiten = h.time.slice(i0, bis).map(t => new Date(t));
-  const temps = h.temperature_2m.slice(i0, bis);
-  const regen = h.precipitation.slice(i0, bis).map(v => v ?? 0);
+  /* Die Modelle reichen unterschiedlich weit: ICON hört nach gut sieben
+     Tagen auf, die Antwort enthält danach `null`. `Math.min` liest null als
+     0 — daraus wurde die Achse „0° bis 35°" und eine Kurve, die am Samstag
+     auf null abstürzt und flach weiterläuft. Deshalb wird die Reihe dort
+     abgeschnitten, wo die Werte enden. */
+  let ende = bis;
+  for (let k = i0; k < bis; k++) {
+    if (h.temperature_2m[k] == null) { ende = k; break; }
+  }
+  if (ende - i0 < 24) { ziel.innerHTML = ''; return; }
+
+  const zeiten = h.time.slice(i0, ende).map(t => new Date(t));
+  const temps = h.temperature_2m.slice(i0, ende);
+  const regen = h.precipitation.slice(i0, ende).map(v => v ?? 0);
+  const n2 = temps.length;
 
   const tMin = Math.min(...temps), tMax = Math.max(...temps);
   // Etwas Luft nach oben und unten, sonst klebt die Kurve am Rand
@@ -1224,6 +1261,7 @@ function renderMeteogramm() {
   const regenMax = Math.max(1, ...regen);
 
   const breite = METEO.w - METEO.links - METEO.rechts;
+  const n = n2;
   const X = (k) => METEO.links + (k / (n - 1)) * breite;
   const Y = (t) => METEO.oben + (1 - (t - yMin) / (yMax - yMin)) * (METEO.tempUnten - METEO.oben);
   const YR = (mm) => METEO.regenUnten - (mm / regenMax) * (METEO.regenUnten - METEO.regenOben);
@@ -1483,7 +1521,10 @@ function openRegenSheet() {
               : u.mm >= 0.05
                 /* Menge da, aber keine Stunde über der Schwelle: über den Tag
                    verstreute Spuren. „—" ließ das wie ein Fehler aussehen. */
-                ? 'nur Spuren' : '—'}</span>
+                /* „Spuren" heißt: übers Ganze verteilt kommt etwas zusammen,
+                   aber keine einzelne Stunde bringt genug, um sie zu nennen. */
+                ? '<span title="über den Tag verteilt, keine Stunde nennenswert">verstreute Tropfen</span>'
+                : '—'}</span>
           </div>`).join('')}
         </div>`;
     }
@@ -1713,7 +1754,7 @@ function renderVersatzHinweis() {
 const RUECK_TAGE = 6;
 /* Untertitel der zugeklappten Karten: Die Render-Funktionen laufen auch,
    wenn die Karte zu ist — der Text wird gemerkt und beim Aufklappen gesetzt. */
-let rueckStandText = '', modelAgreeText = '';
+let rueckStandText = '', modelAgreeText = '', dwdRegionText = '';
 
 async function ladeRueckblick(lat, lon) {
   const karte = $('#rueckCard');
@@ -3433,10 +3474,17 @@ function openDaySheet(i) {
 
   $('#explainText').innerHTML = `
     <div class="ds-spans">
-      ${spans.map(s => `<div class="ds-span">
-        <b>${String(s.von).padStart(2, '0')}–${String(s.bis).padStart(2, '0')} Uhr</b>
-        <span>${SPAN_WORT[s.art]}${s.art === 'regen' ? ` · ${dez(s.mm)} mm` : ''}</span>
-      </div>`).join('')}
+      ${spans.map(s => {
+        /* Beim heutigen Tag den Abschnitt markieren, in dem wir gerade
+           stehen — sonst muss man selbst suchen, was gerade gilt. */
+        const jetztStunde = new Date().getHours();
+        const laeuft = heute && jetztStunde >= s.von && jetztStunde < s.bis;
+        return `<div class="ds-span${laeuft ? ' ist-jetzt' : ''}">
+          <b>${String(s.von).padStart(2, '0')}–${String(s.bis).padStart(2, '0')} Uhr${
+            laeuft ? '<em>jetzt</em>' : ''}</b>
+          <span>${SPAN_WORT[s.art]}${s.art === 'regen' ? ` · ${dez(s.mm)} mm` : ''}</span>
+        </div>`;
+      }).join('')}
     </div>
     <dl class="ds-facts">
       <dt>Wärmster Moment</dt><dd>${round(warm.temp)}° gegen ${String(warm.u).padStart(2, '0')} Uhr${
@@ -6162,7 +6210,8 @@ async function loadDwdText(lat, lon) {
     dwdVoll = inhalt.join("\n\n");
     const kurz = inhalt.slice(0, 3);
 
-    $('#dwdRegion').textContent = region.name;
+    dwdRegionText = region.name;
+    if ($('#dwdBody')?.hidden === false) $('#dwdRegion').textContent = region.name;
     $('#dwdText').innerHTML = kurz.map(dwdAbsatz).join('');
     $('#dwdFoot').textContent = stand ? `Deutscher Wetterdienst · Stand ${stand}` : 'Deutscher Wetterdienst';
     $('#dwdMore').hidden = inhalt.length <= 3;
@@ -6203,14 +6252,22 @@ const NAV = [
   { id: 'nav-radar',   ziel: '.card-radar',  name: 'Radar & Zeit' },
   { id: 'nav-details', ziel: '#tiles',       name: 'Details' },
   { id: 'nav-sonne',   ziel: '.card-cd',     name: 'Sonne' },
-  { id: 'nav-dwd',     ziel: '.card-dwd',    name: 'DWD' },
-  { id: 'nav-bericht', ziel: '.card-brief',  name: 'Bericht' },
   { id: 'nav-modelle', ziel: '.card-modelle', name: 'Modelle' },
-  { id: 'nav-rueck',   ziel: '.card-rueck',  name: 'Trefferquote' }
+  { id: 'nav-rueck',   ziel: '.card-rueck',  name: 'Trefferquote' },
+  { id: 'nav-dwd',     ziel: '.card-dwd',    name: 'DWD' },
+  { id: 'nav-bericht', ziel: '.card-brief',  name: 'Bericht' }
 ];
 
 /** Waagerechte Leiste unter dem Kopf: springt zum Abschnitt und hebt hervor,
     wo man gerade ist. Auf der langen Seite spart das viel Scrollen. */
+/* Springt man auf eine zugeklappte Karte, klappt sie sich auf — sonst
+   landet man vor einer Überschrift und weiß nicht, warum nichts kommt. */
+function zielOeffnen(sel) {
+  const karte = document.querySelector(sel)?.closest('.card') || document.querySelector(sel);
+  const koerper = karte?.querySelector('.klapp-body');
+  if (koerper?.hidden) karte.querySelector('.klapp-kopf')?.click();
+}
+
 function renderNav() {
   const bar = $('#nav');
   if (!bar) return;
@@ -6219,11 +6276,15 @@ function renderNav() {
     `<button class="nav-chip" data-ziel="${n.ziel}">${n.name}</button>`).join('');
 
   $$('.nav-chip', bar).forEach(b => b.addEventListener('click', () => {
+    zielOeffnen(b.dataset.ziel);          // zugeklappte Karte mitnehmen
     const el = document.querySelector(b.dataset.ziel);
     if (!el) return;
     const kopf = $('.topbar').offsetHeight + bar.offsetHeight + 8;
-    const y = el.getBoundingClientRect().top + window.scrollY - kopf;
-    window.scrollTo({ top: Math.max(0, y), behavior: 'smooth' });
+    // Nach dem Aufklappen kurz warten, sonst zielt der Sprung auf die alte Höhe
+    setTimeout(() => {
+      const y = el.getBoundingClientRect().top + window.scrollY - kopf;
+      window.scrollTo({ top: Math.max(0, y), behavior: 'smooth' });
+    }, 30);
   }));
 
   // Aktiven Abschnitt beim Scrollen mitführen
@@ -6289,6 +6350,22 @@ function wire() {
     el.tabIndex = 0;
     el.addEventListener('click', openZonen);
   });
+  /* Die große Zahl führt zum Tagesblatt: Wer sie ansieht, will meistens
+     wissen, wie der Tag weitergeht. Die Ringuhr daneben behält ihr eigenes
+     Ziel, deshalb hört sie das Tippen ab, bevor es den Kopf erreicht. */
+  const heroEl = $('#hero');
+  if (heroEl) {
+    heroEl.setAttribute('role', 'button');
+    heroEl.tabIndex = 0;
+    heroEl.addEventListener('click', (e) => {
+      if (e.target.closest('#heroUhr, #heroMess')) return;
+      if (data?.daily) openDaySheet(0);
+    });
+    heroEl.addEventListener('keydown', (e) => {
+      if ((e.key === 'Enter' || e.key === ' ') && data?.daily) { e.preventDefault(); openDaySheet(0); }
+    });
+  }
+
   $('#heroUhr')?.addEventListener('click', () => {
     document.querySelector('.card-cd')?.scrollIntoView({ block: 'start', behavior: 'smooth' });
   });
@@ -6348,6 +6425,12 @@ function wire() {
     (auf) => (auf ? rueckStandText : 'Vorhersage gegen Messung'));
   klappen('#modelKopf', '#modelBody', 'wf.modelAuf', null,
     (auf) => (auf ? modelAgreeText : 'Sind sich die Modelle einig?'));
+  klappen('#dwdKopf', '#dwdBody', 'wf.dwdAuf', null,
+    (auf) => (auf ? dwdRegionText : 'Vom Meteorologen geschrieben'));
+  klappen('#briefKopf', '#briefBody', 'wf.briefAuf', null,
+    () => 'selbst erstellen, vorlesen lassen');
+  klappen('#skyKopf', '#skyBody', 'wf.skyAuf', null,
+    () => 'Finsternisse, Sternschnuppen, Planeten');
 
   $('#installBtn')?.addEventListener('click', installAnstossen);
   $('#radarLegend')?.addEventListener('click', openEbenenHilfe);
