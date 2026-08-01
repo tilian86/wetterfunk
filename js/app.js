@@ -1437,7 +1437,11 @@ function openRegenSheet() {
             <span class="rs-mmenge">${u.mm < 0.05 ? 'trocken' : `${dez(u.mm)} mm`}</span>
             <span class="rs-mzeit">${u.stunden.length
               ? `${String(u.stunden[0]).padStart(2, '0')}–${
-                  String(u.stunden[u.stunden.length - 1] + 1).padStart(2, '0')} Uhr` : '—'}</span>
+                  String(u.stunden[u.stunden.length - 1] + 1).padStart(2, '0')} Uhr`
+              : u.mm >= 0.05
+                /* Menge da, aber keine Stunde über der Schwelle: über den Tag
+                   verstreute Spuren. „—" ließ das wie ein Fehler aussehen. */
+                ? 'nur Spuren' : '—'}</span>
           </div>`).join('')}
         </div>`;
     }
@@ -1481,16 +1485,27 @@ function openRegenSheet() {
               String(nasse[nasse.length - 1].stunde + 1).padStart(2, '0')} Uhr` : ''}.
          Die höchste Wahrscheinlichkeit liegt bei <b>${Math.max(...heutigeStunden.map(x => x.p))} %</b>.`}</p>
     <div class="rs-stunden">
-      ${heutigeStunden.filter(x => x.stunde % 2 === 0).map(x => {
-        const st = regenStufe(x.mm);
-        return `<span class="rs-stunde">
-          <i style="opacity:${Math.min(1, 0.15 + x.p / 100)};background:${st.farbe || 'rgba(255,255,255,.1)'}"></i>
-          <em>${String(x.stunde).padStart(2, '0')}</em>
-        </span>`;
-      }).join('')}
+      ${(() => {
+        /* Balken mit echter Höhe: Vorher hatten alle Stunden dieselbe Höhe
+           und unterschieden sich nur in der Deckkraft — bei 0,2 mm über den
+           Tag sah man schlicht nichts, obwohl darunter „Höhe der Balken"
+           stand. Jetzt zeigt die Höhe die Menge, wie die Beschriftung sagt. */
+        const maxStunde = Math.max(0.3, ...heutigeStunden.map(x => x.mm));
+        return heutigeStunden.filter(x => x.stunde % 2 === 0).map(x => {
+          const st = regenStufe(x.mm);
+          const hoch = x.mm < 0.05 ? 2 : Math.max(6, (x.mm / maxStunde) * 100);
+          return `<span class="rs-stunde" title="${String(x.stunde).padStart(2,'0')} Uhr: ${
+            dez(x.mm)} mm, ${x.p} %">
+            <b><i style="height:${hoch.toFixed(0)}%;opacity:${Math.min(1, 0.35 + x.p / 130)};
+                 background:${st.farbe || 'rgba(255,255,255,.16)'}"></i></b>
+            <em>${String(x.stunde).padStart(2, '0')}</em>
+          </span>`;
+        }).join('');
+      })()}
     </div>
-    <p class="rs-legende">Höhe der Balken oben: Regenmenge je Stunde. Farbe unten:
-      Kräftigkeit, Deckkraft: Wahrscheinlichkeit.</p>
+    <p class="rs-legende">Balkenhöhe: Menge je Stunde (höchster Wert
+      ${dez(Math.max(...heutigeStunden.map(x => x.mm)))} mm) · Farbe: Kräftigkeit ·
+      Deckkraft: Wahrscheinlichkeit.</p>
     ${modellTeil}
     <p class="rs-quelle">Viertelstundenwerte aus dem Kurzfristmodell des DWD —
       für die nächsten ein bis zwei Stunden erstaunlich treffsicher, weiter voraus
@@ -2402,14 +2417,33 @@ function renderModellTage(H) {
   const kopf = tage.map((d, i) => `<th>${i === 0 ? 'heute' : i === 1 ? 'morgen' : weekday(d)}
     <i>${d.getDate()}.${d.getMonth() + 1}.</i></th>`).join('');
 
+  /* Alle Fenster ausschreiben, nicht nur zwei mit „…". Wer einen Biergarten
+     hat, muss jeden Zeitraum kennen, in dem irgendein Modell Regen sieht —
+     ein abgeschnittenes Kürzel hilft dabei nicht. Für die Zelle bleiben zwei
+     Zeilen, alles Weitere kommt beim Antippen. */
+  const alleFenster = (stunden) => {
+    const bl = [];
+    for (const st of stunden) {
+      const l = bl[bl.length - 1];
+      if (l && st === l.bis + 1) l.bis = st; else bl.push({ von: st, bis: st });
+    }
+    const p2 = (n) => String(n).padStart(2, '0');
+    return bl.map(b => `${p2(b.von)}–${p2(b.bis + 1)}`);
+  };
+
   const koerper = MODELS.map(m => {
-    const zellen = tage.map((d) => {
+    const zellen = tage.map((d, i) => {
       const c = modellCharakter(H, m.id, iso(d));
       if (!c) return `<td class="mtb-leer">·</td>`;
-      const nass = c.zeiten.length > 0;
-      return `<td class="${nass ? 'mtb-nass' : ''}">
+      const fenster = alleFenster(c.stunden);
+      const nass = fenster.length > 0;
+      const tagWort = i === 0 ? 'heute' : i === 1 ? 'morgen' : weekday(d);
+      return `<td class="${nass ? 'mtb-nass' : ''}${nass && fenster.length > 2 ? ' mtb-mehr' : ''}"
+        ${nass ? `data-info="${esc(m.name)}|${tagWort}|${fenster.join(', ')}|${dez(c.mm)}"` : ''}>
         <em>${c.zeichen}</em>
-        ${nass ? `<i>${zeitFensterWort(c.stunden)}</i>` : `<i class="mtb-tr">trocken</i>`}
+        ${nass ? `<i>${fenster.slice(0, 2).join('<br>')}${
+          fenster.length > 2 ? `<u>+${fenster.length - 2}</u>` : ''}</i>`
+          : `<i class="mtb-tr">trocken</i>`}
       </td>`;
     }).join('');
     return `<tr><th scope="row"><span class="mtb-punkt" style="background:${m.color}"></span>
@@ -2418,11 +2452,11 @@ function renderModellTage(H) {
 
   box.innerHTML = `
     <div class="mt-umschalter" role="tablist">
-      <button class="mt-tab is-an" data-ansicht="uebersicht">Überblick</button>
-      <button class="mt-tab" data-ansicht="tabelle">Alle Modelle</button>
+      <button class="mt-tab is-an" data-ansicht="tabelle">Alle Modelle</button>
+      <button class="mt-tab" data-ansicht="uebersicht">Überblick</button>
     </div>
-    <div class="mt-uebersicht">${zeilen}</div>
-    <div class="mt-tabelle" hidden>
+    <div class="mt-uebersicht" hidden>${zeilen}</div>
+    <div class="mt-tabelle">
       <table class="mtb">
         <thead><tr><th class="mtb-ecke">Modell</th>${kopf}</tr></thead>
         <tbody>${koerper}</tbody>
@@ -2441,6 +2475,16 @@ function renderModellTage(H) {
       zeiten ? ` · nass ${zeiten}` : ''}`, 4500);
   }));
 
+  // Zelle antippen: alle Regenfenster dieses Modells für diesen Tag
+  $$('.mtb td[data-info]', box).forEach(td => {
+    td.style.cursor = 'pointer';
+    td.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const [name, tag, fenster, mm] = (td.dataset.info || '').split('|');
+      toast(`${name}, ${tag}: Regen ${fenster} Uhr · ${mm} mm`, 6000);
+    });
+  });
+
   $$('.mt-tab', box).forEach(t => t.addEventListener('click', (e) => {
     e.stopPropagation();
     const tab = t.dataset.ansicht;
@@ -2449,8 +2493,8 @@ function renderModellTage(H) {
     box.querySelector('.mt-tabelle').hidden = tab !== 'tabelle';
     store.set('wf.modellAnsicht', tab);
   }));
-  const gemerkt = store.get('wf.modellAnsicht', 'uebersicht');
-  if (gemerkt === 'tabelle') box.querySelector('[data-ansicht="tabelle"]')?.click();
+  const gemerkt = store.get('wf.modellAnsicht', 'tabelle');
+  if (gemerkt === 'uebersicht') box.querySelector('[data-ansicht="uebersicht"]')?.click();
 
   return { streit: ersterStreit };
 }
@@ -5773,6 +5817,33 @@ const ZONEN = [
 ];
 
 let zonenTimer = null;
+let zonenWetter = null;        // { 'Ort': { t, code } }
+
+/* Wetter für alle Zeitzonen-Städte in einem Abruf. Ein Sonnensymbol allein
+   sagt nur, ob dort Tag ist — interessanter ist, ob es dort gerade schüttet
+   und wie warm es ist. Open-Meteo nimmt mehrere Koordinaten auf einmal, das
+   ist ein Abruf für fünfzehn Städte. */
+async function ladeZonenWetter() {
+  if (zonenWetter && Date.now() - zonenWetter.stand < 20 * 60000) return;
+  const p = new URLSearchParams({
+    latitude: ZONEN.map(z => z.lat).join(','),
+    longitude: ZONEN.map(z => z.lon).join(','),
+    current: 'temperature_2m,weather_code,is_day'
+  });
+  try {
+    const r = await fetch(`${FORECAST}?${p}`);
+    if (!r.ok) return;
+    const d = await r.json();
+    const liste = Array.isArray(d) ? d : [d];
+    const karte = {};
+    ZONEN.forEach((z, i) => {
+      const c = liste[i]?.current;
+      if (c) karte[z.ort] = { t: c.temperature_2m, code: c.weather_code, tag: c.is_day };
+    });
+    zonenWetter = { karte, stand: Date.now() };
+    renderZonen();
+  } catch { /* ohne Wetter bleibt die Liste wie bisher */ }
+}
 
 function renderZonen() {
   const box = $('#zonenListe');
@@ -5796,10 +5867,13 @@ function renderZonen() {
     // Echte Sonnenhöhe statt Uhrzeit-Faustregel
     const hoehe = sunAltitude(jetzt, z.lat, z.lon);
     const himmel = hoehe > 6 ? '☀️' : hoehe > -0.833 ? '🌇' : hoehe > -6 ? '🌆' : '🌙';
+    const wetter = zonenWetter?.karte?.[z.ort];
 
     return `<div class="tz-row${z.heim ? ' is-here' : ''}">
-      <span class="tz-ort">${z.ort}</span>
+      <span class="tz-ort">${esc(z.ort)}</span>
       <span class="tz-sky" title="Sonne ${hoehe.toFixed(0)}° über dem Horizont">${himmel}</span>
+      <span class="tz-wetter">${wetter
+        ? `<i>${wetterZeichen(wetter.code, wetter.tag)}</i><b>${round(wetter.t)}°</b>` : ''}</span>
       <span class="tz-zeit">${zeit}</span>
       <span class="tz-diff">${z.heim ? 'hier' : `${diff >= 0 ? '+' : ''}${diff} Std.`}</span>
       <span class="tz-datum">${datum}</span>
@@ -5808,7 +5882,8 @@ function renderZonen() {
 }
 
 function openZonen() {
-  $('#explainTitle').textContent = 'Zeit weltweit';
+  ladeZonenWetter();
+  $('#explainTitle').textContent = 'Zeit und Wetter weltweit';
   $('#explainText').innerHTML = `
     <p style="margin:0 0 12px">Die Uhr oben wird einmal beim Start gegen die
       Serverzeit geprüft — falls das Gerät falsch geht, steht es dort.</p>
@@ -6087,6 +6162,7 @@ const NAV = [
   { id: 'nav-sonne',   ziel: '.card-cd',     name: 'Sonne' },
   { id: 'nav-dwd',     ziel: '.card-dwd',    name: 'DWD' },
   { id: 'nav-bericht', ziel: '.card-brief',  name: 'Bericht' },
+  { id: 'nav-modelle', ziel: '.card-modelle', name: 'Modelle' },
   { id: 'nav-rueck',   ziel: '.card-rueck',  name: 'Trefferquote' }
 ];
 
