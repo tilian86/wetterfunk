@@ -142,11 +142,17 @@ body[data-mood="night"]   .sky-grad { background: linear-gradient(178deg,#1b2647
 /* Auf dem Telefon zählt der Ortsname mehr als die Namenszeile — die stand
    dort ohnehin nur klein und steht auch im Impressum. Ohne sie passt
    „Tübingen" ungekürzt daneben. */
+/* Der Ortsname war früher zu „Tübi…" gekürzt, deshalb wich die Namenszeile.
+   Seit Schrift und Abstände enger sind, passt beides nebeneinander — und der
+   Name gehört zur App. Erst auf sehr schmalen Geräten weicht er wieder. */
 @media (max-width: 460px) {
-  .brand-text i { display: none; }
-  .brand-text b { font-size: 13.5px; }
+  .brand-text b { font-size: 13px; }
+  .brand-text i { font-size: 9px; }
   .place-btn { font-size: 16px; gap: 4px; }
   .topbar { gap: 8px; }
+}
+@media (max-width: 359px) {
+  .brand-text i { display: none; }
 }
 @media (max-width: 340px) {
   .brand-text { display: none; }
