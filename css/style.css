@@ -711,10 +711,14 @@ select#bfModel {
 /* Stufen wie in rainColor() — harte Kanten statt Verlauf, damit die Legende
    dieselben Farben zeigt, die auch auf der Karte stehen. */
 .lg-bar {
-  width: 76px; height: 7px; border-radius: 3px;
+  /* Genau die zwölf Stufen, in die das Radarbild umgefärbt wird — vorher
+     zeigte die Legende eine andere Skala als die Karte. */
+  width: 92px; height: 9px; border-radius: 5px; flex: none;
   background: linear-gradient(90deg,
-    #5ac8fa 0 14%, #2da5f5 14% 28%, #28d7be 28% 42%, #5ae65a 42% 56%,
-    #fadc28 56% 70%, #ff9628 70% 84%, #f54637 84% 100%);
+    rgb(125,216,245) 0 8%,  rgb(90,200,250) 8% 17%,  rgb(45,165,245) 17% 25%,
+    rgb(40,205,200) 25% 33%, rgb(60,220,120) 33% 42%, rgb(130,230,70) 42% 50%,
+    rgb(205,232,45) 50% 58%, rgb(250,214,40) 58% 67%, rgb(250,170,35) 67% 75%,
+    rgb(246,120,40) 75% 83%, rgb(235,60,45) 83% 92%,  rgb(190,40,130) 92% 100%);
 }
 
 .radar-locate, .radar-globe {
@@ -1768,12 +1772,13 @@ body.loading .hero-temp, body.loading .hero-desc { opacity: .45; }
   color: var(--ink-faint); font: 500 12px var(--font); cursor: pointer;
   transition: background .15s, color .15s, border-color .15s;
 }
-.lchip i {
-  width: 9px; height: 9px; border-radius: 50%; flex: none;
-  background: var(--c); opacity: .45;
+.lc-sym {
+  width: 17px; height: 17px; flex: none;
+  stroke: var(--c); stroke-width: 1.7; fill: none;
+  stroke-linecap: round; stroke-linejoin: round; opacity: .55;
 }
 .lchip.on { background: rgba(255,255,255,.12); border-color: var(--c); color: var(--ink); }
-.lchip.on i { opacity: 1; box-shadow: 0 0 8px var(--c); }
+.lchip.on .lc-sym { opacity: 1; filter: drop-shadow(0 0 5px var(--c)); }
 .lchip:active { transform: scale(.96); }
 
 /* Regenzeitfenster in der Tagesreihe */
@@ -1920,38 +1925,55 @@ body.map-full > *:not(.card-radar):not(.sky):not(.topbar):not(.toast) { visibili
 .card-radar.is-full .scrub-read,
 .card-radar.is-full .card-head { display: none; }
 
-/* Ebenenwahl schwebt oben über der Karte */
+/* Ebenenwahl im Vollbild: Symbole senkrecht am linken Rand. Als Wortreihe
+   quer über die Karte verdeckten sie das halbe Bild und ließen sich nicht
+   sicher treffen — untereinander stören sie nichts. */
 .card-radar.is-full .layer-pick {
   position: absolute; z-index: 20; margin: 0;
-  top: calc(var(--sat) + 52px); left: 10px; right: 10px;
-  display: flex; flex-wrap: nowrap; overflow-x: auto;
-  scrollbar-width: none; padding-bottom: 2px;
+  top: calc(var(--sat) + 56px); left: 10px; right: auto;
+  display: grid; gap: 7px; width: 42px;
 }
-.card-radar.is-full .layer-pick::-webkit-scrollbar { display: none; }
 .card-radar.is-full .lchip {
-  background: rgba(10,16,26,.7); backdrop-filter: blur(10px);
+  width: 42px; height: 42px; padding: 0; border-radius: 50%;
+  display: grid; place-items: center;
+  background: rgba(10,16,26,.74); backdrop-filter: blur(10px);
   -webkit-backdrop-filter: blur(10px);
 }
+.card-radar.is-full .lc-wort { display: none; }
+.card-radar.is-full .lc-sym { width: 20px; height: 20px; }
 
 /* Zeitregler schwebt unten über der Karte */
 .card-radar.is-full .zeit-ctrl,
 .card-radar.is-full .slider-wrap {
   position: absolute; z-index: 20; left: 12px; right: 12px;
 }
+/* Unten genug Luft lassen: Die Beschriftung der Tage hängt unter dem Regler
+   und wurde vom Bildschirmrand abgeschnitten. */
 .card-radar.is-full .zeit-ctrl {
-  bottom: calc(var(--sab) + 54px); margin: 0;
+  bottom: calc(var(--sab) + 76px); margin: 0;
   background: rgba(10,16,26,.72); backdrop-filter: blur(12px);
   -webkit-backdrop-filter: blur(12px);
   border-radius: 30px; padding: 7px 14px 7px 7px;
 }
-.card-radar.is-full .slider-wrap { bottom: calc(var(--sab) + 18px); width: auto; margin: 0; }
-.card-radar.is-full .slider-ticks { filter: drop-shadow(0 1px 3px rgba(0,0,0,.8)); }
+.card-radar.is-full .slider-wrap { bottom: calc(var(--sab) + 40px); width: auto; margin: 0; }
+.card-radar.is-full .slider-ticks {
+  filter: drop-shadow(0 1px 3px rgba(0,0,0,.85));
+}
+/* Die Marken auf hellem Kartengrund lesbar halten */
+.card-radar.is-full .tick-day::after,
+.card-radar.is-full .tick-now::after { color: #fff; font-weight: 700; }
+.card-radar.is-full .tick-day { background: rgba(255,255,255,.7); }
 
-/* Vollbild-Knopf nach oben, damit er nicht auf dem Regler liegt */
-.card-radar.is-full .radar-full { bottom: auto; top: calc(var(--sat) + 8px); }
-.card-radar.is-full .radar-globe { bottom: 128px; }
-.card-radar.is-full .radar-locate { bottom: 88px; }
-.card-radar.is-full .radar-legend { bottom: 128px; }
+/* Rechte Knopfreihe über den Reglern, Legende darüber */
+.card-radar.is-full .radar-full { bottom: auto; top: calc(var(--sat) + 56px); }
+.card-radar.is-full .radar-globe { bottom: calc(var(--sab) + 148px); }
+.card-radar.is-full .radar-locate { bottom: calc(var(--sab) + 108px); }
+.card-radar.is-full .radar-legend {
+  bottom: calc(var(--sab) + 148px); left: 62px; right: 62px;
+}
+.card-radar.is-full .map-mode { top: calc(var(--sat) + 8px); }
+/* Der Hinweis „keine Daten" darf die Zeitangabe nicht überdecken */
+.card-radar.is-full .radar-empty { top: calc(var(--sat) + 44px); }
 
 /* KI-Stimme freischalten */
 .bf-kian, .bf-kiaus {

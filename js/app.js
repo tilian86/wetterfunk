@@ -1887,6 +1887,24 @@ function toggleZeitraffer() {
 }
 
 // ══ Kartenebenen ═══════════════════════════════════════════
+/* Symbole statt Wörter: Im Vollbild ist die Karte das Wichtigste, und sechs
+   ausgeschriebene Wörter fressen den halben Schirm. Die Zeichen sind
+   selbsterklärend genug, die Wörter stehen weiter in der Legende und beim
+   Antippen der Legende. */
+const LAYER_SVG = {
+  regen: '<path d="M6 15.5a4 4 0 0 1 .4-8 5.6 5.6 0 0 1 10.6 1.3 3.4 3.4 0 0 1-.5 6.7z"/>'
+       + '<path d="M8.5 17.6 7.4 20.5M12.5 17.6l-1.1 2.9M16.5 17.6l-1.1 2.9"/>',
+  wolken: '<path d="M6 17a4.2 4.2 0 0 1 .4-8.4A5.9 5.9 0 0 1 17.6 10a3.6 3.6 0 0 1-.5 7z"/>',
+  temperatur: '<path d="M14 13.6V5.5a2 2 0 1 0-4 0v8.1a4 4 0 1 0 4 0z"/><path d="M12 9.5v5"/>',
+  boeen: '<path d="M3 9h11a3 3 0 1 0-3-3"/><path d="M3 14h14a3 3 0 1 1-3 3"/><path d="M3 19h7"/>',
+  wind: '<path d="M12 4v16"/><path d="M8 8l4-4 4 4"/>',
+  gewitter: '<path d="M6 14.5a4 4 0 0 1 .4-8 5.6 5.6 0 0 1 10.6 1.3 3.4 3.4 0 0 1-.5 6.7z"/>'
+          + '<path d="m12.5 15-2.5 4h3l-2 4"/>',
+  // Zahlen auf der Karte: ein Etikett mit Ziffer statt kryptischer Striche
+  zahlen: '<rect x="3.5" y="6.5" width="17" height="11" rx="2.5"/>'
+        + '<path d="M8 10.5h1.5v3M13 10.5h2.5l-2 3h2.5"/>'
+};
+
 const LAYERS = [
   { id: 'regen',      name: 'Niederschlag', farbe: '#5ac8fa' },
   { id: 'wolken',     name: 'Wolken',       farbe: '#e6ecf5' },
@@ -1905,7 +1923,10 @@ function renderLayerPicker() {
   const an = activeLayers();
   box.innerHTML = LAYERS.map(l =>
     `<button class="lchip${an.has(l.id) ? ' on' : ''}" data-layer="${l.id}"
-       style="--c:${l.farbe}"><i></i>${l.name}</button>`).join('');
+       style="--c:${l.farbe}" title="${esc(l.name)}" aria-label="${esc(l.name)}"
+       aria-pressed="${an.has(l.id) ? 'true' : 'false'}">
+       <svg class="lc-sym" viewBox="0 0 24 24" aria-hidden="true">${LAYER_SVG[l.id] || ''}</svg>
+       <span class="lc-wort">${l.name}</span></button>`).join('');
 
   $$('.lchip', box).forEach(b => b.addEventListener('click', () => {
     const jetzt = activeLayers();
@@ -2056,7 +2077,11 @@ function ladeRaster(lat, lon, zoom, ebenen, sicht) {
       Radar.vorwaermen?.(stunden, flaechen);
     })
     .catch((e) => {
-      // Beim Abruflimit den Grund nennen — "keine Daten" wäre irreführend
+      /* Zeigt die Karte gerade den DWD-Nowcast, ist das Raster gar nicht
+         gefragt — dann darf ein Fehler beim Rasterabruf auch nicht
+         „für diese Region keine Daten" über ein einwandfreies Radarbild
+         schreiben. Genau das stand bei Florian über der vollen Karte. */
+      if (Radar.nowcastAktiv) return;
       setMapMode(zeit(), /429/.test(e?.message)
         ? 'Wetterdienst bremst — gleich nochmal versuchen'
         : 'für diese Region keine Daten', 'none');
