@@ -250,15 +250,35 @@ export default {
         return json({ error: 'Zu viele Anfragen' }, 429, origin);
       }
 
+      /* Fünf Minuten Raster für die nächste halbe Stunde, danach zehn: Für
+         „fängt es gleich an?" zählt die Minute, für „wie wird der Abend?"
+         nicht mehr. Das spart Abrufe für die Umgebungspunkte. */
       const jetzt = Math.floor(Date.now() / 300000) * 300000;
       const schritte = [];
-      for (let m = -10; m <= 90; m += 5) schritte.push(jetzt + m * 60000);
+      for (let m = -10; m <= 30; m += 5) schritte.push(jetzt + m * 60000);
+      for (let m = 40; m <= 90; m += 10) schritte.push(jetzt + m * 60000);
 
-      const bb = `${(lon - 0.05).toFixed(4)},${(lat - 0.05).toFixed(4)},`
-               + `${(lon + 0.05).toFixed(4)},${(lat + 0.05).toFixed(4)}`;
+      /* Eine Radarzelle ist einen Kilometer breit. Ein Sommerschauer ist
+         wenige Kilometer groß — ob er genau die eigene Zelle trifft, ist
+         Zufall. Gemessen am 1. August: über der Stadtmitte 0,02 mm/h,
+         zweieinhalb Kilometer weiter 4,9. Wer draußen steht, wird nass,
+         die App sagte „trocken".
 
-      const holen = async (t) => {
+         Deshalb zusätzlich vier Punkte im Umkreis von rund 2,5 km. Sie
+         werden getrennt gemeldet, nicht mit dem eigenen Wert vermischt:
+         „bei dir" und „direkt nebenan" sind zwei verschiedene Aussagen. */
+      const RING_KM = 2.5;
+      const dLat = RING_KM / 111;
+      const dLon = RING_KM / (111 * Math.cos(lat * Math.PI / 180));
+      const ring = [[lat + dLat, lon], [lat - dLat, lon],
+                    [lat, lon + dLon], [lat, lon - dLon]];
+      // Umgebung nur im Nahbereich — weiter draußen ist die Bahn ohnehin unsicher
+      const ringBis = jetzt + 15 * 60000;
+
+      const wert = async (pLat, pLon, t) => {
         const zeit = new Date(t).toISOString().replace(/\.\d+Z$/, '.000Z');
+        const bb = `${(pLon - 0.05).toFixed(4)},${(pLat - 0.05).toFixed(4)},`
+                 + `${(pLon + 0.05).toFixed(4)},${(pLat + 0.05).toFixed(4)}`;
         const u = 'https://maps.dwd.de/geoserver/dwd/wms?service=WMS&version=1.3.0'
           + '&request=GetFeatureInfo&layers=dwd:Radar_rv_product_1x1km_ger'
           + '&query_layers=dwd:Radar_rv_product_1x1km_ger&crs=CRS:84'
@@ -270,17 +290,28 @@ export default {
           if (!r.ok) return null;
           const d = await r.json();
           const v = d?.features?.[0]?.properties?.RV_ANALYSIS;
-          if (typeof v !== 'number' || v < 0) return { t, mm: 0 };
-          return { t, mm: +(v * 12).toFixed(2) };        // mm/5min → mm/h
+          if (typeof v !== 'number' || v < 0) return 0;
+          return +(v * 12).toFixed(2);                   // mm/5min → mm/h
         } catch { return null; }
+      };
+
+      const holen = async (t) => {
+        const eigen = await wert(lat, lon, t);
+        if (eigen == null) return null;
+        if (t > ringBis) return { t, mm: eigen };
+        const rund = (await Promise.all(ring.map(([a, b]) => wert(a, b, t))))
+          .filter(x => typeof x === 'number');
+        return rund.length
+          ? { t, mm: eigen, umfeld: Math.max(...rund) }
+          : { t, mm: eigen };
       };
 
       const werte = (await Promise.all(schritte.map(holen))).filter(Boolean);
       if (werte.length < schritte.length / 2) {
         return json({ error: 'DWD antwortet nicht vollständig' }, 502, origin);
       }
-      return json({ punkte: werte, einheit: 'mm/h', quelle: 'DWD RV 1 km' }, 200, origin,
-                  'public, max-age=120');
+      return json({ punkte: werte, einheit: 'mm/h', umkreisKm: RING_KM,
+                    quelle: 'DWD RV 1 km' }, 200, origin, 'public, max-age=120');
     }
 
     /* ── Amtlicher Regionalwetterbericht des DWD ──────────────
