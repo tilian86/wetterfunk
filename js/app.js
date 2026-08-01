@@ -575,6 +575,25 @@ function renderVerdict() {
                || proStunde(jetztBlock?.mm) >= REGEN.nichts;
   const wet = near.filter(x => proStunde(x.mm) >= REGEN.nichts);
 
+  /* Der Punktverlauf des DWD hat Vorrang vor allem anderen: Er kommt vom
+     Radar über dem Standort, während die Modellwerte für eine Gitterzelle
+     gelten und die Station kilometerweit weg steht.
+
+     Hier steckte ein Fehler, der genau den wichtigsten Fall verschluckte:
+     Der Zweig unten verlangte `pv.start` — die Uhrzeit, zu der der Regen
+     ANFÄNGT. Regnete es am Standort bereits, liefert `punktSatz()` gar
+     kein `start`, und die Zeile fiel durch bis zum Stundenraster, das für
+     die ganze Masche „trocken" sagte. Bei einem einzelnen Schauer über der
+     Stadt stand dann „Bleibt trocken", während es vor der Tür schüttete. */
+  const pv = punktSatz();
+  if (pv?.regnet) {
+    /* Ohne umschließendes <b>: Die Sätze setzen ihre Betonung selbst, und
+       ein <b> um alles machte die inneren wirkungslos. */
+    el.innerHTML = pv.text + punktLeiste();
+    el.dataset.tone = 'wet';
+    return;
+  }
+
   if (raining) {
     /* Regnet es gerade, ist die einzig interessante Frage: wie lange noch?
        Die Viertelstundenwerte reichen zwei Stunden voraus — daraus eine
@@ -625,11 +644,13 @@ function renderVerdict() {
     return;
   }
 
-  /* Liegt der Punktverlauf des DWD vor, hat er Vorrang: Er misst, wo das
-     Modell nur rechnet, und gilt für den Standort statt für die Masche. */
-  const pv = punktSatz();
-  if (pv && !raining && pv.start) {
-    el.innerHTML = `<b>${pv.text}</b>`;
+  // Regen kündigt sich am Standort an, bevor das Stundenraster ihn kennt
+  if (pv && !raining && (pv.start || pv.nahe)) {
+    /* Beim Schauer nebenan keine Leiste: Sie zeigt den Verlauf über dem
+       eigenen Standort, und der ist in diesem Fall durchweg leer — ein
+       flaches Balkenbild unter „nebenan regnet es" verwirrt mehr, als es
+       sagt. */
+    el.innerHTML = pv.text + (pv.start ? punktLeiste() : '');
     el.dataset.tone = 'soon';
     return;
   }
@@ -1468,32 +1489,102 @@ async function ladePunktVerlauf(lat, lon) {
 function punktSatz() {
   if (!punktVerlauf) return null;
   const jetzt = Date.now();
-  const p = punktVerlauf.punkte.filter(x => x.t >= jetzt - 6 * 60000);
+  const p = punktVerlauf.punkte.filter(x => x.t >= jetzt - 12 * 60000);
   if (!p.length) return null;
 
-  const nass = (x) => x.mm >= 0.2;                 // darunter merkt man nichts
   const uhr = (t) => hhmm(t);
   const inMin = (t) => Math.max(0, Math.round((t - jetzt) / 60000));
+  const gross = (s) => s.charAt(0).toUpperCase() + s.slice(1);
 
-  if (nass(p[0])) {
-    const trocken = p.find(x => x.t > jetzt && !nass(x));
-    const staerke = Math.max(...p.slice(0, 3).map(x => x.mm));
-    const k = regenKlartext(staerke);
-    return { regnet: true, staerke,
+  /* Zwei Schwellen für zwei verschiedene Aussagen: Über der eigenen Zelle
+     zählt Regen ab 0,2 mm/h, im Umkreis erst ab 0,5 — sonst meldete jeder
+     Nieselfleck im Nachbarort einen Schauer. */
+  const NASS = 0.2, NAHE = 0.5;
+  const eigenNass = (x) => x.mm >= NASS;
+  const irgendwoNass = (x) => x.mm >= NASS || (x.umfeld ?? 0) >= NAHE;
+
+  /* Rückblick über gut zehn Minuten statt nur des letzten Radarbildes: Eine
+     Zelle am Rand eines Schauers flackert von Bild zu Bild zwischen nass und
+     trocken (gemessen am 1. August: 0,19 – 0,34 – 0,05 – 0,83 – 0,05). Ohne
+     Rückblick wechselte die Zeile alle fünf Minuten die Aussage. */
+  const bisJetzt = (min) => p.filter(x => x.t >= jetzt - min * 60000 && x.t <= jetzt);
+  const eigenJetzt = Math.max(0, ...bisJetzt(12).map(x => x.mm));
+  /* Der Umkreis mit kürzerem Gedächtnis: „Bei dir regnet es" darf ein paar
+     Minuten nachhängen — nass ist nass. „Nebenan" ist dagegen eine Warnung
+     für gleich und wäre nach zwölf Minuten schlicht veraltet. */
+  const naheJetzt = Math.max(0, ...bisJetzt(6).map(x => x.umfeld ?? 0));
+
+  if (eigenJetzt >= NASS) {
+    // Vorbei ist es erst, wenn auch der Umkreis frei ist — sonst zieht die Zelle nur weiter
+    const trocken = p.find(x => x.t > jetzt && !irgendwoNass(x));
+    const k = regenKlartext(Math.max(eigenJetzt, naheJetzt * 0.6));
+    return { regnet: true, staerke: eigenJetzt,
       text: (trocken
         ? `Bei dir: <b>${k.wort}</b> bis etwa <b>${uhr(trocken.t)}</b> (${inMin(trocken.t)} Min.).`
         : `Bei dir: <b>${k.wort}</b>, hält die nächste Stunde an.`)
-        + (k.rat ? ` ${k.rat.charAt(0).toUpperCase()}${k.rat.slice(1)}.` : '') };
+        + (k.rat ? ` ${gross(k.rat)}.` : '') };
   }
-  const start = p.find(x => x.t > jetzt && nass(x));
+
+  /* Die eigene Zelle ist trocken, der Umkreis nicht. Bei Sommerschauern ist
+     das der Normalfall — die Zelle ist einen Kilometer breit, der Schauer ein
+     paar Kilometer, und welche Zelle er trifft, ist Zufall. Das gehört
+     gesagt, aber als das, was es ist: nebenan, nicht hier. */
+  if (naheJetzt >= NAHE) {
+    const k = regenKlartext(naheJetzt);
+    return { regnet: false, nahe: true, staerke: naheJetzt,
+      text: `<b>Ein Schauer geht direkt nebenan nieder</b> — ${k.wort} im Umkreis `
+          + `von gut zwei Kilometern. Über dir fällt gerade nichts, das kann `
+          + `sich in Minuten ändern.` };
+  }
+
+  const start = p.find(x => x.t > jetzt && eigenNass(x));
   if (!start) return { regnet: false, text: 'Bei dir bleibt es die nächsten anderthalb Stunden trocken.' };
-  const ende = p.find(x => x.t > start.t && !nass(x));
-  const spitze = Math.max(...p.filter(x => x.t >= start.t && (!ende || x.t < ende.t)).map(x => x.mm));
+  const ende = p.find(x => x.t > start.t && !irgendwoNass(x));
+  const spitze = Math.max(...p.filter(x => x.t >= start.t && (!ende || x.t < ende.t))
+                            .map(x => Math.max(x.mm, (x.umfeld ?? 0) * 0.6)));
   const kk = regenKlartext(spitze);
   return { regnet: false, start: start.t, staerke: spitze,
     text: `Bei dir fängt es gegen <b>${uhr(start.t)}</b> an — in ${inMin(start.t)} Minuten. `
-        + `${kk.wort.charAt(0).toUpperCase()}${kk.wort.slice(1)}${kk.rat ? `, ${kk.rat}` : ''}.`
+        + `${gross(kk.wort)}${kk.rat ? `, ${kk.rat}` : ''}.`
         + (ende ? ` Vorbei gegen <b>${uhr(ende.t)}</b>.` : '') };
+}
+
+/** Balkenbild aus dem Radarverlauf über dem Standort — dieselbe Quelle wie
+    der Satz darüber, in Fünf-Minuten-Schritten statt Viertelstunden. */
+function punktLeiste() {
+  if (!punktVerlauf) return '';
+  const jetzt = Date.now();
+  /* Nur bis eine halbe Stunde voraus: So weit läuft der Verlauf im
+     Fünf-Minuten-Takt. Danach sind es Zehn-Minuten-Schritte, und gleich
+     breite Balken für ungleiche Zeiträume wären eine falsche Auskunft. */
+  const von = jetzt - 6e5, bis = jetzt + 30 * 60000;
+  const p = punktVerlauf.punkte.filter(x => x.t >= von && x.t <= bis);
+  if (p.length < 6) return '';
+
+  const staerkste = Math.max(0.4, ...p.map(x => x.mm));
+
+  /* Die Marke bedeutet je nach Lage etwas anderes: Regnet es gerade, zeigt
+     sie, wann es aufhört; ist es trocken, wann es anfängt. Vorher stand dort
+     immer der nächste trockene Zeitpunkt — bei trockener Lage also die
+     übernächste Viertelstunde, was gar nichts aussagte. */
+  const nassJetzt = p.some(x => x.t <= jetzt && x.t >= jetzt - 6e5 && x.mm >= 0.2);
+  const marke = nassJetzt
+    ? p.find(x => x.t > jetzt && x.mm < 0.2)
+    : p.find(x => x.t > jetzt && x.mm >= 0.2);
+
+  return `
+    <span class="rp-leiste" aria-hidden="true">
+      ${p.map(x => {
+        const anteil = Math.min(1, x.mm / staerkste);
+        return `<i class="${x.mm >= 0.2 ? 'rp-nass' : 'rp-trocken'}"
+                   style="--h:${(24 + anteil * 34).toFixed(0)}%"></i>`;
+      }).join('')}
+    </span>
+    <span class="rp-achse">
+      <em>jetzt</em>${marke ? `<em class="rp-ende" style="left:${
+        Math.min(97, (marke.t - von) / (bis - von) * 100).toFixed(1)}%">${hhmm(marke.t)}</em>` : ''}
+      <em class="rp-rechts">+30 Min.</em>
+    </span>`;
 }
 
 function openRegenSheet() {
