@@ -36,10 +36,10 @@
 <meta name="theme-color" content="#0b1220">
 <link rel="apple-touch-icon" href="icons/icon-180.png">
 <link rel="icon" href="icons/icon-192.png">
-<link rel="manifest" href="manifest.webmanifest?v=123">
+<link rel="manifest" href="manifest.webmanifest?v=125">
 
-<link rel="stylesheet" href="vendor/maplibre-gl.css?v=123">
-<link rel="stylesheet" href="css/style.css?v=123">
+<link rel="stylesheet" href="vendor/maplibre-gl.css?v=125">
+<link rel="stylesheet" href="css/style.css?v=125">
 </head>
 <body>
 
@@ -236,7 +236,13 @@
       <span class="card-sub">als Nächstes</span>
     </div>
     <div id="countdown"></div>
-    <div id="sonneDetail"></div>
+    <button class="card-head klapp-kopf sonne-klapp" id="sonneKopf"
+            aria-expanded="false" aria-controls="sonneBody">
+      <h2>Sonnenstand &amp; Mond</h2>
+      <span class="klapp-sub">Sonnenstand, Licht, Mond</span>
+      <svg class="klapp-pfeil" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 9l6 6 6-6"/></svg>
+    </button>
+    <div class="klapp-body" id="sonneBody" hidden><div id="sonneDetail"></div></div>
   </section>
 
   <!-- ══ SONNENBAHN DURCH DIE KAMERA ══
@@ -274,21 +280,6 @@
       die Spannweite; je schmaler, desto verlässlicher:</p>
     <div class="model-chart" id="modelChart"></div>
     <div class="model-legend" id="modelLegend"></div>
-    </div>
-  </section>
-
-  <!-- ══ RÜCKBLICK: Vorhersage gegen Messung ══ -->
-  <section class="card card-rueck" id="rueckCard" hidden>
-    <button class="card-head klapp-kopf" id="rueckKopf" aria-expanded="false" aria-controls="rueckBody">
-      <h2>Wie gut war die Vorhersage?</h2>
-      <span class="klapp-sub" id="rueckStand"></span>
-      <svg class="klapp-pfeil" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 9l6 6 6-6"/></svg>
-    </button>
-    <div class="klapp-body" id="rueckBody" hidden>
-    <p class="card-note" id="rueckFazit"></p>
-    <div class="rueck-modelle" id="rueckModelle"></div>
-    <div class="rueck-liste" id="rueckListe"></div>
-    <p class="rueck-quelle" id="rueckQuelle"></p>
     </div>
   </section>
 
@@ -356,6 +347,21 @@
     <div class="klapp-body" id="camsBody" hidden>
       <div class="cams" id="cams"></div>
       <button class="link-btn cams-add" id="camAddBtn">＋ Webcam hinzufügen</button>
+    </div>
+  </section>
+
+  <!-- ══ RÜCKBLICK: Vorhersage gegen Messung ══ -->
+  <section class="card card-rueck" id="rueckCard" hidden>
+    <button class="card-head klapp-kopf" id="rueckKopf" aria-expanded="false" aria-controls="rueckBody">
+      <h2>Wie gut war die Vorhersage?</h2>
+      <span class="klapp-sub" id="rueckStand"></span>
+      <svg class="klapp-pfeil" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 9l6 6 6-6"/></svg>
+    </button>
+    <div class="klapp-body" id="rueckBody" hidden>
+    <p class="card-note" id="rueckFazit"></p>
+    <div class="rueck-modelle" id="rueckModelle"></div>
+    <div class="rueck-liste" id="rueckListe"></div>
+    <p class="rueck-quelle" id="rueckQuelle"></p>
     </div>
   </section>
 
@@ -598,11 +604,11 @@
 
 <div class="toast" id="toast" hidden></div>
 
-<script src="vendor/maplibre-gl.js?v=123"></script>
-<script src="js/icons.js?v=123"></script>
-<script src="js/radar.js?v=123"></script>
-<script src="js/forecast.js?v=123"></script>
-<script src="js/briefing.js?v=123"></script>
-<script src="js/app.js?v=123"></script>
+<script src="vendor/maplibre-gl.js?v=125"></script>
+<script src="js/icons.js?v=125"></script>
+<script src="js/radar.js?v=125"></script>
+<script src="js/forecast.js?v=125"></script>
+<script src="js/briefing.js?v=125"></script>
+<script src="js/app.js?v=125"></script>
 </body>
 </html>

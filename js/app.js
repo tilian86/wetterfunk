@@ -362,16 +362,23 @@ function renderHeroUhr() {
   anteil = Math.round(Math.max(0, Math.min(1, anteil)) * 100);
   const rest = restZeit(bis);
 
+  /* Eine echte Uhr statt einer Prozentzahl: In der Mitte steht die Zeit,
+     der Ring darum zeigt, wo im Tag sie liegt — Nacht dunkel, Dämmerung
+     blau, Tag gelb, dazu der Sonnenpunkt an seiner Stelle. Die Prozentzahl
+     wandert zurück in den Balken darunter, wo sie direkt neben der
+     Tageslänge steht; getrennt sahen die beiden Zahlen widersprüchlich aus
+     („noch 13 Std." über „Tag dauert 15 Std."). */
   el.hidden = false;
   el.dataset.phase = phase === 'Tag' ? 'tag' : 'nacht';
+  const zeit = jetzt.toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' });
   el.innerHTML = `
     <svg viewBox="0 0 76 76" class="hu-svg" aria-hidden="true">
       ${ring}
       <circle class="hu-punkt" cx="${px.toFixed(1)}" cy="${py.toFixed(1)}" r="3.6"/>
     </svg>
-    <span class="hu-mitte"><b>${anteil} %</b><i>${phase === 'Tag' ? 'vom Tag' : 'der Nacht'}</i></span>
-    <span class="hu-rest">noch ${rest} bis ${phase === 'Tag' ? 'Sonnenuntergang' : 'Sonnenaufgang'}</span>`;
-  el.title = `${phase} zu ${anteil} % vorbei — noch ${rest}`;
+    <span class="hu-mitte"><b class="hu-zeit">${zeit}</b></span>
+    <span class="hu-rest">Zeit weltweit</span>`;
+  el.title = `${zeit} Uhr — ${phase.toLowerCase()} zu ${anteil} % vorbei, noch ${rest}`;
 }
 
 // ══ Rendering: Jetzt ═══════════════════════════════════════
@@ -452,15 +459,18 @@ function renderDayProgress() {
                       behavior: 'smooth' });
   };
   el.innerHTML = `
-    <!-- Prozent und Restzeit stehen jetzt in der Ringuhr im Kopf; hier
-         bleiben die Angaben, die dort keinen Platz haben: Länge der Phase,
-         Trend und die beiden Uhrzeiten. -->
+    <!-- Anteil und Restzeit stehen hier, direkt über der Gesamtlänge: So
+         sieht man, dass die 13 Stunden der Rest von 15 sind. Getrennt
+         wirkten die beiden Zahlen widersprüchlich. -->
     <span class="dp-head">
-      <span class="dp-label">${phase === 'Tag' ? '☀ Tageslänge' : '☾ Nachtlänge'}</span>
+      <span class="dp-label">${phase === 'Tag' ? '☀ Tag' : '☾ Nacht'} zu
+        <b>${Math.round(anteil * 100)} %</b> vorbei</span>
+      <span class="dp-rest">noch ${rest} von ${dauer}</span>
     </span>
     <span class="dp-bar"><i style="width:${(anteil * 100).toFixed(1)}%"></i></span>
     <span class="dp-ends"><span>${hhmm(seit)}</span>
-      <span class="dp-len">${phase === 'Tag' ? 'Tag' : 'Nacht'} dauert ${dauer}${trend}</span>
+      <span class="dp-len">${phase === 'Tag' ? 'Sonnenaufgang bis -untergang'
+        : 'Untergang bis Aufgang'}${trend}</span>
       <span>${hhmm(bis)}</span></span>`;
 }
 
@@ -1066,6 +1076,13 @@ function renderDaily() {
 
   $('#dailyRange').textContent = lo != null ? `${round(lo)}° bis ${round(hi)}°` : '';
 
+  /* Die Überschrift log: „10 Tage" stand da, obwohl das gewählte Modell nur
+     bis Freitag reicht. Sie nennt jetzt, was wirklich da ist. */
+  const echteTage = d.time.filter((_, i) =>
+    d.temperature_2m_min[i] != null && d.temperature_2m_max[i] != null).length;
+  const h2 = document.querySelector('#daily')?.closest('.card')?.querySelector('h2');
+  if (h2) h2.textContent = echteTage >= 2 ? `${echteTage} Tage` : 'Tagesübersicht';
+
   $('#daily').innerHTML = d.time.map((day, i) => {
     const isToday = new Date(day).toDateString() === today;
     const min = d.temperature_2m_min[i], max = d.temperature_2m_max[i];
@@ -1326,9 +1343,20 @@ function renderMeteogramm() {
     <circle class="mg-punkt" cx="${X(k).toFixed(1)}" cy="${Y(t).toFixed(1)}" r="2"/>
     <text class="mg-wert" x="${X(k).toFixed(1)}" y="${(Y(t) - 5).toFixed(1)}">${Math.round(t)}°</text>`;
 
-  ziel.innerHTML = `
+  /* Der Verlauf reicht nur so weit wie die Stundenwerte — bei manchen
+     Modellen sind das gut sieben Tage, während die Tagesliste darunter
+     zehn zeigt. Ohne Hinweis sah der kürzere Verlauf nach Fehler aus. */
+  const tageImVerlauf = Math.round(n / 24);
+  const tageInListe = data.daily.time.filter((_, i) =>
+    data.daily.temperature_2m_max[i] != null).length;
+  const hinweis = tageImVerlauf < tageInListe - 1
+    ? `<p class="mg-note">Der Verlauf reicht ${tageImVerlauf} Tage — so weit rechnet
+       das gewählte Modell stundenweise. Die Liste darunter geht ${tageInListe} Tage,
+       dort genügen Tageswerte.</p>` : '';
+
+  ziel.innerHTML = hinweis + `
     <svg viewBox="0 0 ${METEO.w} ${METEO.h}" class="mg-svg" role="img"
-         aria-label="Temperatur- und Regenverlauf der nächsten zehn Tage">
+         aria-label="Temperatur- und Regenverlauf der nächsten Tage">
       <defs>
         <linearGradient id="mgTemp" x1="0" y1="0" x2="0" y2="1">
           <stop offset="0" stop-color="#ff9f6a" stop-opacity=".42"/>
@@ -1934,11 +1962,25 @@ function renderRueckblick(tage, quelle) {
     muster = ` Auffällig: Sie lag dabei fast immer <b>zu niedrig</b>, im Mittel um ${dez(schnitt)} °C.`;
   }
 
+  /* Regen zuerst: Ob man nass wird, entscheidet den Tag — ein halbes Grad
+     Abweichung merkt niemand. Vorher stand die Temperatur vorn. */
+  const regenQuote = Math.round((regenTreffer / tage.length) * 100);
+  const regenUrteil = regenQuote >= 85 ? 'sehr zuverlässig'
+    : regenQuote >= 70 ? 'meistens richtig' : 'nur bedingt verlässlich';
+  // Wie gut stimmte auch die Menge, nicht nur nass/trocken?
+  const mitRegen = tage.filter(t => nass(t.istRegen) || nass(t.sollRegen1));
+  const mengenFehler = mitRegen.length
+    ? mitRegen.reduce((a, t) => a + Math.abs(t.istRegen - t.sollRegen1), 0) / mitRegen.length
+    : null;
+
   $('#rueckFazit').innerHTML =
-    `Für den nächsten Tag lag die Höchsttemperatur im Schnitt <b>${dez(mittel1)} °C</b> daneben — `
-    + `${urteil}.${mittel3 != null
-        ? ` Drei Tage im Voraus waren es <b>${dez(mittel3)} °C</b>.` : ''}`
-    + ` Ob es regnet oder trocken bleibt, stimmte an <b>${regenTreffer} von ${tage.length}</b> Tagen.`
+    `<b>Regen:</b> Ob es nass wird oder trocken bleibt, stimmte an `
+    + `<b>${regenTreffer} von ${tage.length}</b> Tagen — ${regenUrteil}.`
+    + (mengenFehler != null
+        ? ` Bei der Menge lag sie im Schnitt ${dez(mengenFehler)} mm daneben.` : '')
+    + `<br><b>Temperatur:</b> Die Höchstwerte lagen im Schnitt `
+    + `<b>${dez(mittel1)} °C</b> daneben — ${urteil}.${mittel3 != null
+        ? ` Drei Tage im Voraus ${dez(mittel3)} °C.` : ''}`
     + muster;
 
   $('#rueckListe').innerHTML = tage.map(t => {
@@ -2418,6 +2460,16 @@ function modellCharakter(H, mid, tagISO) {
 
   const basis = { mm: regen, zeiten, stunden: nasseStunden };
   if (regen >= 1) return { ...basis, zeichen: '🌧', wort: 'Regen', grob: 'nass' };
+
+  /* Widerspruch beseitigt: Das Zeichen kam allein aus der Bewölkung, die
+     Zeitangabe darunter aus den Regenstunden. Dadurch stand unter einer
+     Sonne „15–16" — Symbol trocken, Text nass. Sobald es nasse Stunden
+     gibt, zeigt auch das Zeichen Niederschlag, nur eben in schwächerer
+     Form. */
+  if (nasseStunden.length) {
+    return { ...basis, zeichen: '🌦', wort: 'kurze Schauer', grob: 'nass' };
+  }
+
   const wm = wolken.length ? wolken.reduce((a, b) => a + b, 0) / wolken.length : null;
   if (wm == null) return null;
   if (wm < 25) return { ...basis, zeichen: '☀️', wort: 'sonnig', grob: 'freundlich' };
@@ -2518,12 +2570,18 @@ function renderModellTage(H) {
   const koerper = MODELS.map(m => {
     const zellen = tage.map((d, i) => {
       const c = modellCharakter(H, m.id, iso(d));
-      if (!c) return `<td class="mtb-leer">·</td>`;
+      if (!c) return `<td class="mtb-leer" data-info="${esc(m.name)}|${
+        i === 0 ? 'heute' : i === 1 ? 'morgen' : weekday(d)}||reicht nicht so weit voraus">·</td>`;
       const fenster = alleFenster(c.stunden);
       const nass = fenster.length > 0;
       const tagWort = i === 0 ? 'heute' : i === 1 ? 'morgen' : weekday(d);
+      /* Auch trockene Zellen antippbar: Wer auf ein Feld tippt, erwartet
+         eine Antwort — „nichts passiert" ist eine Antwort. */
+      const info = nass
+        ? `${esc(m.name)}|${tagWort}|${fenster.join(', ')}|${dez(c.mm)}`
+        : `${esc(m.name)}|${tagWort}||${c.wort}`;
       return `<td class="${nass ? 'mtb-nass' : ''}${nass && fenster.length > 2 ? ' mtb-mehr' : ''}"
-        ${nass ? `data-info="${esc(m.name)}|${tagWort}|${fenster.join(', ')}|${dez(c.mm)}"` : ''}>
+        data-info="${info}">
         <em>${c.zeichen}</em>
         ${nass ? `<i>${fenster.slice(0, 2).join('<br>')}${
           fenster.length > 2 ? `<u>+${fenster.length - 2}</u>` : ''}</i>`
@@ -2564,8 +2622,10 @@ function renderModellTage(H) {
     td.style.cursor = 'pointer';
     td.addEventListener('click', (e) => {
       e.stopPropagation();
-      const [name, tag, fenster, mm] = (td.dataset.info || '').split('|');
-      toast(`${name}, ${tag}: Regen ${fenster} Uhr · ${mm} mm`, 6000);
+      const [name, tag, fenster, rest] = (td.dataset.info || '').split('|');
+      toast(fenster
+        ? `${name}, ${tag}: Regen ${fenster} Uhr · ${rest} mm`
+        : `${name}, ${tag}: ${rest}, kein Niederschlag gerechnet`, 5000);
     });
   });
 
@@ -6253,9 +6313,12 @@ const NAV = [
   { id: 'nav-details', ziel: '#tiles',       name: 'Details' },
   { id: 'nav-sonne',   ziel: '.card-cd',     name: 'Sonne' },
   { id: 'nav-modelle', ziel: '.card-modelle', name: 'Modelle' },
-  { id: 'nav-rueck',   ziel: '.card-rueck',  name: 'Trefferquote' },
   { id: 'nav-dwd',     ziel: '.card-dwd',    name: 'DWD' },
-  { id: 'nav-bericht', ziel: '.card-brief',  name: 'Bericht' }
+  { id: 'nav-bericht', ziel: '.card-brief',  name: 'Bericht' },
+  { id: 'nav-himmel',  ziel: '.card-sky',    name: 'Am Himmel' },
+  { id: 'nav-cams',    ziel: '.card-cams',   name: 'Webcams' },
+  { id: 'nav-rueck',   ziel: '.card-rueck',  name: 'Trefferquote' },
+  { id: 'nav-push',    ziel: '.card-push',   name: 'Meldungen' }
 ];
 
 /** Waagerechte Leiste unter dem Kopf: springt zum Abschnitt und hebt hervor,
@@ -6366,9 +6429,8 @@ function wire() {
     });
   }
 
-  $('#heroUhr')?.addEventListener('click', () => {
-    document.querySelector('.card-cd')?.scrollIntoView({ block: 'start', behavior: 'smooth' });
-  });
+  // Die Uhr im Kopf öffnet die Weltzeit — das ist ihr Thema
+  $('#heroUhr')?.addEventListener('click', (e) => { e.stopPropagation(); openZonen(); });
   $('#heroMess')?.addEventListener('click', () => openExplain('messung'));
   $('#versatzZeile')?.addEventListener('click', () => openExplain('versatz'));
   const vd = $('#verdict');
@@ -6431,6 +6493,9 @@ function wire() {
     () => 'selbst erstellen, vorlesen lassen');
   klappen('#skyKopf', '#skyBody', 'wf.skyAuf', null,
     () => 'Finsternisse, Sternschnuppen, Planeten');
+  klappen('#sonneKopf', '#sonneBody', 'wf.sonneAuf', () => {
+    renderSonneDetail();          // Ringuhr braucht sichtbare Maße
+  }, () => 'Sonnenstand, Licht, Mond');
 
   $('#installBtn')?.addEventListener('click', installAnstossen);
   $('#radarLegend')?.addEventListener('click', openEbenenHilfe);
