@@ -194,9 +194,21 @@ export default {
         return json({ error: 'bbox fehlt oder ist ungültig' }, 400, origin);
       }
 
+      /* Zwei Produkte des DWD:
+         · ohne `time`  → Niederschlagsradar, das aktuelle Messbild
+         · mit  `time`  → RV-Komposit „Analyse und Vorhersage", 1 km, im
+                          Fünf-Minuten-Takt, rund 90 Minuten voraus.
+         Das RV-Produkt ist der Grund, warum die App den Regenzug jetzt
+         minutengenau zeigen kann statt in Viertelstundenschritten. */
+      const zeit = url.searchParams.get('time') || '';
+      const zeitOk = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:00(\.000)?Z$/.test(zeit);
+      if (zeit && !zeitOk) return json({ error: 'time ungültig' }, 400, origin);
+
+      const ebene = zeitOk ? 'dwd%3ARadar_rv_product_1x1km_ger' : 'dwd%3ANiederschlagsradar';
       const ziel = 'https://maps.dwd.de/geoserver/dwd/wms?service=WMS&version=1.1.1' +
-        '&request=GetMap&layers=dwd%3ANiederschlagsradar&srs=EPSG%3A3857' +
-        `&format=image%2Fpng&transparent=true&styles=&bbox=${bbox}&width=${px}&height=${px}`;
+        `&request=GetMap&layers=${ebene}&srs=EPSG%3A3857` +
+        `&format=image%2Fpng&transparent=true&styles=&bbox=${bbox}&width=${px}&height=${px}` +
+        (zeitOk ? `&time=${encodeURIComponent(zeit)}` : '');
 
       try {
         const res = await withTimeout(

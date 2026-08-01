@@ -1901,22 +1901,57 @@ body { padding-top: calc(var(--sat) + 96px); }
 
 body.map-full { overflow: hidden; }
 body.map-full > *:not(.card-radar):not(.sky):not(.topbar):not(.toast) { visibility: hidden; }
+/* Vollbild: Die Karte füllt wirklich den ganzen Schirm, Bedienelemente
+   liegen darüber statt daneben — wie in der DWD-App. Vorher blieb oben und
+   unten ein Rahmen stehen, und die Karte war nur ein Ausschnitt darin. */
 .card-radar.is-full {
   position: fixed; inset: 0; z-index: 60; margin: 0; border-radius: 0;
-  display: flex; flex-direction: column;
-  padding: calc(var(--sat) + 56px) var(--pad) calc(var(--sab) + 12px);
-  background: #0b1220; visibility: visible;
+  padding: 0; background: #0b1220; visibility: visible; overflow: hidden;
 }
-/* Im Vollbild zählt die Karte — alles Erklärende tritt zurück,
-   nur Filter, Karte und der Zeitregler bleiben. */
-.card-radar.is-full .radar-wrap { flex: 1 1 auto; height: auto; min-height: 0; }
+.card-radar.is-full .radar-wrap {
+  position: absolute; inset: 0; height: auto; border-radius: 0;
+}
+.card-radar.is-full #map { border-radius: 0; }
+
+/* Alles Erklärende tritt zurück */
 .card-radar.is-full .radar-hint,
 .card-radar.is-full .slider-scale,
 .card-radar.is-full .scrub-strip,
 .card-radar.is-full .scrub-read,
 .card-radar.is-full .card-head { display: none; }
-.card-radar.is-full .layer-pick { margin-bottom: 8px; }
-.card-radar.is-full .zeit-ctrl { margin-top: 10px; }
+
+/* Ebenenwahl schwebt oben über der Karte */
+.card-radar.is-full .layer-pick {
+  position: absolute; z-index: 20; margin: 0;
+  top: calc(var(--sat) + 52px); left: 10px; right: 10px;
+  display: flex; flex-wrap: nowrap; overflow-x: auto;
+  scrollbar-width: none; padding-bottom: 2px;
+}
+.card-radar.is-full .layer-pick::-webkit-scrollbar { display: none; }
+.card-radar.is-full .lchip {
+  background: rgba(10,16,26,.7); backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+}
+
+/* Zeitregler schwebt unten über der Karte */
+.card-radar.is-full .zeit-ctrl,
+.card-radar.is-full .slider-wrap {
+  position: absolute; z-index: 20; left: 12px; right: 12px;
+}
+.card-radar.is-full .zeit-ctrl {
+  bottom: calc(var(--sab) + 54px); margin: 0;
+  background: rgba(10,16,26,.72); backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border-radius: 30px; padding: 7px 14px 7px 7px;
+}
+.card-radar.is-full .slider-wrap { bottom: calc(var(--sab) + 18px); width: auto; margin: 0; }
+.card-radar.is-full .slider-ticks { filter: drop-shadow(0 1px 3px rgba(0,0,0,.8)); }
+
+/* Vollbild-Knopf nach oben, damit er nicht auf dem Regler liegt */
+.card-radar.is-full .radar-full { bottom: auto; top: calc(var(--sat) + 8px); }
+.card-radar.is-full .radar-globe { bottom: 128px; }
+.card-radar.is-full .radar-locate { bottom: 88px; }
+.card-radar.is-full .radar-legend { bottom: 128px; }
 
 /* KI-Stimme freischalten */
 .bf-kian, .bf-kiaus {

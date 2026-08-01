@@ -977,10 +977,23 @@ function renderSourceList() {
    in der Mitte das Jetzt, rechts die Vorhersage bis fünf Tage. Vorher gab es
    zwei Regler, die man nicht gleichzeitig im Blick hatte. */
 function buildScrubPoints() {
+  /* Deckt der DWD-Nowcast den Nahbereich ab, kommt der Zeitstrahl von dort:
+     Fünf-Minuten-Schritte von einer Stunde zurück bis anderthalb Stunden
+     voraus. Genau in diesem Fenster will man wissen, wann der Schauer den
+     eigenen Ort erreicht — Viertelstunden sind dafür zu grob. */
+  const nowcast = (Radar.rvZeiten?.() || []).map(t => ({
+    t: new Date(t), fein: true, i: -1, radar: true, nowcast: true
+  }));
+
+  if (nowcast.length) {
+    const ende = nowcast[nowcast.length - 1].t.getTime();
+    const spaeter = buildFuturePoints().filter(p => p.t.getTime() > ende + 20 * 60000);
+    return [...nowcast, ...spaeter];
+  }
+
   const vergangen = (Radar.frameTimes?.() || [])
     .filter(f => f.kind === 'past')
     .map(f => ({ t: new Date(f.t), fein: true, i: -1, radar: true }));
-
   return [...vergangen, ...buildFuturePoints()];
 }
 
@@ -1916,7 +1929,11 @@ const currentScrubTime = () => {
 function mapZeitWort(t) {
   const d = t instanceof Date ? t : new Date(t);
   const minuten = Math.round((d - Date.now()) / 60000);
-  if (Math.abs(minuten) <= 7) return 'jetzt';
+  if (Math.abs(minuten) <= 2) return 'jetzt';
+  /* Im Nahbereich zählt der Abstand, nicht die Uhrzeit: „in 35 Min." sagt
+     einem beim Vorschieben sofort, wann das Regengebiet ankommt. */
+  if (minuten > 0 && minuten <= 120) return `${hhmm(d)} · in ${minuten} Min.`;
+  if (minuten < 0 && minuten >= -120) return `${hhmm(d)} · vor ${-minuten} Min.`;
   return d.toDateString() === new Date().toDateString()
     ? `${hhmm(d)} Uhr` : `${weekday(d)} ${hhmm(d)} Uhr`;
 }
@@ -1959,7 +1976,18 @@ function radarGrenze() {
 
 function syncMapAt(ziel) {
   if (!radarReady || !ziel) return;
-  const vorlauf = (ziel - Date.now()) / 60000;      // Minuten voraus
+  const zielMs = ziel instanceof Date ? ziel.getTime() : ziel;
+  const vorlauf = (zielMs - Date.now()) / 60000;    // Minuten voraus
+
+  /* Im Fenster von einer Stunde zurück bis anderthalb Stunden voraus zeigt
+     das RV-Komposit des DWD: 1 km Auflösung, Fünf-Minuten-Takt, gemessen
+     und gerechnet aus einem Guss. Genauer geht es in Deutschland nicht. */
+  if (Radar.rvMoeglich?.(zielMs) && Radar.zeigeNowcast?.(zielMs)) {
+    const zeitWort = mapZeitWort(ziel);
+    setMapMode(zeitWort, vorlauf > 2 ? 'DWD-Radarvorhersage' : 'DWD-Radarmessung', 'radar');
+    if (!spielTimer) Radar.updateLabels();
+    return;
+  }
 
   /* Die Zahlen auf der Karte bauen bei jedem Aufruf eine neue GeoJSON-Quelle
      aus 400 Punkten. Während der Animation ist das die teuerste Einzelheit
