@@ -21,8 +21,7 @@ const MODELS = [
 
 /** Auswählbare Datenquellen für Stunden- und Tageswerte. */
 const SOURCES = [
-  { id: 'lernend', name: 'Lernend (empfohlen)', desc: 'Vergleicht jede Nacht die Vorhersagen von gestern mit den Messungen der nächsten DWD-Station und nimmt das Modell, das zuletzt am besten lag. Solange noch zu wenige Tage ausgewertet sind, gilt das beste verfügbare Modell.', best: true },
-  { id: 'best_match', name: 'Bestes verfügbares', desc: 'Automatisch — in Deutschland DWD ICON-D2 (2 km) für die ersten zwei Tage, danach ICON-EU und ICON global.' },
+  { id: 'best_match', name: 'Bestes verfügbares', desc: 'Automatisch — in Deutschland DWD ICON-D2 (2 km) für die ersten zwei Tage, danach ICON-EU und ICON global. Das feinste Gitter gewinnt: 2 km sehen Täler und Höhenzüge, die ein 25-km-Modell überfliegt.', best: true },
   { id: 'icon_seamless', name: 'DWD ICON', desc: 'Deutscher Wetterdienst, nahtlos: D2 (2 km) → EU (7 km) → global (11 km). Das amtliche deutsche Modell.' },
   { id: 'ecmwf_ifs025', name: 'ECMWF IFS', desc: 'Europäisches Zentrum, 25 km. Gilt weltweit als das treffsicherste Globalmodell auf mehrere Tage.' },
   { id: 'gfs_seamless', name: 'GFS', desc: 'US-Wetterdienst NOAA, 13 km. Reicht am weitesten, streut auf kurze Sicht stärker.' },
@@ -30,29 +29,25 @@ const SOURCES = [
   { id: 'meteofrance_seamless', name: 'Météo-France', desc: 'Französisches AROME/ARPEGE, 1,5 km über Mitteleuropa.' }
 ];
 
-const sourceId = () => store.get(LS.source, 'lernend');
-
-/* „Lernend" ist keine eigene Rechnung, sondern ein Zeiger: Die Trefferquote
-   unten wertet jede Nacht aus, welches Modell zuletzt am besten lag, und
-   hier wird es eingesetzt. Erst ab vier ausgewerteten Tagen — vorher wäre
-   es Würfeln. Ohne Messreihe (außerhalb Deutschlands) bleibt best_match. */
-const effektiveQuelle = () => {
-  const s = sourceId();
-  if (s !== 'lernend') return s;
-  const b = store.get('wf.bestModel', null);
-  return b?.id && b.tage >= 4 ? b.id : 'best_match';
+/* Es gab hier kurz eine Quelle „Lernend", die automatisch auf das Modell
+   umschaltete, das zuletzt am besten lag. Nachgeprüft an 23 Tagen mit
+   mitlaufender Auswertung war sie 13 % SCHLECHTER als einfach bei ICON zu
+   bleiben — fünf Tage sind schlicht zu wenig, um einen Sieger zu erkennen
+   (in der Stichprobe gewann ECMWF in 55 %, GFS in 40 % der Fälle, also
+   Münzwurf). Und ICONs Schwäche ist gar keine Schwäche: Es streut am
+   wenigsten von allen, liegt nur um einen festen Betrag zu warm. Ein fester
+   Fehler gehört korrigiert, nicht mit einem Modellwechsel beantwortet.
+   Deshalb ist die Auswahl wieder ehrlich manuell. */
+const sourceId = () => {
+  const s = store.get(LS.source, 'best_match');
+  // Wer die kurzlebige Quelle „lernend" eingestellt hatte, landet wieder
+  // beim besten verfügbaren Modell — sie gibt es nicht mehr.
+  if (s === 'lernend') { store.set(LS.source, 'best_match'); return 'best_match'; }
+  return s;
 };
+const effektiveQuelle = () => sourceId();
 const sourceOf = (id) => SOURCES.find(s => s.id === id) || SOURCES[0];
-
-/** Anzeigename — beim Lernenden steht dabei, wen es gerade gewählt hat. */
-const quellenName = () => {
-  const s = sourceId();
-  if (s !== 'lernend') return sourceOf(s).name;
-  const eff = effektiveQuelle();
-  return eff === 'best_match'
-    ? 'Lernend — noch zu wenig ausgewertet, bestes verfügbares'
-    : `Lernend — zurzeit ${sourceOf(eff).name}`;
-};
+const quellenName = () => sourceOf(sourceId()).name;
 
 const LS = {
   places: 'wf.places',
@@ -892,19 +887,7 @@ function renderDaily() {
 function renderSource() {
   const el = $('#modelName');
   if (!el) return;
-  const s = sourceId();
-  if (s === 'lernend') {
-    const eff = effektiveQuelle();
-    if (geladeneQuelle && geladeneQuelle !== 'best_match') {
-      el.innerHTML = `Quelle: <b>lernend</b> — zurzeit ${sourceOf(geladeneQuelle).name}, weil es zuletzt am besten lag`;
-    } else if (eff !== 'best_match') {
-      el.innerHTML = `Quelle: <b>lernend</b> — wechselt bei der nächsten Aktualisierung zu ${sourceOf(eff).name}`;
-    } else {
-      el.innerHTML = `Quelle: <b>lernend</b> — sammelt noch, solange bestes verfügbares Modell`;
-    }
-    return;
-  }
-  const q = sourceOf(s);
+  const q = sourceOf(sourceId());
   el.innerHTML = q.id === 'best_match'
     ? `Quelle: <b>bestes verfügbares Modell</b> — hier DWD ICON-D2, 2 km`
     : `Quelle: <b>${q.name}</b>`;
@@ -1247,7 +1230,7 @@ function bewerteModelle(tage, mvh, modelle) {
   const h = mvh.hourly;
 
   const wertung = modelle.map(mid => {
-    let fehlerSumme = 0, regenTreffer = 0, n = 0;
+    let fehlerSumme = 0, versatzSumme = 0, regenTreffer = 0, n = 0;
     for (const t of tage) {
       const temps = [], regen = [];
       h.time.forEach((zt, k) => {
@@ -1258,45 +1241,37 @@ function bewerteModelle(tage, mvh, modelle) {
         if (rv != null) regen.push(rv);
       });
       if (temps.length < 20) continue;
-      fehlerSumme += Math.abs(Math.max(...temps) - t.istMax);
+      const diff = Math.max(...temps) - t.istMax;     // + = Modell zu warm
+      fehlerSumme += Math.abs(diff);
+      versatzSumme += diff;
       const sollNass = regen.reduce((a, b) => a + b, 0) >= 0.5;
       if (sollNass === (t.istRegen >= 0.5)) regenTreffer++;
       n++;
     }
     return n >= 4 ? { id: mid, name: sourceOf(mid).name,
-                      mae: fehlerSumme / n, regen: regenTreffer, tage: n } : null;
+                      mae: fehlerSumme / n, bias: versatzSumme / n,
+                      regen: regenTreffer, tage: n } : null;
   }).filter(Boolean).sort((a, b) => a.mae - b.mae);
 
   if (wertung.length < 2) { box.innerHTML = ''; return; }
 
-  const sieger = wertung[0];
-  const alt = store.get('wf.bestModel', null);
-  /* Wechsel nur bei klarem Vorsprung (0,3 °C) auf den bisherigen Träger —
-     sonst genügt Rauschen für ein Hin und Her. */
-  const bisher = wertung.find(w => w.id === alt?.id);
-  const behalten = bisher && bisher.mae - sieger.mae < 0.3 ? bisher : sieger;
-  store.set('wf.bestModel', { id: behalten.id, mae: behalten.mae,
-                              tage: behalten.tage, stand: Date.now() });
-
-  const lernAktiv = sourceId() === 'lernend';
-  const schonGeladen = geladeneQuelle === behalten.id;
+  /* Die Reihenfolge ist Information, keine Anweisung: Über wenige Tage
+     entscheidet der Zufall, wer vorn steht. Deshalb steht hier bewusst
+     auch, wie sich die Fehler zusammensetzen — ein gleichmäßiger Versatz
+     ist etwas anderes als wildes Streuen. */
   box.innerHTML = `
     <p class="rm-kopf">Und welches Modell lag am besten?</p>
     <div class="rm-reihe">${wertung.map((w, i) => `
-      <span class="rm-eintrag${w.id === behalten.id ? ' rm-sieger' : ''}">
+      <span class="rm-eintrag${i === 0 ? ' rm-sieger' : ''}">
         <b>${i + 1}. ${esc(w.name)}</b>
-        <i>Ø ${dez(w.mae)} °C · Regen ${w.regen}/${w.tage}</i>
+        <i>Ø ${dez(w.mae)} °C · ${w.bias > 0.4 ? `${dez(w.bias)} °C zu warm`
+           : w.bias < -0.4 ? `${dez(-w.bias)} °C zu kalt` : 'ohne festen Versatz'}</i>
       </span>`).join('')}
     </div>
-    <p class="rm-text">${lernAktiv
-      ? (schonGeladen
-          ? `Die Vorhersage oben nutzt deshalb <b>${esc(sourceOf(behalten.id).name)}</b>. `
-          : `Ab der nächsten Aktualisierung nutzt die Vorhersage deshalb <b>${
-              esc(sourceOf(behalten.id).name)}</b>. `)
-        + `Gewechselt wird erst, wenn ein anderes Modell klar vorne liegt.`
-      : `Die Quelle „Lernend" würde zurzeit ${esc(sourceOf(behalten.id).name)} wählen — `
-        + `einstellbar unter der Stundenleiste.`}</p>`;
-  renderSource();          // Fußzeile unter der Stundenleiste nachziehen
+    <p class="rm-text">Über so wenige Tage ist die Reihenfolge nicht belastbar —
+      sie kann nächste Woche anders aussehen. Aussagekräftiger ist ein Versatz,
+      der immer in dieselbe Richtung zeigt: Der kommt von der Lage des Ortes und
+      bleibt. Die Vorhersage oben wird davon nicht umgestellt.</p>`;
 }
 
 /** Ab wann ist eine Abweichung schlimm? Ein Grad merkt niemand, drei schon. */
