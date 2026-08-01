@@ -26,6 +26,7 @@
 
 import { sendPush } from './push.js';
 import { sonnenTermine, mondTermine, mondPhase } from './himmel.js';
+import { uebersicht } from './uebersicht.js';
 
 // Nur diese Absender dürfen den Worker nutzen.
 const ALLOWED_ORIGINS = [
@@ -63,6 +64,20 @@ export default {
     if (request.method === 'OPTIONS') {
       return new Response(null, { status: 204, headers: cors(origin) });
     }
+
+    /* ── Übersicht der angemeldeten Geräte ────────────────────
+       Eigene Adresse, nirgends verlinkt, hinter einem Kennwort. Bewusst
+       NICHT in der App: Wer Regenmeldungen einschaltet, soll nicht das
+       Gefühl haben, beobachtet zu werden. Hier steht nichts, was der
+       Worker nicht ohnehin braucht, um die Meldung zu verschicken.
+
+       Diese Seite läuft vor der Absenderprüfung, weil sie als eigene Seite
+       aufgerufen wird und nicht aus der App heraus. Ihr Schutz ist das
+       Kennwort, nicht die Herkunft. */
+    if (url.pathname.startsWith('/uebersicht')) {
+      return uebersicht(url, request, env, { gleich, zuVieleAnfragen });
+    }
+
     /* Absender MUSS bekannt sein — auch wenn gar keiner mitgeschickt wird.
        Vorher stand hier `if (origin && …)`: Fehlt der Kopf ganz, griff die
        Prüfung nicht. Browser senden ihn immer, Skripte und curl nicht — damit
@@ -396,7 +411,7 @@ export default {
       // der letzten Meldung übernehmen, sonst käme sofort wieder eine.
       const key = aboSchluessel(abo.endpoint);
       const alt = await env.WF_PUSH.get(key, 'json');
-      await env.WF_PUSH.put(key, JSON.stringify({
+      const neu = {
         abo, lat, lon,
         ort: String(ort || '').slice(0, 60),
         kreis: String(kreis || '').slice(0, 80),
@@ -425,8 +440,23 @@ export default {
         gemeldet: alt?.gemeldet || null,
         warnGemeldet: alt?.warnGemeldet || [],
         himmelGemeldet: alt?.himmelGemeldet || []
-      }));
-      return json({ ok: true }, 200, origin);
+      };
+
+      /* Die App meldet ihren Standort bei JEDEM Öffnen nach — damit ein
+         Ortswechsel nicht erst beim nächsten Ein- und Ausschalten ankommt.
+         Bis hierher wurde dabei jedes Mal geschrieben: Ein Blick in die App
+         kostete einen Schreibvorgang, und davon gibt der kostenlose Tarif
+         tausend am Tag her. Geschrieben wird deshalb nur noch, wenn sich
+         wirklich etwas geändert hat. */
+      const unveraendert = alt
+        && alt.lat === neu.lat && alt.lon === neu.lon
+        && alt.ort === neu.ort && alt.kreis === neu.kreis && alt.tz === neu.tz
+        && (alt.geraet || '') === (neu.geraet || '')
+        && alt.abo?.endpoint === abo.endpoint
+        && JSON.stringify(alt.arten || {}) === JSON.stringify(neu.arten);
+
+      if (!unveraendert) await env.WF_PUSH.put(key, JSON.stringify(neu));
+      return json({ ok: true, geschrieben: !unveraendert }, 200, origin);
     }
 
     if (url.pathname === '/push/aus' && request.method === 'POST') {
@@ -1124,15 +1154,28 @@ function json(obj, status, origin, cache) {
    Für alles, was Geld kostet oder den privaten Mac belastet. Gezählt wird je
    Absenderadresse in Zeitfenstern; ohne das könnte ein Skript in Minuten das
    Guthaben leerlaufen lassen oder Kennwörter durchprobieren. */
+/* Der Zähler lag früher im Schlüsselspeicher. Damit war JEDE gezählte
+   Anfrage ein Schreibvorgang — und davon erlaubt der kostenlose Tarif nur
+   tausend am Tag. Ein einziger Nachmittag Ausprobieren brachte die Hälfte
+   davon zusammen und hätte am Abend die Regenmeldungen lahmgelegt.
+
+   Der Zwischenspeicher von Cloudflare zählt genauso gut und zählt gegen
+   kein Kontingent. Er wird je Rechenzentrum getrennt gehalten, die Grenze
+   wirkt also etwas großzügiger als angegeben. Für den Zweck — Missbrauch
+   bremsen, nicht exakt abrechnen — genügt das. */
 async function zuVieleAnfragen(env, request, bereich, grenze, fensterSek) {
   const ip = request.headers.get('cf-connecting-ip') || 'unbekannt';
   const fenster = Math.floor(Date.now() / (fensterSek * 1000));
-  const key = `rl:${bereich}:${fenster}:${ip}`;
+  const key = new Request(
+    `https://zaehler.wetterfunk/${bereich}/${fenster}/${encodeURIComponent(ip)}`);
   try {
-    const stand = Number(await env.WF_PUSH.get(key)) || 0;
+    const cache = caches.default;
+    const alt = await cache.match(key);
+    const stand = alt ? (Number(await alt.text()) || 0) : 0;
     if (stand >= grenze) return true;
-    // Der Eintrag verfällt von selbst — kein Aufräumen nötig
-    await env.WF_PUSH.put(key, String(stand + 1), { expirationTtl: Math.max(60, fensterSek * 2) });
+    await cache.put(key, new Response(String(stand + 1), {
+      headers: { 'cache-control': `max-age=${Math.max(60, fensterSek)}` }
+    }));
     return false;
   } catch {
     return false;        // Zähler kaputt? Dann lieber durchlassen als sperren
