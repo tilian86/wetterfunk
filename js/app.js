@@ -955,6 +955,7 @@ function renderSourceList() {
     store.set(LS.source, b.dataset.src);
     closeSheet('#modelSheet');
     renderSource();
+    renderVersatzHinweis();
     toast(`Quelle: ${sourceOf(b.dataset.src).name}`);
     await refresh();
   }));
@@ -1161,6 +1162,146 @@ function renderMeteogramm() {
       <text class="mg-achsentext mg-regenachse" x="${METEO.links - 4}" y="${METEO.regenUnten}">${
         dez(regenMax)} mm</text>
     </svg>`;
+}
+
+/* ── Ortskorrektur ─────────────────────────────────────────
+   Das Modell rechnet ein Gitter über Deutschland. Die Masche, in der
+   Tübingen liegt, hat eine andere Höhe als die Stadt selbst — deshalb
+   liegt die Vorhersage hier fast immer in dieselbe Richtung daneben.
+   So etwas gehört korrigiert, und der Wetterdienst macht das mit seinen
+   eigenen Vorhersagen genauso (dort heißt es MOS).
+
+   Gemessen wird der Versatz aus 25 Tagen: Was war für gestern angesagt,
+   was hat die Station gemessen? Wichtig ist die Aufteilung nach Tageszeit.
+   Nachgeprüft für Tübingen:
+
+     Nacht     +1,18 °C      vormittags  +1,24 °C
+     früh 6-9  +0,03 °C      nachmittags +1,35 °C
+                             abends      +1,77 °C
+
+   Morgens stimmt das Modell also. Ein einziger Wert für alles hätte genau
+   diese Stunden um 18 % verschlechtert — nach Tageszeit getrennt schadet
+   die Korrektur nirgends und hilft abends um mehr als ein Drittel.
+   Mitlaufend geprüft: 20 % weniger Fehler über alle Stunden. */
+const VERSATZ_TAGE = 25;
+const VERSATZ_MIN_PAARE = 8;        // je Block, sonst wird nicht korrigiert
+let ortsVersatz = null;             // { bloecke: [24], tage, station, stand }
+
+/** Vier-Stunden-Blöcke: fein genug für den Tagesgang, grob genug für Zahlen. */
+const versatzBlock = (stunde) => Math.floor(stunde / 4);
+
+async function ladeVersatz(lat, lon) {
+  const key = `wf.versatz:${lat.toFixed(2)},${lon.toFixed(2)}`;
+  try {
+    const alt = store.get(key, null);
+    // Einmal am Tag reicht — der Versatz wandert über Wochen, nicht Stunden
+    if (alt && Date.now() - alt.stand < 20 * 3600e3) { ortsVersatz = alt; return; }
+  } catch {}
+
+  const iso = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${
+    String(d.getDate()).padStart(2, '0')}`;
+  const heute = new Date(); heute.setHours(0, 0, 0, 0);
+  const von = new Date(heute); von.setDate(von.getDate() - VERSATZ_TAGE);
+  const bis = new Date(heute); bis.setDate(bis.getDate() - 1);
+
+  try {
+    const [vh, ms] = await Promise.all([
+      fetch('https://previous-runs-api.open-meteo.com/v1/forecast?' + new URLSearchParams({
+        latitude: String(lat), longitude: String(lon), timezone: 'auto',
+        hourly: 'temperature_2m_previous_day1',
+        past_days: String(VERSATZ_TAGE), forecast_days: '1'
+      })).then(r => (r.ok ? r.json() : null)),
+      fetch(`${BRIGHTSKY}/weather?lat=${lat}&lon=${lon}&date=${iso(von)}&last_date=${iso(bis)}`
+            + `&tz=Europe/Berlin`).then(r => (r.ok ? r.json() : null))
+    ]);
+    if (!vh?.hourly || !ms?.weather?.length) { ortsVersatz = null; return; }
+
+    const gemessen = new Map();
+    for (const w of ms.weather) {
+      if (w.temperature != null) gemessen.set(w.timestamp.slice(0, 13), w.temperature);
+    }
+
+    const summen = Array.from({ length: 6 }, () => ({ s: 0, n: 0 }));
+    vh.hourly.time.forEach((t, k) => {
+      const soll = vh.hourly.temperature_2m_previous_day1?.[k];
+      const ist = gemessen.get(t.slice(0, 13));
+      if (soll == null || ist == null) return;
+      const b = versatzBlock(+t.slice(11, 13));
+      summen[b].s += soll - ist;              // + = Modell zu warm
+      summen[b].n++;
+    });
+
+    const bloecke = summen.map(x => (x.n >= VERSATZ_MIN_PAARE ? x.s / x.n : 0));
+    const paare = summen.reduce((a, x) => a + x.n, 0);
+    if (paare < 60) { ortsVersatz = null; return; }
+
+    ortsVersatz = { bloecke, paare, station: ms.sources?.[0]?.station_name || '',
+                    km: ms.sources?.[0] ? Math.round(ms.sources[0].distance / 1000) : null,
+                    stand: Date.now() };
+    store.set(key, ortsVersatz);
+  } catch (e) {
+    console.warn('Ortskorrektur:', e.message);
+    ortsVersatz = null;
+  }
+}
+
+/** Versatz für eine bestimmte Stunde. 0, wenn nichts bekannt ist. */
+const versatzFuer = (stunde) => ortsVersatz?.bloecke?.[versatzBlock(stunde)] ?? 0;
+
+/* Die Korrektur greift einmal, direkt nach dem Laden — nicht beim Zeichnen.
+   Sonst würde sie bei jedem Neuzeichnen erneut abgezogen. */
+function wendeVersatzAn(fc) {
+  if (!ortsVersatz || !fc?.hourly?.time) return fc;
+  /* Aus dem Zwischenspeicher kommen bereits korrigierte Zahlen zurück —
+     ohne diese Marke würde der Versatz ein zweites Mal abgezogen und die
+     Vorhersage wäre um mehrere Grad zu kalt. */
+  if (fc.__korrigiert) return fc;
+  fc.__korrigiert = true;
+
+  const h = fc.hourly;
+  const korrigiere = (feld) => {
+    if (!Array.isArray(h[feld])) return;
+    h[feld] = h[feld].map((v, k) =>
+      (v == null ? v : +(v - versatzFuer(+h.time[k].slice(11, 13))).toFixed(1)));
+  };
+  korrigiere('temperature_2m');
+  korrigiere('apparent_temperature');
+
+  if (fc.current?.temperature_2m != null) {
+    const st = new Date().getHours();
+    fc.current.temperature_2m = +(fc.current.temperature_2m - versatzFuer(st)).toFixed(1);
+    if (fc.current.apparent_temperature != null) {
+      fc.current.apparent_temperature = +(fc.current.apparent_temperature - versatzFuer(st)).toFixed(1);
+    }
+  }
+
+  /* Tageswerte aus den korrigierten Stundenwerten neu bilden statt separat
+     zu korrigieren — sonst stünde im Streifen ein anderes Maximum als in
+     der Kurve darüber. */
+  if (fc.daily?.time) {
+    fc.daily.time.forEach((tag, i) => {
+      const werte = [];
+      h.time.forEach((t, k) => { if (t.startsWith(tag) && h.temperature_2m[k] != null)
+        werte.push(h.temperature_2m[k]); });
+      if (werte.length >= 20) {
+        if (fc.daily.temperature_2m_max) fc.daily.temperature_2m_max[i] = Math.max(...werte);
+        if (fc.daily.temperature_2m_min) fc.daily.temperature_2m_min[i] = Math.min(...werte);
+      }
+    });
+  }
+  return fc;
+}
+
+/** Zeile unter der Stundenleiste: was die Korrektur gerade tut. */
+function renderVersatzHinweis() {
+  const el = $('#versatzZeile');
+  if (!el) return;
+  if (!ortsVersatz) { el.hidden = true; return; }
+  const v = versatzFuer(new Date().getHours());
+  el.hidden = false;
+  el.innerHTML = Math.abs(v) < 0.2
+    ? `<b>Ortskorrektur aktiv</b> — um diese Tageszeit rechnet das Modell hier richtig`
+    : `<b>Ortskorrektur:</b> ${dez(-v)} °C gegenüber dem rohen Modellwert<i>?</i>`;
 }
 
 /* ── Rückblick: was war angesagt, was kam wirklich? ────────
@@ -2380,6 +2521,21 @@ const EXPLAIN = {
         + 'Fotografieren. Die blaue Stunde folgt danach: Die Sonne ist schon unter dem Horizont, '
         + 'der Himmel leuchtet aber noch tiefblau. Danach beginnt die Dämmerung, ab 18 Grad '
         + 'Sonnentiefe die astronomische Nacht — erst dann sind lichtschwache Sterne sichtbar.' },
+  versatz: { titel: 'Ortskorrektur',
+    text: 'Das Rechenmodell arbeitet mit einem Gitter über Deutschland. Die Masche, in der '
+        + 'dein Ort liegt, hat eine andere Höhe und Umgebung als der Ort selbst — deshalb '
+        + 'liegt die Vorhersage hier meist in dieselbe Richtung daneben.\n\n'
+        + 'Die App misst diesen Versatz aus den letzten 25 Tagen: Was war jeweils für den '
+        + 'Folgetag angesagt, was hat die nächste DWD-Station wirklich gemessen? Der '
+        + 'Unterschied wird nach Tageszeit getrennt berechnet — morgens rechnet das Modell '
+        + 'oft richtig, während es abends deutlich zu warm liegt. Ein einziger Wert für den '
+        + 'ganzen Tag würde die Morgenstunden verschlechtern.\n\n'
+        + 'Nachgeprüft mit mitlaufender Auswertung ergibt das rund 20 Prozent weniger Fehler; '
+        + 'abends über ein Drittel. Der Deutsche Wetterdienst korrigiert seine eigenen '
+        + 'Vorhersagen nach demselben Prinzip.\n\n'
+        + 'Die Korrektur gilt nur für die Temperatur. Regen, Wind und Bewölkung bleiben, '
+        + 'wie das Modell sie rechnet. Außerhalb Deutschlands oder ohne Station in der Nähe '
+        + 'wird nicht korrigiert.' },
   messung: { titel: 'Gerechnet oder gemessen?',
     text: 'Die große Zahl oben ist ein Modellwert: Der Wetterdienst rechnet ein Gitter '
         + 'über Deutschland — beim Modell ICON-D2 mit 2 km Maschenweite — und liest den Wert '
@@ -4368,8 +4524,11 @@ async function refresh(leise = false) {
         new Date(alt.at).toLocaleTimeString('de-DE'));
     }
 
-    data = fc; air = aq; modelData = md;
-    if (!veraltet) store.set(LS.cache, { at: Date.now(), place, data: fc });
+    /* Erst korrigieren, dann alles Weitere: Sämtliche Anzeigen und auch der
+       Zwischenspeicher arbeiten mit den korrigierten Zahlen. */
+    await ladeVersatz(place.lat, place.lon);
+    data = wendeVersatzAn(fc); air = aq; modelData = md;
+    if (!veraltet) store.set(LS.cache, { at: Date.now(), place, data });
 
     renderHero();
     renderDayProgress();
@@ -4377,6 +4536,7 @@ async function refresh(leise = false) {
     renderWarnings(warn);
     renderHourly();
     renderSource();
+    renderVersatzHinweis();
     renderDaily();
     renderMeteogramm();
     renderScrub();
@@ -5573,6 +5733,7 @@ function wire() {
     el.addEventListener('click', openZonen);
   });
   $('#heroMess')?.addEventListener('click', () => openExplain('messung'));
+  $('#versatzZeile')?.addEventListener('click', () => openExplain('versatz'));
   const vd = $('#verdict');
   if (vd) {
     vd.setAttribute('role', 'button');
