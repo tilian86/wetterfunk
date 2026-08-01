@@ -30,7 +30,7 @@ const KOPF = {
 const sauber = (s, max) => String(s || '')
   .replace(/[\u0000-\u001f\u007f]/g, '').trim().slice(0, max);
 
-export async function uebersicht(url, request, env, { gleich, zuVieleAnfragen }) {
+export async function uebersicht(url, request, env, { gleich, zuVieleAnfragen, sendPush }) {
   if (!env.ADMIN_PASSWORT) {
     return new Response('Kennwort ist nicht eingerichtet.\n\n'
       + 'Einmalig setzen mit:  wrangler secret put ADMIN_PASSWORT\n',
@@ -70,6 +70,35 @@ export async function uebersicht(url, request, env, { gleich, zuVieleAnfragen })
     e.geraet = sauber(req.notiz, 40);
     await env.WF_PUSH.put(key, JSON.stringify(e));
     return antwort({ ok: true, notiz: e.geraet });
+  }
+
+  /* Eine Nachricht von Hand an ein einzelnes Gerät. Wer Meldungen
+     eingeschaltet hat, erwartet Wetter — deshalb steht „Wetterfunk" im
+     Titel, wenn keiner angegeben wird, damit niemand rätselt, woher die
+     Nachricht kommt. */
+  if (url.pathname === '/uebersicht/senden') {
+    const key = String(req.key || '');
+    if (!key.startsWith('abo:')) return antwort({ error: 'Unbekannter Eintrag' }, 400);
+    const text = sauber(req.text, 180);
+    if (!text) return antwort({ error: 'Kein Text' }, 400);
+    const e = await env.WF_PUSH.get(key, 'json');
+    if (!e?.abo) return antwort({ error: 'Eintrag gibt es nicht mehr' }, 404);
+
+    const status = await sendPush(e.abo, JSON.stringify({
+      titel: sauber(req.titel, 60) || 'Wetterfunk',
+      text,
+      art: 'hinweis',
+      // Eigene Kennung je Nachricht, sonst ersetzt die neue die vorige
+      tag: `wf-hinweis-${Date.now()}`
+    }), env);
+
+    // 404/410 heißt: Das Gerät hat das Abo verworfen
+    if (status === 404 || status === 410) {
+      await env.WF_PUSH.delete(key);
+      return antwort({ error: 'Gerät ist nicht mehr angemeldet — Eintrag entfernt' }, 410);
+    }
+    if (status >= 300) return antwort({ error: `Push-Dienst antwortet ${status}` }, 502);
+    return antwort({ ok: true });
   }
 
   if (url.pathname !== '/uebersicht/daten') return antwort({ error: 'Nicht gefunden' }, 404);
@@ -145,6 +174,12 @@ const SEITE = `<!doctype html>
   .marke.gps { background: rgba(255,159,106,.18); color: #ff9f6a; }
   .notiz { display: flex; gap: 8px; align-items: center; }
   .notiz input { flex: 1; }
+  .senden { margin-top: 10px; padding-top: 12px; border-top: 1px solid rgba(255,255,255,.1); }
+  .senden .zeile { display: flex; gap: 8px; margin-top: 8px; }
+  .senden .zeile input { flex: 1; }
+  .senden > span { color: #8fa3bb; font-size: 12px; }
+  .senden .fertig { color: #7fdca4; font-size: 12px; margin-top: 6px; min-height: 16px; }
+  .aus { opacity: .55; }
   .hinweis { color: #8fa3bb; font-size: 12px; line-height: 1.55; margin-top: 24px;
     border-top: 1px solid rgba(255,255,255,.1); padding-top: 14px; }
 </style>
@@ -238,7 +273,41 @@ function zeichne(d) {
     };
     notiz.append(feld, knopf);
 
-    k.append(kopf, dl, notiz);
+    // Nachricht von Hand an genau dieses Gerät
+    const senden = document.createElement('div');
+    senden.className = 'senden';
+    const lab = document.createElement('span');
+    lab.textContent = 'Nachricht an dieses Gerät';
+    const z1 = document.createElement('div'); z1.className = 'zeile';
+    const titel = document.createElement('input');
+    titel.placeholder = 'Titel (sonst „Wetterfunk")'; titel.maxLength = 60;
+    z1.append(titel);
+    const z2 = document.createElement('div'); z2.className = 'zeile';
+    const txt = document.createElement('input');
+    txt.placeholder = 'Text'; txt.maxLength = 180;
+    const ab = document.createElement('button');
+    ab.className = 'klein'; ab.textContent = 'Senden';
+    z2.append(txt, ab);
+    const fertig = document.createElement('p');
+    fertig.className = 'fertig';
+    ab.onclick = async () => {
+      if (!txt.value.trim()) { fertig.textContent = 'Text fehlt.'; return; }
+      ab.disabled = true; fertig.textContent = 'unterwegs…';
+      try {
+        await ruf('/uebersicht/senden', { key: g.key, titel: titel.value, text: txt.value });
+        fertig.textContent = 'Zugestellt.';
+        txt.value = ''; titel.value = '';
+      } catch (e) {
+        fertig.textContent = e.message;
+        if (/nicht mehr angemeldet/.test(e.message)) k.classList.add('aus');
+      } finally {
+        ab.disabled = false;
+        setTimeout(() => { fertig.textContent = ''; }, 6000);
+      }
+    };
+    senden.append(lab, z1, z2, fertig);
+
+    k.append(kopf, dl, notiz, senden);
     box.append(k);
   });
 
