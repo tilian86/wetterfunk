@@ -1953,22 +1953,34 @@ body.map-full > *:not(.card-radar):not(.sky):not(.topbar):not(.toast) { visibili
 .card-radar.is-full .slider-wrap {
   position: absolute; z-index: 20; left: 12px; right: 12px;
 }
-/* Unten genug Luft lassen: Die Beschriftung der Tage hängt unter dem Regler
-   und wurde vom Bildschirmrand abgeschnitten. */
+/* Eine Leiste statt zwei schwebender Teile: Abspielknopf, Zeit und Regler
+   sitzen zusammen in einem dunklen Feld. Vorher lag der Regler nackt auf der
+   hellen Karte — die Bahn war unsichtbar, man sah nur den Knopf irgendwo
+   schweben und die Tage am Bildschirmrand. */
 .card-radar.is-full .zeit-ctrl {
-  bottom: calc(var(--sab) + 76px); margin: 0;
-  background: rgba(10,16,26,.72); backdrop-filter: blur(12px);
-  -webkit-backdrop-filter: blur(12px);
-  border-radius: 30px; padding: 7px 14px 7px 7px;
+  bottom: calc(var(--sab) + 12px); margin: 0;
+  background: rgba(10,16,26,.82); backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+  border-radius: 22px; padding: 8px 14px 34px 8px;
+  display: flex; align-items: center; gap: 12px;
 }
-.card-radar.is-full .slider-wrap { bottom: calc(var(--sab) + 40px); width: auto; margin: 0; }
-.card-radar.is-full .slider-ticks {
-  filter: drop-shadow(0 1px 3px rgba(0,0,0,.85));
+/* Der Regler liegt in derselben Leiste, unterhalb der Zeitangabe */
+.card-radar.is-full .slider-wrap {
+  position: absolute; left: 26px; right: 26px;
+  bottom: calc(var(--sab) + 30px); width: auto; margin: 0; z-index: 21;
 }
-/* Die Marken auf hellem Kartengrund lesbar halten */
+.card-radar.is-full .slider-ticks { height: 12px; }
 .card-radar.is-full .tick-day::after,
-.card-radar.is-full .tick-now::after { color: #fff; font-weight: 700; }
-.card-radar.is-full .tick-day { background: rgba(255,255,255,.7); }
+.card-radar.is-full .tick-now::after { color: #fff; font-weight: 700; font-size: 8.5px; }
+.card-radar.is-full .tick-day { background: rgba(255,255,255,.5); }
+.card-radar.is-full .tick-fine { top: -8px; height: 9px; }
+/* Bahn sichtbar machen — auf hellem Kartengrund ging sie unter */
+.card-radar.is-full #scrubSlider::-webkit-slider-runnable-track {
+  background: rgba(255,255,255,.3);
+}
+.card-radar.is-full #scrubSlider::-moz-range-track {
+  background: rgba(255,255,255,.3);
+}
 
 /* Rechte Knopfreihe über den Reglern, Legende darüber */
 .card-radar.is-full .radar-full { bottom: auto; top: calc(var(--sat) + 56px); }
@@ -2622,3 +2634,25 @@ body.ar-offen { overflow: hidden; }
   padding: 0 4px; border-radius: 8px;
   background: rgba(108,198,255,.2); color: var(--accent); font-size: 9px;
 }
+/* Restzeit unter der kleinen Ringuhr — der Balken zeigt sie nicht mehr */
+.hero-uhr { height: auto; min-height: 76px; padding-bottom: 16px; }
+.hu-rest {
+  position: absolute; left: 50%; bottom: 0; transform: translateX(-50%);
+  white-space: nowrap; font-size: 10.5px; color: var(--ink-faint);
+}
+.hu-mitte { bottom: 16px; }
+
+/* Laufender Abschnitt im Tagesblatt */
+.ds-span.ist-jetzt {
+  background: rgba(108,198,255,.13);
+  border: 1px solid rgba(108,198,255,.38);
+}
+.ds-span b em {
+  font-style: normal; margin-left: 8px; padding: 1px 7px;
+  border-radius: 20px; background: rgba(108,198,255,.24);
+  color: var(--accent); font-size: 10px; font-weight: 700;
+  letter-spacing: .04em; text-transform: uppercase;
+}
+.hero { cursor: pointer; }
+.hero:active .hero-temp { opacity: .75; }
+.bf-set { display: block; margin-bottom: 10px; }

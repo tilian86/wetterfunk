@@ -36,10 +36,10 @@
 <meta name="theme-color" content="#0b1220">
 <link rel="apple-touch-icon" href="icons/icon-180.png">
 <link rel="icon" href="icons/icon-192.png">
-<link rel="manifest" href="manifest.webmanifest?v=120">
+<link rel="manifest" href="manifest.webmanifest?v=123">
 
-<link rel="stylesheet" href="vendor/maplibre-gl.css?v=120">
-<link rel="stylesheet" href="css/style.css?v=120">
+<link rel="stylesheet" href="vendor/maplibre-gl.css?v=123">
+<link rel="stylesheet" href="css/style.css?v=123">
 </head>
 <body>
 
@@ -259,62 +259,21 @@
     </div>
   </div>
 
-  <!-- ══ HIMMELSEREIGNISSE ══ -->
-  <section class="card card-sky" hidden>
-    <div class="card-head">
-      <h2>Am Himmel</h2>
-      <span class="card-sub">demnächst</span>
-    </div>
-    <div id="sky-events"></div>
-  </section>
-
-  <!-- ══ AMTLICHER REGIONALBERICHT (DWD) ══ -->
-  <section class="card card-dwd" id="dwdCard" hidden>
-    <div class="card-head">
-      <h2>Amtlicher Bericht</h2>
-      <span class="card-sub" id="dwdRegion"></span>
-    </div>
-    <div class="dwd-text" id="dwdText"></div>
-    <div class="dwd-row">
-      <button class="bf-speak" id="dwdSpeak">
-        <svg viewBox="0 0 24 24" class="ico-speak"><path d="M11 5 6 9H3v6h3l5 4V5z"/><path d="M16.5 8.5a5 5 0 0 1 0 7"/><path d="M19.5 5.5a9 9 0 0 1 0 13"/></svg>
-        <svg viewBox="0 0 24 24" class="ico-stop"><rect x="6" y="6" width="12" height="12" rx="2.5"/></svg>
-        <span data-ruhe="Vorlesen">Vorlesen</span>
-      </button>
-      <button class="dwd-more" id="dwdMore" hidden>Ganzer Bericht</button>
-    </div>
-    <div class="bf-voice" id="dwdVoiceBar"></div>
-    <p class="dwd-foot" id="dwdFoot"></p>
-  </section>
-
-  <!-- ══ GESPROCHENER BERICHT ══ -->
-  <section class="card card-brief">
-    <div class="card-head">
-      <h2>Wetterbericht</h2>
-      <button class="link-btn" id="bfSettings">⚙︎ Einstellungen</button>
-    </div>
-    <p class="card-note">Was soll drin vorkommen? Der Bericht startet immer beim jetzigen Zeitpunkt.</p>
-    <div class="chips" id="bfParts"></div>
-    <div class="chips chips-len" id="bfLen"></div>
-    <button class="bf-go" id="bfGo">
-      <svg viewBox="0 0 24 24"><path d="M12 3v10.5"/><path d="M8.5 10 12 13.5 15.5 10"/><path d="M4 15v3.5A1.5 1.5 0 0 0 5.5 20h13a1.5 1.5 0 0 0 1.5-1.5V15"/></svg>
-      <span id="bfGoLabel">Bericht erstellen</span>
-    </button>
-    <div id="bfResult" class="bf-result"></div>
-  </section>
-
-  <!-- ══ WEBCAMS (ausklappbar) ══
-       Bilder sind schön, machen die Seite aber lang. Zugeklappt bleibt die
-       Karte eine Zeile; wer hinsehen will, tippt sie auf. -->
-  <section class="card card-cams" id="camsCard">
-    <button class="card-head klapp-kopf" id="camsKopf" aria-expanded="false" aria-controls="camsBody">
-      <h2>Webcams</h2>
-      <span class="klapp-sub" id="camsAnzahl"></span>
+  <!-- ══ MODELLVERGLEICH ══ -->
+  <section class="card card-modelle">
+    <button class="card-head klapp-kopf" id="modelKopf" aria-expanded="false" aria-controls="modelBody">
+      <h2>Wettermodelle</h2>
+      <span class="klapp-sub" id="modelAgree"></span>
       <svg class="klapp-pfeil" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 9l6 6 6-6"/></svg>
     </button>
-    <div class="klapp-body" id="camsBody" hidden>
-      <div class="cams" id="cams"></div>
-      <button class="link-btn cams-add" id="camAddBtn">＋ Webcam hinzufügen</button>
+    <div class="klapp-body" id="modelBody" hidden>
+    <p class="card-note" id="modelNote">Vier Rechenmodelle, ein Tag — sagen sie dasselbe
+      Wetter voraus? Wo sie sich widersprechen, ist die Vorhersage mit Vorsicht zu genießen.</p>
+    <div class="modell-tage" id="modelTage"></div>
+    <p class="card-note mt-hinweis">Temperaturverlauf der Modelle im Vergleich — das Band zeigt
+      die Spannweite; je schmaler, desto verlässlicher:</p>
+    <div class="model-chart" id="modelChart"></div>
+    <div class="model-legend" id="modelLegend"></div>
     </div>
   </section>
 
@@ -333,21 +292,70 @@
     </div>
   </section>
 
-  <!-- ══ MODELLVERGLEICH ══ -->
-  <section class="card card-modelle">
-    <button class="card-head klapp-kopf" id="modelKopf" aria-expanded="false" aria-controls="modelBody">
-      <h2>Wettermodelle</h2>
-      <span class="klapp-sub" id="modelAgree"></span>
+  <!-- ══ AMTLICHER REGIONALBERICHT (DWD) ══ -->
+  <section class="card card-dwd" id="dwdCard" hidden>
+    <button class="card-head klapp-kopf" id="dwdKopf" aria-expanded="false" aria-controls="dwdBody">
+      <h2>Amtlicher Bericht</h2>
+      <span class="klapp-sub" id="dwdRegion"></span>
       <svg class="klapp-pfeil" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 9l6 6 6-6"/></svg>
     </button>
-    <div class="klapp-body" id="modelBody" hidden>
-    <p class="card-note" id="modelNote">Vier Rechenmodelle, ein Tag — sagen sie dasselbe
-      Wetter voraus? Wo sie sich widersprechen, ist die Vorhersage mit Vorsicht zu genießen.</p>
-    <div class="modell-tage" id="modelTage"></div>
-    <p class="card-note mt-hinweis">Temperaturverlauf der Modelle im Vergleich — das Band zeigt
-      die Spannweite; je schmaler, desto verlässlicher:</p>
-    <div class="model-chart" id="modelChart"></div>
-    <div class="model-legend" id="modelLegend"></div>
+    <div class="klapp-body" id="dwdBody" hidden>
+    <div class="dwd-text" id="dwdText"></div>
+    <div class="dwd-row">
+      <button class="bf-speak" id="dwdSpeak">
+        <svg viewBox="0 0 24 24" class="ico-speak"><path d="M11 5 6 9H3v6h3l5 4V5z"/><path d="M16.5 8.5a5 5 0 0 1 0 7"/><path d="M19.5 5.5a9 9 0 0 1 0 13"/></svg>
+        <svg viewBox="0 0 24 24" class="ico-stop"><rect x="6" y="6" width="12" height="12" rx="2.5"/></svg>
+        <span data-ruhe="Vorlesen">Vorlesen</span>
+      </button>
+      <button class="dwd-more" id="dwdMore" hidden>Ganzer Bericht</button>
+    </div>
+    <div class="bf-voice" id="dwdVoiceBar"></div>
+    <p class="dwd-foot" id="dwdFoot"></p>
+    </div>
+  </section>
+
+  <!-- ══ GESPROCHENER BERICHT ══ -->
+  <section class="card card-brief">
+    <button class="card-head klapp-kopf" id="briefKopf" aria-expanded="false" aria-controls="briefBody">
+      <h2>Wetterbericht</h2>
+      <span class="klapp-sub">selbst erstellen, vorlesen lassen</span>
+      <svg class="klapp-pfeil" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 9l6 6 6-6"/></svg>
+    </button>
+    <div class="klapp-body" id="briefBody" hidden>
+    <button class="link-btn bf-set" id="bfSettings">⚙︎ Einstellungen</button>
+    <p class="card-note">Was soll drin vorkommen? Der Bericht startet immer beim jetzigen Zeitpunkt.</p>
+    <div class="chips" id="bfParts"></div>
+    <div class="chips chips-len" id="bfLen"></div>
+    <button class="bf-go" id="bfGo">
+      <svg viewBox="0 0 24 24"><path d="M12 3v10.5"/><path d="M8.5 10 12 13.5 15.5 10"/><path d="M4 15v3.5A1.5 1.5 0 0 0 5.5 20h13a1.5 1.5 0 0 0 1.5-1.5V15"/></svg>
+      <span id="bfGoLabel">Bericht erstellen</span>
+    </button>
+    <div id="bfResult" class="bf-result"></div>
+    </div>
+  </section>
+
+  <!-- ══ HIMMELSEREIGNISSE ══ -->
+  <section class="card card-sky" hidden>
+    <button class="card-head klapp-kopf" id="skyKopf" aria-expanded="false" aria-controls="skyBody">
+      <h2>Am Himmel</h2>
+      <span class="klapp-sub">Finsternisse, Sternschnuppen, Planeten</span>
+      <svg class="klapp-pfeil" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 9l6 6 6-6"/></svg>
+    </button>
+    <div class="klapp-body" id="skyBody" hidden><div id="sky-events"></div></div>
+  </section>
+
+  <!-- ══ WEBCAMS (ausklappbar) ══
+       Bilder sind schön, machen die Seite aber lang. Zugeklappt bleibt die
+       Karte eine Zeile; wer hinsehen will, tippt sie auf. -->
+  <section class="card card-cams" id="camsCard">
+    <button class="card-head klapp-kopf" id="camsKopf" aria-expanded="false" aria-controls="camsBody">
+      <h2>Webcams</h2>
+      <span class="klapp-sub" id="camsAnzahl"></span>
+      <svg class="klapp-pfeil" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 9l6 6 6-6"/></svg>
+    </button>
+    <div class="klapp-body" id="camsBody" hidden>
+      <div class="cams" id="cams"></div>
+      <button class="link-btn cams-add" id="camAddBtn">＋ Webcam hinzufügen</button>
     </div>
   </section>
 
@@ -590,11 +598,11 @@
 
 <div class="toast" id="toast" hidden></div>
 
-<script src="vendor/maplibre-gl.js?v=120"></script>
-<script src="js/icons.js?v=120"></script>
-<script src="js/radar.js?v=120"></script>
-<script src="js/forecast.js?v=120"></script>
-<script src="js/briefing.js?v=120"></script>
-<script src="js/app.js?v=120"></script>
+<script src="vendor/maplibre-gl.js?v=123"></script>
+<script src="js/icons.js?v=123"></script>
+<script src="js/radar.js?v=123"></script>
+<script src="js/forecast.js?v=123"></script>
+<script src="js/briefing.js?v=123"></script>
+<script src="js/app.js?v=123"></script>
 </body>
 </html>
