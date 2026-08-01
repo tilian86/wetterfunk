@@ -1697,10 +1697,16 @@ body.loading .hero-temp, body.loading .hero-desc { opacity: .45; }
 /* Zeitzonen-Liste */
 .tz-liste { display: grid; gap: 1px; }
 .tz-row {
-  display: grid; grid-template-columns: 1fr 18px 46px 52px; gap: 8px;
+  display: grid; grid-template-columns: 1fr 18px auto 46px 52px; gap: 8px;
   align-items: baseline; padding: 7px 0; font-size: 13px;
   border-bottom: 1px solid rgba(255,255,255,.05);
 }
+/* Wetter und Temperatur der Stadt — ein Sonnensymbol allein sagt nur,
+   ob dort Tag ist. */
+.tz-wetter { display: inline-flex; align-items: baseline; gap: 5px; white-space: nowrap; }
+.tz-wetter i { font-style: normal; font-size: 13px; }
+.tz-wetter b { font-size: 12.5px; font-weight: 600; color: var(--ink-dim);
+               font-variant-numeric: tabular-nums; }
 .tz-row.is-here { background: rgba(108,198,255,.07); }
 .tz-row.is-here .tz-ort { font-weight: 700; color: var(--ink); }
 .tz-ort { color: var(--ink-dim); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -2487,9 +2493,14 @@ body.ar-offen { overflow: hidden; }
 /* Tagesstunden als Farbstreifen */
 .rs-tag { margin: 0 0 10px; font-size: 13.5px; line-height: 1.5; color: var(--ink); }
 .rs-tag b { color: var(--accent); }
-.rs-stunden { display: flex; gap: 3px; }
+.rs-stunden { display: flex; gap: 3px; align-items: end; }
 .rs-stunde { flex: 1; display: grid; gap: 3px; }
-.rs-stunde i { height: 22px; border-radius: 3px; display: block; }
+/* b ist die Spur, i der Balken darin — so wächst er von unten */
+.rs-stunde b {
+  display: flex; align-items: flex-end; height: 34px;
+  background: rgba(255,255,255,.045); border-radius: 3px;
+}
+.rs-stunde i { width: 100%; border-radius: 3px; display: block; }
 .rs-stunde em {
   font-style: normal; font-size: 9px; color: var(--ink-faint); text-align: center;
 }
@@ -2603,3 +2614,11 @@ body.ar-offen { overflow: hidden; }
 }
 .hu-mitte b { font-size: 15px; font-weight: 700; color: var(--ink); line-height: 1.05; }
 .hu-mitte i { font-style: normal; font-size: 8.5px; color: var(--ink-faint); }
+/* Zelle mit mehr als zwei Regenfenstern: Rest beim Antippen */
+.mtb td[data-info] { cursor: pointer; }
+.mtb td[data-info]:active { background: rgba(90,200,250,.16); }
+.mtb td i u {
+  display: inline-block; margin-left: 4px; text-decoration: none;
+  padding: 0 4px; border-radius: 8px;
+  background: rgba(108,198,255,.2); color: var(--accent); font-size: 9px;
+}
