@@ -75,7 +75,7 @@ export default {
        aufgerufen wird und nicht aus der App heraus. Ihr Schutz ist das
        Kennwort, nicht die Herkunft. */
     if (url.pathname.startsWith('/uebersicht')) {
-      return uebersicht(url, request, env, { gleich, zuVieleAnfragen });
+      return uebersicht(url, request, env, { gleich, zuVieleAnfragen, sendPush });
     }
 
     /* Absender MUSS bekannt sein — auch wenn gar keiner mitgeschickt wird.
