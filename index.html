@@ -36,10 +36,10 @@
 <meta name="theme-color" content="#0b1220">
 <link rel="apple-touch-icon" href="icons/icon-180.png">
 <link rel="icon" href="icons/icon-192.png">
-<link rel="manifest" href="manifest.webmanifest?v=101">
+<link rel="manifest" href="manifest.webmanifest?v=105">
 
-<link rel="stylesheet" href="vendor/maplibre-gl.css?v=101">
-<link rel="stylesheet" href="css/style.css?v=101">
+<link rel="stylesheet" href="vendor/maplibre-gl.css?v=105">
+<link rel="stylesheet" href="css/style.css?v=105">
 </head>
 <body>
 
@@ -299,33 +299,44 @@
     <div id="bfResult" class="bf-result"></div>
   </section>
 
-  <!-- ══ WEBCAMS ══ -->
-  <section class="card">
-    <div class="card-head">
+  <!-- ══ WEBCAMS (ausklappbar) ══
+       Bilder sind schön, machen die Seite aber lang. Zugeklappt bleibt die
+       Karte eine Zeile; wer hinsehen will, tippt sie auf. -->
+  <section class="card card-cams" id="camsCard">
+    <button class="card-head klapp-kopf" id="camsKopf" aria-expanded="false" aria-controls="camsBody">
       <h2>Webcams</h2>
-      <button class="link-btn" id="camAddBtn">＋ Hinzufügen</button>
+      <span class="klapp-sub" id="camsAnzahl"></span>
+      <svg class="klapp-pfeil" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 9l6 6 6-6"/></svg>
+    </button>
+    <div class="klapp-body" id="camsBody" hidden>
+      <div class="cams" id="cams"></div>
+      <button class="link-btn cams-add" id="camAddBtn">＋ Webcam hinzufügen</button>
     </div>
-    <div class="cams" id="cams"></div>
   </section>
 
   <!-- ══ RÜCKBLICK: Vorhersage gegen Messung ══ -->
   <section class="card card-rueck" id="rueckCard" hidden>
-    <div class="card-head">
+    <button class="card-head klapp-kopf" id="rueckKopf" aria-expanded="false" aria-controls="rueckBody">
       <h2>Wie gut war die Vorhersage?</h2>
-      <span class="card-sub" id="rueckStand"></span>
-    </div>
+      <span class="klapp-sub" id="rueckStand"></span>
+      <svg class="klapp-pfeil" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 9l6 6 6-6"/></svg>
+    </button>
+    <div class="klapp-body" id="rueckBody" hidden>
     <p class="card-note" id="rueckFazit"></p>
     <div class="rueck-modelle" id="rueckModelle"></div>
     <div class="rueck-liste" id="rueckListe"></div>
     <p class="rueck-quelle" id="rueckQuelle"></p>
+    </div>
   </section>
 
   <!-- ══ MODELLVERGLEICH ══ -->
-  <section class="card">
-    <div class="card-head">
+  <section class="card card-modelle">
+    <button class="card-head klapp-kopf" id="modelKopf" aria-expanded="false" aria-controls="modelBody">
       <h2>Wettermodelle</h2>
-      <span class="card-sub" id="modelAgree"></span>
-    </div>
+      <span class="klapp-sub" id="modelAgree"></span>
+      <svg class="klapp-pfeil" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 9l6 6 6-6"/></svg>
+    </button>
+    <div class="klapp-body" id="modelBody" hidden>
     <p class="card-note" id="modelNote">Vier Rechenmodelle, ein Tag — sagen sie dasselbe
       Wetter voraus? Wo sie sich widersprechen, ist die Vorhersage mit Vorsicht zu genießen.</p>
     <div class="modell-tage" id="modelTage"></div>
@@ -333,6 +344,7 @@
       die Spannweite; je schmaler, desto verlässlicher:</p>
     <div class="model-chart" id="modelChart"></div>
     <div class="model-legend" id="modelLegend"></div>
+    </div>
   </section>
 
   <!-- ══ MELDUNGEN AUFS GERÄT ══ -->
@@ -403,20 +415,6 @@
       <button class="link-btn" id="pushTest" hidden>Probemeldung</button>
     </div>
     <p class="push-hint" id="pushHint"></p>
-  </section>
-
-  <!-- ══ NACHRICHTENLAGE ══ -->
-  <section class="card card-news">
-    <div class="card-head">
-      <h2>Nachrichtenlage</h2>
-      <div class="chips chips-len" id="newsCount"></div>
-    </div>
-    <p class="card-note">Das Wichtigste von Tübingen bis weltweit, nach Bedeutung geordnet.</p>
-    <button class="bf-go news-go" id="newsGo">
-      <svg viewBox="0 0 24 24"><path d="M4 5.5h11a1.5 1.5 0 0 1 1.5 1.5v11.5H5.5A1.5 1.5 0 0 1 4 17z"/><path d="M16.5 9.5H19a1 1 0 0 1 1 1V17a1.5 1.5 0 0 1-3 0"/><path d="M7 9h5M7 12h5M7 15h3"/></svg>
-      <span id="newsGoLabel">Nachrichtenlage laden</span>
-    </button>
-    <div id="newsResult" class="news-result"></div>
   </section>
 
   <!-- ══ AUF DEN HOMESCHIRM LEGEN ══
@@ -575,12 +573,11 @@
 
 <div class="toast" id="toast" hidden></div>
 
-<script src="vendor/maplibre-gl.js?v=101"></script>
-<script src="js/icons.js?v=101"></script>
-<script src="js/radar.js?v=101"></script>
-<script src="js/forecast.js?v=101"></script>
-<script src="js/briefing.js?v=101"></script>
-<script src="js/news.js?v=101"></script>
-<script src="js/app.js?v=101"></script>
+<script src="vendor/maplibre-gl.js?v=105"></script>
+<script src="js/icons.js?v=105"></script>
+<script src="js/radar.js?v=105"></script>
+<script src="js/forecast.js?v=105"></script>
+<script src="js/briefing.js?v=105"></script>
+<script src="js/app.js?v=105"></script>
 </body>
 </html>

@@ -682,11 +682,13 @@ function entscheide(lage, eintrag) {
     const frischGemeldet = Date.now() - (alt.wann || 0) < NACHFASSEN_MS;
     if (gleichesEnde && frischGemeldet) return null;
 
+    /* Kurz halten: Der Sperrbildschirm des iPhones zeigt rund zwei Zeilen,
+       alles Weitere wird abgeschnitten. Das Wichtigste gehört nach vorn. */
     return {
       art: 'ende',
-      titel: `Regen hört gegen ${lage.laeuft.endeUhr} Uhr auf`,
-      text: `Noch etwa ${minuten} Minuten${lage.naechste
-        ? `. Danach ab ${lage.naechste.startUhr} Uhr wieder ${lage.naechste.staerke}.` : '.'}`,
+      titel: `Regen hört gegen ${lage.laeuft.endeUhr} auf`,
+      text: `Noch etwa ${minuten} Min.${lage.naechste
+        ? ` · ab ${lage.naechste.startUhr} wieder` : ''}`,
       merker: { art: 'ende', ende: lage.laeuft.ende, wann: Date.now(), regnete: true }
     };
   }
@@ -699,8 +701,8 @@ function entscheide(lage, eintrag) {
       art: 'vorbei',
       titel: 'Regen ist durch',
       text: lage.naechste
-        ? `Trocken. Ab ${lage.naechste.startUhr} Uhr kommt ${lage.naechste.staerke} nach.`
-        : 'Trocken, und in den nächsten Stunden kommt nichts nach.',
+        ? `Trocken · ab ${lage.naechste.startUhr} kommt ${lage.naechste.staerke}`
+        : 'Trocken, es kommt nichts nach',
       merker: { art: 'vorbei', wann: Date.now(), regnete: false }
     };
   }
@@ -731,9 +733,8 @@ function entscheide(lage, eintrag) {
 
   return {
     art: 'start',
-    titel: minuten <= 20 ? `Gleich ${p.staerke}` : `In ${minuten} Minuten ${p.staerke}`,
-    text: `Von ${p.startUhr} bis ${p.endeUhr} Uhr, rund ${p.summe.toFixed(1)} mm.` +
-          (p.danachPause ? ` Danach Pause bis ${p.danachPause}.` : ''),
+    titel: minuten <= 20 ? `Gleich ${p.staerke}` : `In ${minuten} Min. ${p.staerke}`,
+    text: `${p.startUhr}–${p.endeUhr} Uhr · rund ${p.summe.toFixed(1)} mm`,
     merker: { art: 'start', start: p.start, vorlauf: minuten, wann: Date.now(), regnete: false }
   };
 }
@@ -765,7 +766,11 @@ async function regenLage(lat, lon) {
   if (ab < 0) return null;
   const horizont = Math.min(zeiten.length, ab + 24);   // sechs Stunden voraus
 
-  const NASS = 0.1;
+  /* 0,1 mm je Viertelstunde ist 0,4 mm in der Stunde — draußen eine
+     fleckig feuchte Straße, für die niemand eine Meldung braucht. Gemeldet
+     wird erst, was man auch merkt. Die App zeigt Tröpfeln weiterhin an,
+     nur klingelt dafür nichts mehr. */
+  const NASS = 0.25;               // je Viertelstunde, entspricht 1 mm/h
   const phasen = [];
   let i = ab;
   while (i < horizont) {

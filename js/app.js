@@ -12,6 +12,32 @@ const GEO      = 'https://geocoding-api.open-meteo.com/v1/search';
 const REVERSE  = 'https://nominatim.openstreetmap.org/reverse';
 const DWD      = 'https://www.dwd.de/DWD/warnungen/warnapp/json/warnings.json';
 
+/* ── Ab wann ist Regen Regen? ──────────────────────────────
+   Die Modelle geben Niederschlag ab 0,1 mm/h aus, und der WMO-Wettercode
+   nennt das schon „leichter Regen". Draußen heißt 0,1 mm: Die Straße ist
+   fleckig feucht, man wird nicht nass, man merkt es kaum. Die App hat das
+   trotzdem als „Leichte Schauer" angesagt und dafür sogar gemeldet — sie
+   war damit pessimistischer als DWD und WetterOnline, die bei derselben
+   Lage „bewölkt, 30 % Regenwahrscheinlichkeit" schreiben.
+
+   Deshalb eine gemeinsame Staffelung für die ganze App:
+
+     unter 0,15 mm/h   nichts. Nicht erwähnen.
+     bis 0,4 mm/h      Tröpfeln — erwähnen, aber nie „Regen" nennen
+                       und nie dafür melden.
+     ab 0,4 mm/h       leichter Regen. Ab hier lohnt der Schirm.
+     ab 2,5 mm/h       kräftiger Regen.
+
+   Alle Zahlen beziehen sich auf eine Stunde; Viertelstundenwerte werden
+   entsprechend umgerechnet. */
+const REGEN = {
+  nichts:   0.15,   // darunter gilt es als trocken
+  troepfeln: 0.4,   // darunter „ein paar Tropfen", kein Regen
+  kraeftig:  2.5
+};
+/** Viertelstundenwert auf Stundenmaß bringen. */
+const proStunde = (mm15) => (mm15 ?? 0) * 4;
+
 const MODELS = [
   { id: 'icon_d2',       name: 'ICON-D2',  org: 'DWD',   color: '#5ac8fa', note: '2 km · bis 48 h' },
   { id: 'icon_eu',       name: 'ICON-EU',  org: 'DWD',   color: '#64d2a0', note: '7 km · bis 5 Tage' },
@@ -261,13 +287,25 @@ async function reverseGeocode(lat, lon) {
 // ══ Rendering: Jetzt ═══════════════════════════════════════
 function renderHero() {
   const c = data.current, d = data.daily;
-  $('#heroIcon').innerHTML = WX.icon(c.weather_code, c.is_day);
+
+  /* Der Wettercode nennt schon 0,1 mm „leichten Regen" — dann stand oben
+     „Leichte Schauer", während draußen nichts fiel. Fällt zu wenig für den
+     Code, wird auf die Bewölkung zurückgegriffen: Das beschreibt den Himmel
+     ehrlicher als ein Regenwort ohne Regen. */
+  const codeRegen = c.weather_code >= 51 && c.weather_code <= 82;
+  const m15 = data.minutely_15;
+  const jetzt15 = m15?.time ? proStunde(m15.precipitation?.[nowIndex(m15.time)]) : 0;
+  const zuWenig = (c.precipitation ?? 0) < REGEN.nichts && jetzt15 < REGEN.nichts;
+  const wolkenCode = (c.cloud_cover ?? 0) > 80 ? 3 : (c.cloud_cover ?? 0) > 40 ? 2 : 1;
+  const zeigeCode = codeRegen && zuWenig ? wolkenCode : c.weather_code;
+
+  $('#heroIcon').innerHTML = WX.icon(zeigeCode, c.is_day);
   $('#heroTemp').textContent = round(c.temperature_2m);
-  $('#heroDesc').textContent = WX.text(c.weather_code, c.is_day);
+  $('#heroDesc').textContent = WX.text(zeigeCode, c.is_day);
   $('#heroFeels').textContent = `Gefühlt ${round(c.apparent_temperature)}°`;
   $('#heroMax').textContent = `${round(d.temperature_2m_max[0])}°`;
   $('#heroMin').textContent = `${round(d.temperature_2m_min[0])}°`;
-  setMood(WX.mood(c.weather_code, c.is_day), c.is_day);
+  setMood(WX.mood(zeigeCode, c.is_day), c.is_day);
 }
 
 /** Zeigt oben, wie weit Tag oder Nacht fortgeschritten sind — als Anhalt
@@ -383,16 +421,20 @@ function renderVerdict() {
      denn ein Regenmesser rechnet nicht, er misst. */
   const jetztBlock = near.find(x => x.t <= now && x.t + 9e5 > now);
   const gemessenerRegen = naechsteStation?.w ? messWert(naechsteStation.w, 'precipitation') : null;
-  const raining = (gemessenerRegen != null && gemessenerRegen > 0)
-               || data.current.precipitation > 0.02
-               || (jetztBlock?.mm ?? 0) > 0.05;
-  const wet = near.filter(x => x.mm > 0.05);
+  /* „Es regnet" nur, wenn es auch spürbar ist. Vorher genügten 0,05 mm je
+     Viertelstunde — das sind 0,2 mm in der Stunde und draußen praktisch
+     nichts. Die Messung darf niedriger ansetzen: Was ein Regenmesser
+     auffängt, ist wirklich gefallen. */
+  const raining = (gemessenerRegen != null && gemessenerRegen >= 0.1)
+               || data.current.precipitation >= REGEN.nichts
+               || proStunde(jetztBlock?.mm) >= REGEN.nichts;
+  const wet = near.filter(x => proStunde(x.mm) >= REGEN.nichts);
 
   if (raining) {
     /* Regnet es gerade, ist die einzig interessante Frage: wie lange noch?
        Die Viertelstundenwerte reichen zwei Stunden voraus — daraus eine
        Leiste, die den nassen Rest zeigt und wo er aufhört. */
-    const dry = near.find(x => x.t > now && x.mm <= 0.05);
+    const dry = near.find(x => x.t > now && proStunde(x.mm) < REGEN.nichts);
     const word = WX.precipWord(data.current.weather_code);
     const bis = dry ? dry.t : null;
     const restMin = bis ? Math.max(0, Math.round((bis - now) / 60000)) : null;
@@ -406,7 +448,7 @@ function renderVerdict() {
       <span class="rp-leiste" aria-hidden="true">
         ${bloecke.map(x => {
           const anteil = Math.min(1, x.mm / staerkste);
-          return `<i class="${x.mm > 0.05 ? 'rp-nass' : 'rp-trocken'}"
+          return `<i class="${proStunde(x.mm) >= REGEN.nichts ? 'rp-nass' : 'rp-trocken'}"
                      style="--h:${(24 + anteil * 34).toFixed(0)}%"></i>`;
         }).join('')}
       </span>
@@ -419,7 +461,7 @@ function renderVerdict() {
     /* Hört der Regen auf und fängt im selben Fenster wieder an, gehört das
        in denselben Satz. „Noch 14 Minuten" allein hätte jemanden losgeschickt,
        der eine halbe Stunde später wieder im Regen steht. */
-    const wieder = bis ? near.find(x => x.t > bis && x.mm > 0.05) : null;
+    const wieder = bis ? near.find(x => x.t > bis && proStunde(x.mm) >= REGEN.nichts) : null;
     const nachsatz = wieder ? ` Dann ab ${hhmm(wieder.t)} wieder.` : '';
 
     el.innerHTML = `<b>${word} gerade.</b> ${
@@ -434,11 +476,16 @@ function renderVerdict() {
   if (wet.length) {
     const first = wet[0];
     const mins = Math.max(0, Math.round((first.t - now) / 60000));
-    const word = WX.precipWord(first.code ?? 61);
+    /* Bei 0,2 mm in der Stunde von „Regen" zu sprechen, wäre übertrieben —
+       das sind ein paar Tropfen, die kaum den Boden benetzen. */
+    const staerke = proStunde(first.mm);
+    const wenig = staerke < REGEN.troepfeln;
+    const word = wenig ? 'Ein paar Tropfen' : WX.precipWord(first.code ?? 61);
     el.innerHTML = mins <= 5
-      ? `<b>${word} setzt gleich ein.</b>`
-      : `<b>${word} in etwa ${mins} Minuten</b> (gegen ${hhmm(first.t)}).`;
-    el.dataset.tone = 'soon';
+      ? `<b>${word}${wenig ? '' : ' setzt gleich ein'}.</b>${wenig ? ' Kaum spürbar.' : ''}`
+      : `<b>${word} in etwa ${mins} Minuten</b> (gegen ${hhmm(first.t)}).${
+          wenig ? ' Kaum spürbar — Schirm lohnt nicht.' : ''}`;
+    el.dataset.tone = wenig ? 'later' : 'soon';
     return;
   }
 
@@ -1130,6 +1177,9 @@ function renderMeteogramm() {
    Der Vergleich läuft deshalb nur in Deutschland; anderswo fehlt die
    Messreihe und die Karte bleibt weg. */
 const RUECK_TAGE = 6;
+/* Untertitel der zugeklappten Karten: Die Render-Funktionen laufen auch,
+   wenn die Karte zu ist — der Text wird gemerkt und beim Aufklappen gesetzt. */
+let rueckStandText = '', modelAgreeText = '';
 
 async function ladeRueckblick(lat, lon) {
   const karte = $('#rueckCard');
@@ -1288,7 +1338,8 @@ function renderRueckblick(tage, quelle) {
   const nass = (mm) => mm >= 0.5;
   const regenTreffer = tage.filter(t => nass(t.istRegen) === nass(t.sollRegen1)).length;
 
-  $('#rueckStand').textContent = `letzte ${tage.length} Tage`;
+  rueckStandText = `letzte ${tage.length} Tage`;
+  if ($('#rueckBody')?.hidden === false) $('#rueckStand').textContent = rueckStandText;
 
   const urteil = mittel1 <= 1 ? 'sehr gut' : mittel1 <= 2 ? 'gut'
                : mittel1 <= 3 ? 'brauchbar' : 'eher daneben';
@@ -1722,24 +1773,42 @@ function ebenenGeaendert() {
 function modellCharakter(H, mid, tagISO) {
   let regen = 0, hatRegen = false;
   const wolken = [];
+  const nasseStunden = [];
   for (let k = 0; k < H.time.length; k++) {
     if (!H.time[k].startsWith(tagISO)) continue;
     const p = H[`precipitation_${mid}`]?.[k];
-    if (p != null) { regen += p; hatRegen = true; }
     const stunde = +H.time[k].slice(11, 13);
+    if (p != null) {
+      regen += p; hatRegen = true;
+      if (p >= REGEN.nichts) nasseStunden.push(stunde);
+    }
     const c = H[`cloud_cover_${mid}`]?.[k];
     if (c != null && stunde >= 8 && stunde <= 20) wolken.push(c);
   }
   if (!wolken.length && !hatRegen) return null;         // Modell reicht nicht so weit
 
-  if (regen >= 1) return { zeichen: '🌧', wort: 'Regen', grob: 'nass', mm: regen };
+  /* Wann das Modell den Regen sieht, ist die eigentlich nützliche Angabe:
+     Zwei Modelle können beide „Regen" sagen und trotzdem verschiedene
+     Tage meinen — eins vormittags, eins abends. Zusammenhängende Stunden
+     werden zu Zeitfenstern zusammengefasst. */
+  const fenster = [];
+  for (const st of nasseStunden) {
+    const letzte = fenster[fenster.length - 1];
+    if (letzte && st === letzte.bis + 1) letzte.bis = st;
+    else fenster.push({ von: st, bis: st });
+  }
+  const zeiten = fenster.slice(0, 3).map(f => f.von === f.bis
+    ? `${String(f.von).padStart(2, '0')} Uhr`
+    : `${String(f.von).padStart(2, '0')}–${String(f.bis + 1).padStart(2, '0')} Uhr`);
+
+  const basis = { mm: regen, zeiten };
+  if (regen >= 1) return { ...basis, zeichen: '🌧', wort: 'Regen', grob: 'nass' };
   const wm = wolken.length ? wolken.reduce((a, b) => a + b, 0) / wolken.length : null;
   if (wm == null) return null;
-  const tropfen = regen >= 0.2;
-  if (wm < 25) return { zeichen: '☀️', wort: 'sonnig', grob: 'freundlich', mm: regen, tropfen };
-  if (wm < 55) return { zeichen: '🌤', wort: 'heiter', grob: 'freundlich', mm: regen, tropfen };
-  if (wm < 80) return { zeichen: '⛅', wort: 'wolkig', grob: 'trüb', mm: regen, tropfen };
-  return { zeichen: '☁️', wort: 'bedeckt', grob: 'trüb', mm: regen, tropfen };
+  if (wm < 25) return { ...basis, zeichen: '☀️', wort: 'sonnig', grob: 'freundlich' };
+  if (wm < 55) return { ...basis, zeichen: '🌤', wort: 'heiter', grob: 'freundlich' };
+  if (wm < 80) return { ...basis, zeichen: '⛅', wort: 'wolkig', grob: 'trüb' };
+  return { ...basis, zeichen: '☁️', wort: 'bedeckt', grob: 'trüb' };
 }
 
 const GROB_WORT = { freundlich: 'freundlich', trüb: 'bedeckt', nass: 'Regen' };
@@ -1785,17 +1854,26 @@ function renderModellTage(H) {
       <span class="mt-tag"><b>${i === 0 ? 'heute' : i === 1 ? 'morgen' : weekday(d)}</b>
         <i>${d.getDate()}.${d.getMonth() + 1}.</i></span>
       <span class="mt-modelle">${urteile.map(({ m, c }) => c
-        ? `<span class="mt-chip" title="${m.name}: ${c.wort}${
-            c.mm >= 0.2 ? `, ${dez(c.mm)} mm` : ''}">
-             <em>${c.zeichen}</em><i style="background:${m.color}"></i></span>`
-        : `<span class="mt-chip mt-leer" title="${m.name}: reicht nicht so weit">
-             <em>·</em><i style="background:${m.color}"></i></span>`).join('')}
+        ? `<button class="mt-chip" data-info="${esc(m.name)}|${c.wort}|${
+             c.mm >= REGEN.nichts ? dez(c.mm) + ' mm' : ''}|${c.zeiten.join(', ')}">
+             <em>${c.zeichen}</em><i style="background:${m.color}"></i></button>`
+        : `<button class="mt-chip mt-leer" data-info="${esc(m.name)}|reicht nicht so weit||">
+             <em>·</em><i style="background:${m.color}"></i></button>`).join('')}
       </span>
       <span class="mt-urteil" data-tone="${ton}">${urteilText}</span>
     </div>`;
   }).join('');
 
   box.innerHTML = zeilen;
+
+  // Antippen erklärt, was das Zeichen bedeutet — auf dem Telefon gibt es
+  // kein Überfahren mit der Maus, `title` blieb dort unsichtbar.
+  $$('.mt-chip', box).forEach(b => b.addEventListener('click', (e) => {
+    e.stopPropagation();
+    const [name, wort, mm, zeiten] = (b.dataset.info || '').split('|');
+    toast(`${name}: ${wort}${mm ? ` · ${mm}` : ''}${
+      zeiten ? ` · nass ${zeiten}` : ''}`, 4500);
+  }));
   return { streit: ersterStreit };
 }
 
@@ -1885,7 +1963,8 @@ function renderModels(md) {
      entscheidet den Tag — das gehört in die Überschrift. */
   if (streit) { verdict = `uneinig, ob es ${streit.tag} regnet`; tone = 'bad'; }
 
-  $('#modelAgree').textContent = verdict;
+  modelAgreeText = verdict;
+  if ($('#modelBody')?.hidden === false) $('#modelAgree').textContent = verdict;
   $('#modelAgree').dataset.tone = tone;
 
   // Verlässlichkeit in Klartext, direkt unter der Tagesreihe
@@ -5410,8 +5489,7 @@ const NAV = [
   { id: 'nav-sonne',   ziel: '.card-cd',     name: 'Sonne' },
   { id: 'nav-dwd',     ziel: '.card-dwd',    name: 'DWD' },
   { id: 'nav-bericht', ziel: '.card-brief',  name: 'Bericht' },
-  { id: 'nav-rueck',   ziel: '.card-rueck',  name: 'Trefferquote' },
-  { id: 'nav-news',    ziel: '.card-news',   name: 'News' }
+  { id: 'nav-rueck',   ziel: '.card-rueck',  name: 'Trefferquote' }
 ];
 
 /** Waagerechte Leiste unter dem Kopf: springt zum Abschnitt und hebt hervor,
@@ -5515,6 +5593,37 @@ function wire() {
       }
     });
   });
+  /* Drei Karten starten zugeklappt: Webcams (Bilder), Trefferquote und
+     Wettermodelle (beides Auswertung, nicht Alltag). Zusammen waren das
+     rund zwei Drittel der Seitenlänge. Der Zustand bleibt je Karte
+     gespeichert — wer sie offen haben will, hat sie beim nächsten Mal
+     wieder offen. */
+  const klappen = (kopfId, bodyId, key, beimOeffnen, untertitel) => {
+    const kopf = $(kopfId), body = $(bodyId);
+    if (!kopf || !body) return;
+    const setzen = (auf) => {
+      body.hidden = !auf;
+      kopf.setAttribute('aria-expanded', auf ? 'true' : 'false');
+      kopf.classList.toggle('offen', auf);
+      store.set(key, auf);
+      if (auf) beimOeffnen?.();
+      const el = kopf.querySelector('.klapp-sub');
+      if (el && untertitel) el.textContent = auf ? (untertitel(true) || '') : untertitel(false);
+    };
+    setzen(store.get(key, false));
+    kopf.addEventListener('click', () => setzen(body.hidden));
+  };
+
+  klappen('#camsKopf', '#camsBody', 'wf.camsAuf', renderCams, (auf) => {
+    if (auf) return '';
+    const n = (store.get(LS.cams, []) || []).length;
+    return n ? `${n} Kameras aus der Region` : 'Bilder aus der Region';
+  });
+  klappen('#rueckKopf', '#rueckBody', 'wf.rueckAuf', null,
+    (auf) => (auf ? rueckStandText : 'Vorhersage gegen Messung'));
+  klappen('#modelKopf', '#modelBody', 'wf.modelAuf', null,
+    (auf) => (auf ? modelAgreeText : 'Sind sich die Modelle einig?'));
+
   $('#installBtn')?.addEventListener('click', installAnstossen);
   $('#radarLegend')?.addEventListener('click', openEbenenHilfe);
   $('#arZu')?.addEventListener('click', arBeenden);
@@ -5605,7 +5714,9 @@ async function boot() {
   renderSaved();
   renderCams();
   Briefing.init(hostApi);
-  News.init(hostApi);
+  // Nachrichtenlage ist raus — sie gehörte nicht in eine Wetter-App und
+  // machte die Seite lang. Das Modul bleibt für später im Repo liegen.
+  if (typeof News !== 'undefined') News.init(hostApi);
 
   // Zuletzt genutzter Ort, sonst Cache, sonst Standardort
   place = store.get(LS.active, null) || store.get(LS.cache, {})?.place || {
