@@ -142,7 +142,55 @@ const Radar = (() => {
     dwdCtx = dwdCanvas.getContext('2d', { willReadFrequently: true });
   }
 
-  /** Weiß, Grau und das pinke Reichweitenband durchsichtig machen. */
+  /* ── Umfärben auf die eigene Skala ────────────────────────
+     Der DWD liefert seine eigene Farbgebung: Cyan → Grün → Gelb → Rot →
+     Magenta in zwölf Stufen. Sie ist fachlich einwandfrei, passt aber nicht
+     zur Legende der App, und auf der hellen Karte wirkt das viele Gelb
+     unruhiger als nötig.
+
+     Deshalb wird jeder Bildpunkt seiner DWD-Stufe zugeordnet und in die
+     Farbe der App übersetzt. Die Zuordnung geht über den kürzesten Abstand
+     im Farbraum — die Stufen liegen weit genug auseinander, dass das
+     eindeutig ist. Nebeneffekt: Schwacher Niederschlag wird durchsichtiger
+     dargestellt, damit ein Nieselfeld nicht so dramatisch aussieht wie ein
+     Gewitter.
+
+     Die Werte stammen aus der amtlichen Legende des RV-Produkts, ausgelesen
+     über GetLegendGraphic. */
+  const DWD_STUFEN = [
+    [ 51, 255, 255], [ 26, 204, 154], [  1, 153,  52], [ 77, 179,  27],
+    [153, 204,   1], [204, 230,   1], [255, 255,   1], [255, 196,   1],
+    [255, 137,   1], [255,  69,   1], [254,   0,   0], [229,   0,  76]
+  ];
+  /* Eigene Skala: von zartem Blau über Grün und Gelb nach Rot und Violett.
+     Der vierte Wert ist die Deckkraft — leichter Regen bleibt zurückhaltend,
+     damit die Karte darunter lesbar bleibt. */
+  const WF_STUFEN = [
+    [ 96, 200, 242, 200], [ 56, 174, 240, 218], [ 30, 140, 232, 232],
+    [ 26, 186, 196, 240], [ 40, 200, 110, 246], [118, 216,  56, 250],
+    [200, 224,  36, 252], [250, 206,  32, 253], [250, 158,  28, 254],
+    [244, 104,  34, 255], [232,  44,  40, 255], [186,  32, 128, 255]
+  ];
+
+  /** Nachschlagtabelle, damit nicht je Bildpunkt zwölfmal gerechnet wird. */
+  const farbCache = new Map();
+  function naechsteStufe(r, g, b) {
+    const key = (r << 16) | (g << 8) | b;
+    const fertig = farbCache.get(key);
+    if (fertig !== undefined) return fertig;
+    let best = -1, dist = Infinity;
+    for (let k = 0; k < DWD_STUFEN.length; k++) {
+      const [dr, dg, db] = DWD_STUFEN[k];
+      const d = (r - dr) ** 2 + (g - dg) ** 2 + (b - db) ** 2;
+      if (d < dist) { dist = d; best = k; }
+    }
+    // Zu weit von jeder Stufe entfernt: kein Niederschlag, sondern Beiwerk
+    const treffer = dist > 5200 ? -1 : best;
+    if (farbCache.size < 20000) farbCache.set(key, treffer);
+    return treffer;
+  }
+
+  /** Grau und Reichweitenband entfernen, Rest auf die eigene Skala umfärben. */
   function dwdFiltern(bild) {
     dwdCtx.clearRect(0, 0, DWD_PX, DWD_PX);
     dwdCtx.drawImage(bild, 0, 0, DWD_PX, DWD_PX);
@@ -151,13 +199,17 @@ const Radar = (() => {
     let farbig = 0;
 
     for (let i = 0; i < px.length; i += 4) {
-      const r = px[i], g = px[i + 1], b = px[i + 2];
       if (px[i + 3] === 0) continue;
+      const r = px[i], g = px[i + 1], b = px[i + 2];
 
       const max = Math.max(r, g, b), min = Math.min(r, g, b);
-      const grau = max - min < 26;                       // weiß bis dunkelgrau
-      const pink = r > 200 && b > 200 && g < 120;        // Reichweitenrand
-      if (grau || pink) { px[i + 3] = 0; continue; }
+      if (max - min < 26) { px[i + 3] = 0; continue; }   // weiß bis dunkelgrau
+      if (r > 200 && b > 200 && g < 120) { px[i + 3] = 0; continue; }  // Reichweitenrand
+
+      const stufe = naechsteStufe(r, g, b);
+      if (stufe < 0) { px[i + 3] = 0; continue; }
+      const [nr, ng, nb, na] = WF_STUFEN[stufe];
+      px[i] = nr; px[i + 1] = ng; px[i + 2] = nb; px[i + 3] = na;
       farbig++;
     }
     dwdCtx.putImageData(img, 0, 0);
