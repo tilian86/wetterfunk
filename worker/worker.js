@@ -534,6 +534,12 @@ async function regenPruefen(env) {
   // Amtliche Warnungen einmal für alle holen, nicht je Abo
   const warnungen = await ladeWarnungen();
 
+  /* Zwei Geräte am selben Ort sollen nicht zwei Radarabfragen auslösen —
+     auf zwei Kilometer gerundet ist es derselbe Schauer. Der Vorrat begrenzt,
+     wie viele verschiedene Orte je Durchgang aufs Radar dürfen. */
+  const radarSpeicher = new Map();
+  let radarVorrat = RADAR_PRO_LAUF;
+
   for (const eintragMeta of liste.keys) {
     const eintrag = await env.WF_PUSH.get(eintragMeta.name, 'json');
     if (!eintrag) continue;
@@ -552,7 +558,36 @@ async function regenPruefen(env) {
       if (!meldung) meldung = himmelMelden(eintrag);
       if (!meldung && arten.regen) {
         const lage = await regenLage(eintrag.lat, eintrag.lon);
-        if (lage) meldung = entscheide(lage, eintrag);
+        if (lage) {
+          /* Das Modell schweigt, aber es ist Schauerlage: Dann entscheidet
+             das Radar. Genau hier lag der Fall vom 1. August — das Gitter
+             hatte nichts, über der Stadt ging ein Schauer nieder. */
+          const stillJetzt = !lage.laeuft
+            && (!lage.naechste || lage.naechste.start - Date.now() > 30 * 60000);
+          if (stillJetzt && (lage.risiko ?? 0) >= RADAR_AB_RISIKO
+              && imRadargebiet(eintrag.lat, eintrag.lon)) {
+            const schluessel = `${eintrag.lat.toFixed(2)},${eintrag.lon.toFixed(2)}`;
+            if (!radarSpeicher.has(schluessel) && radarVorrat > 0) {
+              radarVorrat--;
+              radarSpeicher.set(schluessel,
+                await radarLage(eintrag.lat, eintrag.lon, eintrag.tz));
+            }
+            const rl = radarSpeicher.get(schluessel);
+            if (rl && (rl.laeuft || rl.naechste)) {
+              lage.laeuft = rl.laeuft;
+              /* Die spätere Phase des Modells bleibt stehen, wenn das Radar
+                 keine eigene hat — sie liefert das „ab 16:30 wieder" am Ende
+                 der Meldung, und so weit voraus sieht das Radar nicht. */
+              lage.naechste = rl.naechste || lage.naechste;
+              lage.quelle = 'radar';
+            }
+          }
+          meldung = entscheide(lage, eintrag);
+          // Woher die Zahl kommt, gehört in die Meldung — sie widerspricht der App sonst
+          if (meldung && lage.quelle === 'radar' && meldung.art !== 'vorbei') {
+            meldung.text = `${meldung.text} · Radar`;
+          }
+        }
       }
       if (!meldung) continue;
       /* Warnungen dürfen die Ruhefrist durchbrechen — bei Unwetter zählt
@@ -772,6 +807,22 @@ function entscheide(lage, eintrag) {
   // Fall 1: Es regnet gerade — melden, wann es aufhört
   if (lage.laeuft) {
     const minuten = Math.round((lage.laeuft.ende - Date.now()) / 60000);
+
+    /* Beim Radar reicht der Blick nur eine halbe Stunde voraus. Regnet es
+       am Ende noch, ist das Ende schlicht unbekannt — dann eine Restdauer
+       zu nennen wäre erfunden. */
+    if (lage.laeuft.offen) {
+      const gleicheLage = alt.art === 'haelt' && Date.now() - (alt.wann || 0) < NACHFASSEN_MS;
+      if (gleicheLage) return null;
+      const was = lage.laeuft.leicht ? 'Es tröpfelt' : 'Es regnet';
+      return {
+        art: 'ende',
+        titel: was,
+        text: `Hält mindestens die nächste halbe Stunde an · ${lage.laeuft.rat}`,
+        merker: { art: 'haelt', ende: lage.laeuft.ende, wann: Date.now(), regnete: true }
+      };
+    }
+
     // Nur ansagen, wenn das Ende absehbar ist und nicht in zwei Minuten eintritt
     if (minuten < 10 || minuten > 180) return null;
 
@@ -849,7 +900,8 @@ function entscheide(lage, eintrag) {
 async function regenLage(lat, lon) {
   const p = new URLSearchParams({
     latitude: String(lat), longitude: String(lon), timezone: 'auto',
-    minutely_15: 'precipitation', forecast_days: '2'
+    minutely_15: 'precipitation', hourly: 'precipitation_probability',
+    forecast_days: '2'
   });
   const res = await fetch(`https://api.open-meteo.com/v1/forecast?${p}`);
   if (!res.ok) return null;
@@ -865,6 +917,17 @@ async function regenLage(lat, lon) {
   const versatz = (d.utc_offset_seconds ?? 0) * 1000;
   const alsZeit = (t) => Date.parse(t + 'Z') - versatz;
   const uhr = (i) => zeiten[i].slice(11, 16);          // steht schon in Ortszeit da
+
+  /* Regenrisiko der nächsten zwei Stunden — die Bremse für den Radarabruf.
+     Sieht das Modell überhaupt keine Möglichkeit von Regen, braucht auch
+     das Radar nicht befragt zu werden. */
+  const hZeiten = d.hourly?.time || [];
+  const hProb = d.hourly?.precipitation_probability || [];
+  let risiko = 0;
+  for (let k = 0; k < hZeiten.length; k++) {
+    const t = Date.parse(hZeiten[k] + 'Z') - (d.utc_offset_seconds ?? 0) * 1000;
+    if (t + 36e5 > jetzt && t < jetzt + 2 * 36e5) risiko = Math.max(risiko, hProb[k] ?? 0);
+  }
 
   const ab = zeiten.findIndex(t => alsZeit(t) + 9e5 > jetzt);
   if (ab < 0) return null;
@@ -914,10 +977,10 @@ async function regenLage(lat, lon) {
   /* Phasen, die insgesamt zu wenig bringen, werden verworfen — sie stehen
      in der App weiterhin als „ein paar Tropfen", lösen aber nichts aus. */
   const echte = phasen.filter(p => p.summe >= MELDE_SUMME);
-  if (!echte.length) return { laeuft: null, naechste: null };
+  if (!echte.length) return { laeuft: null, naechste: null, risiko };
   phasen.length = 0;
   phasen.push(...echte);
-  if (!phasen.length) return { laeuft: null, naechste: null };
+  if (!phasen.length) return { laeuft: null, naechste: null, risiko };
 
   // Regnet es jetzt schon, ist die erste Phase die laufende
   const esRegnet = (werte[ab] ?? 0) >= NASS && phasen[0].start <= jetzt + 9e5;
@@ -926,10 +989,111 @@ async function regenLage(lat, lon) {
   const naechste = rest[0] || null;
 
   // Nur ankündigen, was in den nächsten zwei Stunden anfängt
-  if (naechste && naechste.start - jetzt > 2 * 36e5 && !laeuft) return { laeuft: null, naechste: null };
+  if (naechste && naechste.start - jetzt > 2 * 36e5 && !laeuft) return { laeuft: null, naechste: null, risiko };
 
   if (naechste && rest[1]) naechste.danachPause = rest[1].startUhr;
-  return { laeuft, naechste };
+  return { laeuft, naechste, risiko };
+}
+
+/* ── Radar-Alarm: was das Gitter verpasst ───────────────────
+   Das Rechenmodell arbeitet mit Maschen von zwei Kilometern. Ein Sommer-
+   schauer ist oft kleiner und fällt damit zwischen die Zahlen. Nachgemessen
+   am 1. August über Tübingen: Das Modell hatte für den Nachmittag nichts,
+   das Radar zeigte von 13:35 bis 14:00 Regen über der Stadt — wer draußen
+   war, wurde nass, und es kam keine Meldung.
+
+   Deshalb schaut der Wächter bei Schauerlage zusätzlich aufs Radar. Nicht
+   immer: Ein Abruf kostet zwanzig Anfragen an den DWD, und an einem
+   wolkenlosen Tag wäre das reine Verschwendung. Zwei Bremsen:
+   · nur, wenn das Modell überhaupt Regenrisiko sieht (RADAR_AB_RISIKO)
+   · höchstens zwei Orte je Durchgang, gleiche Orte werden zusammengefasst */
+const RADAR_AB_RISIKO = 25;          // Prozent Regenwahrscheinlichkeit
+const RADAR_PRO_LAUF  = 2;           // verschiedene Orte je Fünf-Minuten-Takt
+const RADAR_NASS      = 0.2;         // mm/h über der eigenen Zelle
+const RADAR_NAHE      = 0.5;         // mm/h im Umkreis von 2,5 km
+
+const imRadargebiet = (lat, lon) =>
+  lat > 46.5 && lat < 56 && lon > 4.5 && lon < 16.5;
+
+/* Ein Wert vom DWD-Radar, umgerechnet in Millimeter je Stunde. */
+async function radarWert(lat, lon, t) {
+  const zeit = new Date(t).toISOString().replace(/\.\d+Z$/, '.000Z');
+  const bb = `${(lon - 0.05).toFixed(4)},${(lat - 0.05).toFixed(4)},`
+           + `${(lon + 0.05).toFixed(4)},${(lat + 0.05).toFixed(4)}`;
+  const u = 'https://maps.dwd.de/geoserver/dwd/wms?service=WMS&version=1.3.0'
+    + '&request=GetFeatureInfo&layers=dwd:Radar_rv_product_1x1km_ger'
+    + '&query_layers=dwd:Radar_rv_product_1x1km_ger&crs=CRS:84'
+    + `&bbox=${bb}&width=101&height=101&i=50&j=50`
+    + `&info_format=application/json&time=${encodeURIComponent(zeit)}`;
+  try {
+    const r = await withTimeout(fetch(u, { cf: { cacheTtl: 240, cacheEverything: true } }), 8000);
+    if (!r.ok) return null;
+    const d = await r.json();
+    const v = d?.features?.[0]?.properties?.RV_ANALYSIS;
+    return typeof v === 'number' && v >= 0 ? v * 12 : 0;
+  } catch { return null; }
+}
+
+/* Die Stufen wie in der App, hier aber aus dem Stundenwert gebildet. Die
+   Modellphasen rechnen in Millimetern je Viertelstunde — deshalb steht
+   `spitze` unten umgerechnet da, sonst gälten für Radar und Modell
+   verschiedene Maßstäbe bei gleichem Wort. */
+function radarStufe(mmH) {
+  if (mmH >= 10) return { staerke: 'kräftiger Regen', rat: 'ohne Schirm sofort nass', leicht: false };
+  if (mmH >= 3.2) return { staerke: 'Regen',          rat: 'Schirm mitnehmen',        leicht: false };
+  if (mmH >= 0.6) return { staerke: 'leichter Regen', rat: 'kleiner Schirm genügt',   leicht: false };
+  return             { staerke: 'ein paar Tropfen', rat: 'Kapuze reicht',           leicht: true };
+}
+
+/** Regenlage aus dem Radar, in derselben Form wie `regenLage()`. */
+async function radarLage(lat, lon, tz) {
+  const jetzt = Math.floor(Date.now() / 300000) * 300000;
+  const zeiten = [0, 10, 20, 30].map(m => jetzt + m * 60000);
+  const dLat = 2.5 / 111;
+  const dLon = 2.5 / (111 * Math.cos(lat * Math.PI / 180));
+  // Mitte zuerst, dann der Ring — die Reihenfolge wird unten gebraucht
+  const orte = [[lat, lon], [lat + dLat, lon], [lat - dLat, lon],
+                [lat, lon + dLon], [lat, lon - dLon]];
+
+  const reihe = [];
+  for (const t of zeiten) {
+    const werte = await Promise.all(orte.map(([a, b]) => radarWert(a, b, t)));
+    if (typeof werte[0] !== 'number') return null;      // ohne den eigenen Wert keine Aussage
+    const ring = werte.slice(1).filter(v => typeof v === 'number');
+    reihe.push({ t, mm: werte[0], umfeld: ring.length ? Math.max(...ring) : 0 });
+  }
+
+  const nass = (x) => x.mm >= RADAR_NASS || x.umfeld >= RADAR_NAHE;
+  const uhr = (t) => uhrzeit(new Date(t), tz || 'Europe/Berlin');
+
+  /* Aus den Zehn-Minuten-Schritten eine Phase bauen. Feiner geht es nicht,
+     ohne die Zahl der Abrufe zu verdoppeln — und für „gleich wird es nass"
+     reichen zehn Minuten. */
+  const bauePhase = (vonIdx) => {
+    let bis = vonIdx, spitzeH = 0, summe = 0;
+    while (bis < reihe.length && nass(reihe[bis])) {
+      spitzeH = Math.max(spitzeH, reihe[bis].mm, reihe[bis].umfeld * 0.6);
+      summe += Math.max(reihe[bis].mm, reihe[bis].umfeld * 0.6) / 6;   // zehn Minuten
+      bis++;
+    }
+    const endeT = bis < reihe.length ? reihe[bis].t : reihe[reihe.length - 1].t + 6e5;
+    const stufe = radarStufe(spitzeH);
+    return {
+      start: reihe[vonIdx].t, ende: endeT,
+      startUhr: uhr(reihe[vonIdx].t), endeUhr: uhr(endeT),
+      summe, spitze: spitzeH / 4,          // mm/h → mm je Viertelstunde
+      ...stufe, offen: bis >= reihe.length
+    };
+  };
+
+  /* Reicht der Regen über das Fenster hinaus, bleibt `offen` gesetzt — dann
+     wird unten keine Restdauer behauptet, sondern „hält an". Diese Phase
+     ganz zu verschweigen wäre der schlechteste Ausweg: Dauerregen ist genau
+     der Fall, in dem eine Meldung zählt. */
+  if (nass(reihe[0])) return { laeuft: bauePhase(0), naechste: null, quelle: 'radar' };
+  const ab = reihe.findIndex(x => nass(x));
+  if (ab < 0) return { laeuft: null, naechste: null, quelle: 'radar' };
+  return { laeuft: null, naechste: bauePhase(ab), quelle: 'radar' };
 }
 
 /** KV-Schlüssel aus der Abo-Adresse — die ist je Gerät eindeutig. */
