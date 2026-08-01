@@ -36,10 +36,10 @@
 <meta name="theme-color" content="#0b1220">
 <link rel="apple-touch-icon" href="icons/icon-180.png">
 <link rel="icon" href="icons/icon-192.png">
-<link rel="manifest" href="manifest.webmanifest?v=108">
+<link rel="manifest" href="manifest.webmanifest?v=111">
 
-<link rel="stylesheet" href="vendor/maplibre-gl.css?v=108">
-<link rel="stylesheet" href="css/style.css?v=108">
+<link rel="stylesheet" href="vendor/maplibre-gl.css?v=111">
+<link rel="stylesheet" href="css/style.css?v=111">
 </head>
 <body>
 
@@ -494,6 +494,19 @@
   </div>
 </div>
 
+<!-- ══ REGEN IM DETAIL ══ -->
+<div class="sheet-back" id="regenSheet" hidden>
+  <div class="sheet" role="dialog" aria-label="Regen im Detail">
+    <div class="sheet-top">
+      <div class="sheet-grip"></div>
+      <button class="sheet-x" aria-label="Schließen">✕</button>
+    </div>
+    <h3 id="regenTitel">Regen</h3>
+    <div id="regenInhalt"></div>
+    <button class="sheet-close" id="regenClose">Schließen</button>
+  </div>
+</div>
+
 <!-- ══ ERKLÄRUNG ══ -->
 <div class="sheet-back" id="explainSheet" hidden>
   <div class="sheet" role="dialog" aria-labelledby="explainTitle">
@@ -574,11 +587,11 @@
 
 <div class="toast" id="toast" hidden></div>
 
-<script src="vendor/maplibre-gl.js?v=108"></script>
-<script src="js/icons.js?v=108"></script>
-<script src="js/radar.js?v=108"></script>
-<script src="js/forecast.js?v=108"></script>
-<script src="js/briefing.js?v=108"></script>
-<script src="js/app.js?v=108"></script>
+<script src="vendor/maplibre-gl.js?v=111"></script>
+<script src="js/icons.js?v=111"></script>
+<script src="js/radar.js?v=111"></script>
+<script src="js/forecast.js?v=111"></script>
+<script src="js/briefing.js?v=111"></script>
+<script src="js/app.js?v=111"></script>
 </body>
 </html>

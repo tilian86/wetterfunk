@@ -1169,6 +1169,151 @@ function renderMeteogramm() {
     </svg>`;
 }
 
+/* ── Regen im Detail ───────────────────────────────────────
+   Die häufigste Frage an eine Wetter-App ist nicht, wie warm es wird,
+   sondern ob es regnet. Ein Tippen auf die Regenzeile beantwortet sie
+   vollständig: die nächsten zwei Stunden im Viertelstundentakt, wie viel
+   heute insgesamt fällt, und — das Entscheidende — wie sicher das ist.
+
+   Sicherheit heißt hier: Sind sich die vier Rechenmodelle einig? Sagen
+   alle vier Regen, kann man sich darauf verlassen. Sagt einer Regen und
+   drei nicht, ist es ein Vielleicht. Diese Auskunft gibt sonst keine
+   Wetter-App im Alltagsgebrauch. */
+function regenStufe(mmProStunde) {
+  if (mmProStunde < REGEN.nichts) return { wort: 'trocken', farbe: null };
+  if (mmProStunde < REGEN.troepfeln) return { wort: 'ein paar Tropfen', farbe: '#8ad8f5' };
+  if (mmProStunde < 3.2) return { wort: 'leichter Regen', farbe: '#5ac8fa' };
+  if (mmProStunde < 10) return { wort: 'Regen', farbe: '#2f8fd6' };
+  return { wort: 'kräftiger Regen', farbe: '#8b3fd6' };
+}
+
+function openRegenSheet() {
+  const inhalt = $('#regenInhalt');
+  if (!inhalt || !data?.hourly) return;
+  const now = Date.now();
+  const m = data.minutely_15;
+  const h = data.hourly;
+
+  // ── 1. Die nächsten zwei Stunden, Viertelstunde für Viertelstunde
+  let feinTeil = '';
+  if (m?.time?.length) {
+    const ab = m.time.findIndex(t => new Date(t).getTime() >= now - 9e5);
+    const bloecke = ab >= 0 ? m.time.slice(ab, ab + 9).map((t, k) => ({
+      t: new Date(t).getTime(),
+      mm: proStunde(m.precipitation[ab + k])
+    })) : [];
+    const maxMm = Math.max(0.5, ...bloecke.map(b => b.mm));
+    const summe = bloecke.reduce((a, b) => a + b.mm / 4, 0);
+    const alleTrocken = bloecke.every(b => b.mm < REGEN.nichts);
+
+    /* Bei durchweg trockener Lage wäre das Säulenbild eine leere Fläche mit
+       ein paar unsichtbaren Stummeln. Dann lieber ein klarer Streifen mit
+       der Aussage darin — er beantwortet die Frage sofort. */
+    feinTeil = alleTrocken ? `
+      <p class="rs-kopf">Die nächsten zwei Stunden</p>
+      <div class="rs-trocken">
+        <span class="rs-tzeile">${bloecke.map(b => `<i></i>`).join('')}</span>
+        <span class="rs-tspanne">${hhmm(bloecke[0].t)} – ${hhmm(bloecke[bloecke.length - 1].t)}</span>
+      </div>
+      <p class="rs-summe">Durchgehend trocken — von oben kommt nichts.</p>` : `
+      <p class="rs-kopf">Die nächsten zwei Stunden</p>
+      <div class="rs-fein">
+        ${bloecke.map(b => {
+          const st = regenStufe(b.mm);
+          const hoch = b.mm < REGEN.nichts ? 3 : Math.max(12, (b.mm / maxMm) * 100);
+          return `<span class="rs-saeule">
+            <i style="height:${hoch.toFixed(0)}%;background:${
+              st.farbe || 'rgba(255,255,255,.22)'}"></i>
+            <em>${new Date(b.t).getMinutes() === 0 ? hhmm(b.t) : ''}</em>
+          </span>`;
+        }).join('')}
+      </div>
+      <p class="rs-summe">Zusammen rund <b>${dez(summe)} mm</b> — ${
+        summe < 0.5 ? 'die Straße wird fleckig feucht'
+        : summe < 2 ? 'ohne Schirm wird man langsam nass' : 'ohne Schirm wird man nass'}.</p>`;
+  }
+
+  // ── 2. Der ganze Tag in Stunden
+  const heute = h.time[0]?.slice(0, 10);
+  const heutigeStunden = [];
+  h.time.forEach((t, k) => {
+    if (t.slice(0, 10) !== heute) return;
+    heutigeStunden.push({ t: new Date(t).getTime(), stunde: +t.slice(11, 13),
+                          mm: h.precipitation[k] ?? 0,
+                          p: h.precipitation_probability[k] ?? 0 });
+  });
+  const tagesSumme = heutigeStunden.reduce((a, x) => a + x.mm, 0);
+  const nasse = heutigeStunden.filter(x => x.mm >= REGEN.nichts);
+
+  // ── 3. Was sagen die anderen Modelle?
+  let modellTeil = '';
+  if (modelData?.hourly) {
+    const H = modelData.hourly;
+    const urteile = MODELS.map(mo => {
+      let mm = 0, gesehen = false;
+      const stunden = [];
+      H.time.forEach((t, k) => {
+        if (t.slice(0, 10) !== heute) return;
+        const v = H[`precipitation_${mo.id}`]?.[k];
+        if (v == null) return;
+        gesehen = true; mm += v;
+        if (v >= REGEN.nichts) stunden.push(+t.slice(11, 13));
+      });
+      return gesehen ? { name: mo.name, farbe: mo.color, mm, stunden } : null;
+    }).filter(Boolean);
+
+    if (urteile.length >= 2) {
+      const nassZahl = urteile.filter(u => u.mm >= 0.5).length;
+      const sicher = nassZahl === urteile.length ? 'Alle Modelle sagen Regen — darauf ist Verlass.'
+        : nassZahl === 0 ? 'Kein Modell sieht nennenswerten Regen.'
+        : `Nur <b>${nassZahl} von ${urteile.length}</b> Modellen sehen Regen — unsicher.`;
+      const ton = nassZahl === urteile.length || nassZahl === 0 ? 'good' : 'warn';
+
+      modellTeil = `
+        <p class="rs-kopf">Wie sicher ist das?</p>
+        <p class="rs-sicher" data-tone="${ton}">${sicher}</p>
+        <div class="rs-modelle">
+          ${urteile.map(u => `<div class="rs-mzeile">
+            <span class="rs-mpunkt" style="background:${u.farbe}"></span>
+            <span class="rs-mname">${esc(u.name)}</span>
+            <span class="rs-mmenge">${u.mm < 0.05 ? 'trocken' : `${dez(u.mm)} mm`}</span>
+            <span class="rs-mzeit">${u.stunden.length
+              ? `${String(u.stunden[0]).padStart(2, '0')}–${
+                  String(u.stunden[u.stunden.length - 1] + 1).padStart(2, '0')} Uhr` : '—'}</span>
+          </div>`).join('')}
+        </div>`;
+    }
+  }
+
+  $('#regenTitel').textContent = tagesSumme < 0.1 ? 'Heute bleibt es trocken' : 'Regen heute';
+  inhalt.innerHTML = `
+    ${feinTeil}
+    <p class="rs-kopf">Heute insgesamt</p>
+    <p class="rs-tag">${tagesSumme < 0.1
+      ? 'Für heute ist kein Niederschlag gerechnet.'
+      : `<b>${dez(tagesSumme)} mm</b> über den Tag${nasse.length
+          ? `, hauptsächlich ${String(nasse[0].stunde).padStart(2, '0')}–${
+              String(nasse[nasse.length - 1].stunde + 1).padStart(2, '0')} Uhr` : ''}.
+         Die höchste Wahrscheinlichkeit liegt bei <b>${Math.max(...heutigeStunden.map(x => x.p))} %</b>.`}</p>
+    <div class="rs-stunden">
+      ${heutigeStunden.filter(x => x.stunde % 2 === 0).map(x => {
+        const st = regenStufe(x.mm);
+        return `<span class="rs-stunde">
+          <i style="opacity:${Math.min(1, 0.15 + x.p / 100)};background:${st.farbe || 'rgba(255,255,255,.1)'}"></i>
+          <em>${String(x.stunde).padStart(2, '0')}</em>
+        </span>`;
+      }).join('')}
+    </div>
+    <p class="rs-legende">Höhe der Balken oben: Regenmenge je Stunde. Farbe unten:
+      Kräftigkeit, Deckkraft: Wahrscheinlichkeit.</p>
+    ${modellTeil}
+    <p class="rs-quelle">Viertelstundenwerte aus dem Kurzfristmodell des DWD —
+      für die nächsten ein bis zwei Stunden erstaunlich treffsicher, weiter voraus
+      wird aus „Regen um 16:15" eher „irgendwann am Nachmittag".</p>`;
+
+  openSheet('#regenSheet');
+}
+
 /* ── Ortskorrektur ─────────────────────────────────────────
    Das Modell rechnet ein Gitter über Deutschland. Die Masche, in der
    Tübingen liegt, hat eine andere Höhe als die Stadt selbst — deshalb
@@ -5743,11 +5888,15 @@ function wire() {
   if (vd) {
     vd.setAttribute('role', 'button');
     vd.tabIndex = 0;
-    vd.addEventListener('click', () => openExplain('regenlage'));
+    vd.addEventListener('click', openRegenSheet);
     vd.addEventListener('keydown', (e) => {
-      if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openExplain('regenlage'); }
+      if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openRegenSheet(); }
     });
   }
+  $('#regenClose')?.addEventListener('click', () => closeSheet('#regenSheet'));
+  $('#regenSheet')?.addEventListener('click', (e) => {
+    if (e.target.id === 'regenSheet' || e.target.classList.contains('sheet-x')) closeSheet('#regenSheet');
+  });
   $('#pushToggle')?.addEventListener('click', pushUmschalten);
   // Häkchen wirken sofort — auch bei bereits laufendem Abo
   PUSH_ARTEN.forEach(([, key, sel]) => {
