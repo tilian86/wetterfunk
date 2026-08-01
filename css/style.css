@@ -2634,13 +2634,19 @@ body.ar-offen { overflow: hidden; }
   padding: 0 4px; border-radius: 8px;
   background: rgba(108,198,255,.2); color: var(--accent); font-size: 9px;
 }
-/* Restzeit unter der kleinen Ringuhr — der Balken zeigt sie nicht mehr */
-.hero-uhr { height: auto; min-height: 76px; padding-bottom: 16px; }
+/* Die Uhr im Kopf: Zeit in der Mitte, darunter der Verweis auf die Weltzeit */
+.hero-uhr { height: auto; min-height: 76px; padding-bottom: 15px; }
 .hu-rest {
   position: absolute; left: 50%; bottom: 0; transform: translateX(-50%);
-  white-space: nowrap; font-size: 10.5px; color: var(--ink-faint);
+  white-space: nowrap; font-size: 10px; color: var(--ink-faint);
+  text-decoration: underline; text-underline-offset: 2px;
+  text-decoration-color: rgba(255,255,255,.2);
 }
-.hu-mitte { bottom: 16px; }
+.hu-mitte { bottom: 15px; }
+.hu-zeit {
+  font-size: 16px !important; font-weight: 600 !important;
+  letter-spacing: -.01em; font-variant-numeric: tabular-nums;
+}
 
 /* Laufender Abschnitt im Tagesblatt */
 .ds-span.ist-jetzt {
@@ -2656,3 +2662,5 @@ body.ar-offen { overflow: hidden; }
 .hero { cursor: pointer; }
 .hero:active .hero-temp { opacity: .75; }
 .bf-set { display: block; margin-bottom: 10px; }
+.sonne-klapp { margin-top: 16px; border-top: 1px solid var(--card-line); padding-top: 14px; }
+.mg-note { margin: 0 0 8px; font-size: 10.5px; line-height: 1.5; color: var(--ink-faint); }
