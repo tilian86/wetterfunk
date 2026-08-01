@@ -21,7 +21,8 @@ const MODELS = [
 
 /** Auswählbare Datenquellen für Stunden- und Tageswerte. */
 const SOURCES = [
-  { id: 'best_match', name: 'Bestes verfügbares', desc: 'Automatisch — in Deutschland DWD ICON-D2 (2 km) für die ersten zwei Tage, danach ICON-EU und ICON global.', best: true },
+  { id: 'lernend', name: 'Lernend (empfohlen)', desc: 'Vergleicht jede Nacht die Vorhersagen von gestern mit den Messungen der nächsten DWD-Station und nimmt das Modell, das zuletzt am besten lag. Solange noch zu wenige Tage ausgewertet sind, gilt das beste verfügbare Modell.', best: true },
+  { id: 'best_match', name: 'Bestes verfügbares', desc: 'Automatisch — in Deutschland DWD ICON-D2 (2 km) für die ersten zwei Tage, danach ICON-EU und ICON global.' },
   { id: 'icon_seamless', name: 'DWD ICON', desc: 'Deutscher Wetterdienst, nahtlos: D2 (2 km) → EU (7 km) → global (11 km). Das amtliche deutsche Modell.' },
   { id: 'ecmwf_ifs025', name: 'ECMWF IFS', desc: 'Europäisches Zentrum, 25 km. Gilt weltweit als das treffsicherste Globalmodell auf mehrere Tage.' },
   { id: 'gfs_seamless', name: 'GFS', desc: 'US-Wetterdienst NOAA, 13 km. Reicht am weitesten, streut auf kurze Sicht stärker.' },
@@ -29,8 +30,29 @@ const SOURCES = [
   { id: 'meteofrance_seamless', name: 'Météo-France', desc: 'Französisches AROME/ARPEGE, 1,5 km über Mitteleuropa.' }
 ];
 
-const sourceId = () => store.get(LS.source, 'best_match');
+const sourceId = () => store.get(LS.source, 'lernend');
+
+/* „Lernend" ist keine eigene Rechnung, sondern ein Zeiger: Die Trefferquote
+   unten wertet jede Nacht aus, welches Modell zuletzt am besten lag, und
+   hier wird es eingesetzt. Erst ab vier ausgewerteten Tagen — vorher wäre
+   es Würfeln. Ohne Messreihe (außerhalb Deutschlands) bleibt best_match. */
+const effektiveQuelle = () => {
+  const s = sourceId();
+  if (s !== 'lernend') return s;
+  const b = store.get('wf.bestModel', null);
+  return b?.id && b.tage >= 4 ? b.id : 'best_match';
+};
 const sourceOf = (id) => SOURCES.find(s => s.id === id) || SOURCES[0];
+
+/** Anzeigename — beim Lernenden steht dabei, wen es gerade gewählt hat. */
+const quellenName = () => {
+  const s = sourceId();
+  if (s !== 'lernend') return sourceOf(s).name;
+  const eff = effektiveQuelle();
+  return eff === 'best_match'
+    ? 'Lernend — noch zu wenig ausgewertet, bestes verfügbares'
+    : `Lernend — zurzeit ${sourceOf(eff).name}`;
+};
 
 const LS = {
   places: 'wf.places',
@@ -149,8 +171,15 @@ async function fetchCached(url, minuten = CACHE_MIN) {
 
 let veraltet = false, umweg = false, standAlt = null;
 
+/** Mit welcher Quelle die angezeigten Zahlen tatsächlich geladen wurden.
+    Die Lernwertung kann den Sieger NACH dem Laden wechseln — dann stimmt
+    die Anzeige erst nach der nächsten Aktualisierung, und genau das soll
+    sie auch sagen. */
+let geladeneQuelle = null;
+
 function loadForecast(lat, lon) {
-  const src = sourceId();
+  const src = effektiveQuelle();
+  geladeneQuelle = src;
   const p = new URLSearchParams({
     latitude: lat, longitude: lon, timezone: 'auto', forecast_days: '10',
     ...(src !== 'best_match' ? { models: src } : {}),
@@ -861,12 +890,24 @@ function renderDaily() {
 // ══ Datenquelle: Anzeige und Auswahl ═══════════════════════
 /** Zeigt unter der Stundenleiste, woher die Zahlen stammen. */
 function renderSource() {
-  const s = sourceOf(sourceId());
   const el = $('#modelName');
   if (!el) return;
-  el.innerHTML = s.best
+  const s = sourceId();
+  if (s === 'lernend') {
+    const eff = effektiveQuelle();
+    if (geladeneQuelle && geladeneQuelle !== 'best_match') {
+      el.innerHTML = `Quelle: <b>lernend</b> — zurzeit ${sourceOf(geladeneQuelle).name}, weil es zuletzt am besten lag`;
+    } else if (eff !== 'best_match') {
+      el.innerHTML = `Quelle: <b>lernend</b> — wechselt bei der nächsten Aktualisierung zu ${sourceOf(eff).name}`;
+    } else {
+      el.innerHTML = `Quelle: <b>lernend</b> — sammelt noch, solange bestes verfügbares Modell`;
+    }
+    return;
+  }
+  const q = sourceOf(s);
+  el.innerHTML = q.id === 'best_match'
     ? `Quelle: <b>bestes verfügbares Modell</b> — hier DWD ICON-D2, 2 km`
-    : `Quelle: <b>${s.name}</b>`;
+    : `Quelle: <b>${q.name}</b>`;
 }
 
 function renderSourceList() {
@@ -1127,9 +1168,21 @@ async function ladeRueckblick(lat, lon) {
     const messUrl = `${BRIGHTSKY}/weather?lat=${lat}&lon=${lon}`
       + `&date=${iso(von)}&last_date=${iso(bis)}&tz=Europe/Berlin`;
 
-    const [vh, ms] = await Promise.all([
+    /* Dritter Abruf: dieselben gestrigen Vorhersagen, aber je Modell.
+       Daraus lernt die Quelle „Lernend", wem sie glauben soll. */
+    const LERN_MODELLE = ['icon_seamless', 'ecmwf_ifs025', 'gfs_seamless'];
+    const modellUrl = 'https://previous-runs-api.open-meteo.com/v1/forecast?'
+      + new URLSearchParams({
+          latitude: String(lat), longitude: String(lon), timezone: 'auto',
+          hourly: 'temperature_2m_previous_day1,precipitation_previous_day1',
+          models: LERN_MODELLE.join(','),
+          past_days: String(RUECK_TAGE), forecast_days: '1'
+        });
+
+    const [vh, ms, mvh] = await Promise.all([
       fetch(vorhersageUrl).then(r => (r.ok ? r.json() : null)).catch(() => null),
-      fetch(messUrl).then(r => (r.ok ? r.json() : null)).catch(() => null)
+      fetch(messUrl).then(r => (r.ok ? r.json() : null)).catch(() => null),
+      fetch(modellUrl).then(r => (r.ok ? r.json() : null)).catch(() => null)
     ]);
     if (!vh?.hourly || !ms?.weather?.length) { karte.hidden = true; return; }
 
@@ -1172,11 +1225,78 @@ async function ladeRueckblick(lat, lon) {
 
     if (!tage.length) { karte.hidden = true; return; }
     renderRueckblick(tage, ms.sources?.[0]);
+    bewerteModelle(tage, mvh, LERN_MODELLE);
     karte.hidden = false;
   } catch (e) {
     console.warn('Rückblick:', e.message);
     karte.hidden = true;
   }
+}
+
+/* ── Lernen: welches Modell lag zuletzt am besten? ─────────
+   Für jedes Modell dieselbe Rechnung wie oben: Was hat es gestern für
+   gestern vorhergesagt, was hat die Station gemessen? Der Sieger nach
+   mittlerem Temperaturfehler wird gespeichert — die Quelle „Lernend"
+   greift ihn beim nächsten Laden ab. Bewusst erst ab vier Tagen und nur
+   bei echtem Vorsprung gewechselt, sonst springt die App bei jedem
+   Wetterumschwung zwischen den Modellen hin und her. */
+function bewerteModelle(tage, mvh, modelle) {
+  const box = $('#rueckModelle');
+  if (!box) return;
+  if (!mvh?.hourly) { box.innerHTML = ''; return; }
+  const h = mvh.hourly;
+
+  const wertung = modelle.map(mid => {
+    let fehlerSumme = 0, regenTreffer = 0, n = 0;
+    for (const t of tage) {
+      const temps = [], regen = [];
+      h.time.forEach((zt, k) => {
+        if (!zt.startsWith(t.tag)) return;
+        const tv = h[`temperature_2m_previous_day1_${mid}`]?.[k];
+        const rv = h[`precipitation_previous_day1_${mid}`]?.[k];
+        if (tv != null) temps.push(tv);
+        if (rv != null) regen.push(rv);
+      });
+      if (temps.length < 20) continue;
+      fehlerSumme += Math.abs(Math.max(...temps) - t.istMax);
+      const sollNass = regen.reduce((a, b) => a + b, 0) >= 0.5;
+      if (sollNass === (t.istRegen >= 0.5)) regenTreffer++;
+      n++;
+    }
+    return n >= 4 ? { id: mid, name: sourceOf(mid).name,
+                      mae: fehlerSumme / n, regen: regenTreffer, tage: n } : null;
+  }).filter(Boolean).sort((a, b) => a.mae - b.mae);
+
+  if (wertung.length < 2) { box.innerHTML = ''; return; }
+
+  const sieger = wertung[0];
+  const alt = store.get('wf.bestModel', null);
+  /* Wechsel nur bei klarem Vorsprung (0,3 °C) auf den bisherigen Träger —
+     sonst genügt Rauschen für ein Hin und Her. */
+  const bisher = wertung.find(w => w.id === alt?.id);
+  const behalten = bisher && bisher.mae - sieger.mae < 0.3 ? bisher : sieger;
+  store.set('wf.bestModel', { id: behalten.id, mae: behalten.mae,
+                              tage: behalten.tage, stand: Date.now() });
+
+  const lernAktiv = sourceId() === 'lernend';
+  const schonGeladen = geladeneQuelle === behalten.id;
+  box.innerHTML = `
+    <p class="rm-kopf">Und welches Modell lag am besten?</p>
+    <div class="rm-reihe">${wertung.map((w, i) => `
+      <span class="rm-eintrag${w.id === behalten.id ? ' rm-sieger' : ''}">
+        <b>${i + 1}. ${esc(w.name)}</b>
+        <i>Ø ${dez(w.mae)} °C · Regen ${w.regen}/${w.tage}</i>
+      </span>`).join('')}
+    </div>
+    <p class="rm-text">${lernAktiv
+      ? (schonGeladen
+          ? `Die Vorhersage oben nutzt deshalb <b>${esc(sourceOf(behalten.id).name)}</b>. `
+          : `Ab der nächsten Aktualisierung nutzt die Vorhersage deshalb <b>${
+              esc(sourceOf(behalten.id).name)}</b>. `)
+        + `Gewechselt wird erst, wenn ein anderes Modell klar vorne liegt.`
+      : `Die Quelle „Lernend" würde zurzeit ${esc(sourceOf(behalten.id).name)} wählen — `
+        + `einstellbar unter der Stundenleiste.`}</p>`;
+  renderSource();          // Fußzeile unter der Stundenleiste nachziehen
 }
 
 /** Ab wann ist eine Abweichung schlimm? Ein Grad merkt niemand, drei schon. */
@@ -2603,7 +2723,7 @@ function openDaySheet(i) {
         ? `Die gefühlte Temperatur weicht am Nachmittag ab: ${gefuehltWarum(warm.temp, warm.gefuehlt, warm.wind, warm.feuchte)}.`
         : ''}</p>
     <p class="ds-stand">Stand ${standZeit ? hhmm(standZeit) : hhmm(Date.now())} Uhr · ${
-      esc(sourceOf(sourceId()).name)}. Die App lädt alle zehn Minuten nach; dieses Blatt
+      esc(quellenName())}. Die App lädt alle zehn Minuten nach; dieses Blatt
       zieht dann mit.</p>`;
 
   const l = $('#explainLink');
@@ -4226,7 +4346,7 @@ async function refresh(leise = false) {
     const standZeitpunkt = veraltet && standAlt ? standAlt : Date.now();
     $('#footStamp').textContent =
       `Zuletzt aktualisiert: ${new Date(standZeitpunkt).toLocaleTimeString('de-DE')} · ` +
-      `Quelle: ${sourceOf(sourceId()).name}` +
+      `Quelle: ${quellenName()}` +
       (veraltet ? ' · aus dem Zwischenspeicher' : umweg ? ' · über den Umweg geholt' : '');
     setzeStand(standZeitpunkt);
     tagesblattAuffrischen();     // erst jetzt — das Blatt zeigt den Stand mit an

@@ -708,16 +708,33 @@ function entscheide(lage, eintrag) {
   // Fall 2: Es ist trocken und Regen zieht auf
   if (!lage.naechste) return null;
   const p = lage.naechste;
-  const schonGesagt = alt.art === 'start' && Math.abs((alt.start || 0) - p.start) < START_TOLERANZ;
-  if (schonGesagt) return null;
-
   const minuten = Math.round((p.start - Date.now()) / 60000);
+
+  /* Zwei Meldungen je Phase, nicht eine:
+     1. Die Ankündigung, sobald der Beginn in Reichweite rückt (bis 150
+        Minuten) — zum Planen.
+     2. Die Erinnerung kurz vor dem Beginn (unter 25 Minuten) — zum
+        Handeln: Fenster zu, Wäsche rein, jetzt losfahren oder nicht.
+
+     Vorher gab es nur die erste. Eine Phase, die früh im Blick war, wurde
+     angekündigt und dann nie wieder erwähnt — wer die Meldung um 14 Uhr
+     las, stand um 17 Uhr trotzdem überrascht im Regen. Weiter als 150
+     Minuten voraus wird geschwiegen: Dafür gibt es die Tagesübersicht. */
+  if (minuten > 150) return null;
+
+  const gleichePhase = alt.art === 'start' && Math.abs((alt.start || 0) - p.start) < START_TOLERANZ;
+  if (gleichePhase) {
+    const schonKurzfristig = (alt.vorlauf ?? 999) <= 40;
+    const erinnerungFaellig = minuten <= 25 && !schonKurzfristig;
+    if (!erinnerungFaellig) return null;
+  }
+
   return {
     art: 'start',
     titel: minuten <= 20 ? `Gleich ${p.staerke}` : `In ${minuten} Minuten ${p.staerke}`,
     text: `Von ${p.startUhr} bis ${p.endeUhr} Uhr, rund ${p.summe.toFixed(1)} mm.` +
           (p.danachPause ? ` Danach Pause bis ${p.danachPause}.` : ''),
-    merker: { art: 'start', start: p.start, wann: Date.now(), regnete: false }
+    merker: { art: 'start', start: p.start, vorlauf: minuten, wann: Date.now(), regnete: false }
   };
 }
 
