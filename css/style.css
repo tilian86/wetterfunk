@@ -1857,9 +1857,18 @@ body.loading .hero-temp, body.loading .hero-desc { opacity: .45; }
 
 /* Zweizeilige Fassung im Tagesblatt: oben Zeitraum und Wetterwort, darunter
    Temperatur, Wind und Regenmenge für genau diesen Abschnitt. */
-.ds-span.ds-zwei { display: grid; gap: 3px; }
-.ds-kopf { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
-.ds-wort { flex: none; }
+/* `grid-template-columns: 1fr` ist hier nicht Zierde, sondern die Reparatur:
+   Die Grundregel oben setzt `justify-content: space-between` fürs Flex-Layout.
+   Beim Umschalten auf Grid gilt sie weiter — dort verteilt sie aber SPALTEN,
+   und eine einzelne Spalte rückt damit nach links und schrumpft auf ihren
+   Inhalt. Die Kopfzeile war dadurch nur so breit wie ihr Text, ihr eigenes
+   `space-between` hatte nichts zu verteilen, und das Wetterwort stand mal
+   hier, mal da — je nachdem, wie lang „09–10 Uhr" gegenüber „14–16 Uhr" ist. */
+.ds-span.ds-zwei {
+  display: grid; grid-template-columns: 1fr; gap: 3px; align-items: start;
+}
+.ds-kopf { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
+.ds-wort { flex: none; text-align: right; }
 .ds-zahlen {
   display: flex; flex-wrap: wrap; align-items: baseline;
   font-size: 11.5px; color: var(--ink-faint); font-variant-numeric: tabular-nums;
