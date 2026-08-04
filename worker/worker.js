@@ -648,7 +648,13 @@ async function regenPruefen(env) {
         eintrag.zuletzt = Date.now();
         if (meldung.art === 'warnung') {
           // Kennungen der gemeldeten Warnungen merken, höchstens 40 Stück
-          eintrag.warnGemeldet = [...(eintrag.warnGemeldet || []), ...meldung.kennungen].slice(-40);
+          /* Je Ereignisart ein Eintrag, der ersetzt wird — sonst wächst die
+             Liste bei jeder Aktualisierung und die ältesten fallen heraus,
+             worauf dieselbe Warnung wieder als neu gälte. */
+          const gemischt = new Map((eintrag.warnGemeldet || [])
+            .filter(x => x && typeof x === 'object').map(x => [x.k, x]));
+          for (const x of meldung.kennungen) gemischt.set(x.k, x);
+          eintrag.warnGemeldet = [...gemischt.values()].slice(-40);
         } else if (meldung.art === 'himmel') {
           eintrag.himmelGemeldet = [...(eintrag.himmelGemeldet || []), meldung.merker].slice(-12);
         } else {
@@ -797,12 +803,34 @@ function warnungMelden(daten, eintrag) {
   }
   if (!gefunden.length) return null;
 
-  // Dieselbe Warnung kommt für mehrere Warncells — nach Inhalt entdoppeln
-  const schon = new Set(eintrag.warnGemeldet || []);
+  /* Entdoppeln — und zwar nach dem Ereignis, nicht nach der Kennung.
+
+     Der Schlüssel enthielt den Beginn der Warnung. Den setzt der DWD bei
+     jeder Aktualisierung neu, und bei einem Gewitter aktualisiert er im
+     Minutentakt: Am 4. August kamen fünf identische Meldungen in einer
+     Stunde, dreimal davon mit demselben Wortlaut und derselben Endzeit.
+
+     Gemeldet wird deshalb je Ereignisart höchstens einmal — es sei denn,
+     die Stufe steigt (aus einer Gewitterwarnung wird eine Unwetterwarnung;
+     das gehört sofort durch) oder es sind drei Stunden vergangen, dann ist
+     es eine neue Lage. Eine verschobene Endzeit allein weckt niemanden. */
+  const RUHE_MS = 3 * 36e5;
+  const jetzt = Date.now();
+  /* Ältere Einträge waren einfache Zeichenketten. Sie werden übergangen —
+     einmalig kommt dadurch eine Meldung mehr, danach greift die neue Sperre. */
+  const alteListe = (eintrag.warnGemeldet || []).filter(x => x && typeof x === 'object');
+  const schon = new Map(alteListe.map(x => [x.k, x]));
+
+  const schluessel = (w) => `${w.type}|${String(w.event || '').toLowerCase()}`;
   const gesehen = new Set();
   const neu = gefunden.filter(w => {
-    const k = `${w.type}|${w.level}|${w.event}|${w.start}`;
-    if (gesehen.has(k) || schon.has(k)) return false;
+    const k = schluessel(w);
+    if (gesehen.has(k)) return false;
+    const alt = schon.get(k);
+    const wiederholen = !alt
+      || (Number(w.level) || 0) > (Number(alt.level) || 0)
+      || jetzt - (alt.wann || 0) > RUHE_MS;
+    if (!wiederholen) return false;
     gesehen.add(k);
     return true;
   }).sort((a, b) => (stufeVon(b).dringend ? 1 : 0) - (stufeVon(a).dringend ? 1 : 0));
@@ -824,7 +852,8 @@ function warnungMelden(daten, eintrag) {
     titel: `${stufe.dringend ? '⚠️ ' : ''}${stufe.wort}: ${ereignis}`,
     text: `${w.regionName}${bis ? `, bis ${bis} Uhr` : ''}.${weitere} ` +
           `${String(w.description || '').slice(0, 150)}`.trim().slice(0, 180),
-    kennungen: neu.map(x => `${x.type}|${x.level}|${x.event}|${x.start}`)
+    kennungen: neu.map(x => ({ k: `${x.type}|${String(x.event || '').toLowerCase()}`,
+                               level: Number(x.level) || 0, wann: Date.now() }))
   };
 }
 
