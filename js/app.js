@@ -3882,6 +3882,7 @@ const arPos = () => arOrtPos || { lat: place.lat, lon: place.lon };
 
 /** Zustand des letzten Bildes — Grundlage für das Einmessen. */
 let arLetzteSonne = null;
+let arLetzterMond = null;
 
 /* Einmessen: Der Finger zeigt auf die echte Sonne, die App weiß, wo sie sie
    vermutet. Die Differenz ist der Fehler von Kompass und Neigungsmesser und
@@ -3891,8 +3892,13 @@ function arEinmessen(e) {
     toast('Ohne Kompass lässt sich nichts einmessen.', 3500);
     return;
   }
-  if (arLetzteSonne.hoehe < -1) {
-    toast('Die Sonne ist unter dem Horizont — einmessen geht nur, wenn du sie siehst.', 4000);
+  /* Eingemessen wird an dem Gestirn, das gerade am Himmel steht: tagsüber
+     die Sonne, nachts der Mond. Beides zu verlangen hieße, dass die Ansicht
+     die halbe Zeit schief bleibt. */
+  const nachSonne = arLetzteSonne.hoehe >= -1;
+  const ziel = nachSonne ? arLetzteSonne : arLetzterMond;
+  if (!ziel || ziel.hoehe < -1) {
+    toast('Sonne und Mond sind beide unter dem Horizont — dann gibt es nichts zum Einmessen.', 4500);
     return;
   }
   const back = $('#arBack');
@@ -3900,7 +3906,8 @@ function arEinmessen(e) {
   const t = e.touches?.[0] || e.changedTouches?.[0] || e;
   const x = t.clientX - b.left, y = t.clientY - b.top;
 
-  const { azi, hoehe, proGrad, mitteY, breite } = arLetzteSonne;
+  const { proGrad, mitteY, breite } = arLetzteSonne;
+  const { azi, hoehe } = ziel;
 
   // Bildpunkt zurück in Himmelskoordinaten rechnen
   const getipptAb = (x - breite / 2) / proGrad;          // Grad neben der Blickmitte
@@ -3933,7 +3940,8 @@ function arEinmessen(e) {
   store.set('wf.arAz', Math.round(azVersatz * 10) / 10);
   store.set('wf.arHo', Math.round(hoVersatz * 10) / 10);
   $('#arKal').hidden = false;
-  toast('Eingemessen. Die Bahn sitzt jetzt auf der Sonne.', 3000);
+  toast(nachSonne ? 'Eingemessen. Die Bahn sitzt jetzt auf der Sonne.'
+                  : 'Eingemessen. Die Bahn sitzt jetzt auf dem Mond.', 3000);
   arHinweisText();
 }
 
@@ -4211,6 +4219,10 @@ function arZeichnen() {
   // Der Mond zur selben Zeit, mit der Phase als Schatten auf der Scheibe
   const mNow = moonHorizont(zeit, ort.lat, ort.lon);
   const mp = punkt(mNow.azimut, mNow.hoehe);
+  /* Auch am Mond lässt sich einmessen. Nachts ist er das einzige, was am
+     Himmel steht — bisher hieß es dann „einmessen geht nur, wenn du die
+     Sonne siehst", und die Ansicht blieb schief, bis es hell wurde. */
+  arLetzterMond = { azi: mNow.azimut, hoehe: mNow.hoehe, bild: mp };
   if (mp) {
     const ph = moonPhase(zeit);
     const r = 15;
@@ -4232,31 +4244,48 @@ function arZeichnen() {
       mp[0], mp[1] + 30);
   }
 
-  /* Wegweiser zur Sonne — aber nur, wenn sie wirklich nicht zu sehen ist.
+  /* Wegweiser nur zu dem, was am Himmel auch steht.
 
-     Vorher hing das allein an `sp`, und `sp` fehlt schon, wenn die Sonne
-     seitlich mehr als 70° abliegt. Genau das behauptet ein unkalibrierter
-     Kompass ständig: „Sonne ist rechts", während sie geradeaus steht und
-     nur ein Baum davor. Deshalb wird jetzt unterschieden — seitlich daneben,
-     senkrecht daneben, oder im Bild. Und solange nicht eingemessen ist,
-     steht dabei, dass die Richtung selbst unsicher sein kann. */
+     Nachts um halb drei stand hier „Sonne ist links" — die Sonne war
+     dreißig Grad unter dem Horizont, auf der anderen Seite der Erde. Der
+     Hinweis schickte einen zielsicher gegen die Wand. Und tagsüber kam er
+     schon, wenn die Sonne seitlich 70° ablag, was ein unkalibrierter
+     Kompass ständig behauptet, während sie geradeaus stand.
+
+     Gezeigt wird deshalb nur, was über dem Horizont steht: bei Tag die
+     Sonne, nachts der Mond. Ist beides unten, steht genau das da — und der
+     Bogen bleibt als Weg des Tages sichtbar, ohne einen Wegweiser dorthin. */
   if (blick != null) {
-    let ab = sAzi - blick;
-    while (ab > 180) ab -= 360;
-    while (ab < -180) ab += 360;
+    const wohin = (azimut, bild) => {
+      let ab = azimut - blick;
+      while (ab > 180) ab -= 360;
+      while (ab < -180) ab += 360;
+      if (Math.abs(ab) > 70) return ab > 0 ? { text: 'ist rechts →' } : { text: 'ist links', pfeil: true };
+      if (bild && bild[1] < 8) return { text: 'ist weiter oben ↑' };
+      if (bild && bild[1] > b.height - 8) return { text: 'ist weiter unten ↓' };
+      return null;                       // im Bild — dann braucht es keinen Hinweis
+    };
 
-    const seitlichDraussen = Math.abs(ab) > 70;
-    const senkrechtDraussen = sp && (sp[1] < 8 || sp[1] > b.height - 8);
-    let wort = null;
-    if (seitlichDraussen) wort = ab > 0 ? 'Sonne ist rechts →' : '← Sonne ist links';
-    else if (senkrechtDraussen) wort = sp[1] < 8 ? 'Sonne ist weiter oben ↑' : 'Sonne ist weiter unten ↓';
+    const sonneOben = sHoehe > -1;
+    const mondOben = mNow.hoehe > -1;
+    let wort = null, findbar = false;
+
+    if (sonneOben) {
+      const r = wohin(sAzi, sp);
+      if (r) { wort = `${r.pfeil ? '← ' : ''}Sonne ${r.text}`; findbar = true; }
+    } else if (mondOben) {
+      const r = wohin(mNow.azimut, mp);
+      if (r) { wort = `${r.pfeil ? '← ' : ''}Mond ${r.text}`; findbar = true; }
+    } else {
+      wort = 'Sonne und Mond sind gerade unter dem Horizont';
+    }
 
     if (wort) {
       const kal = Math.abs(kor.azimut) > 0.5 || Math.abs(kor.hoehe) > 0.5;
-      g.fillStyle = 'rgba(255,255,255,.9)';
-      g.font = '600 15px -apple-system, sans-serif';
+      g.fillStyle = findbar ? 'rgba(255,255,255,.9)' : 'rgba(255,255,255,.62)';
+      g.font = `${findbar ? '600 15px' : '13.5px'} -apple-system, sans-serif`;
       g.fillText(wort, b.width / 2, b.height / 2);
-      if (!kal) {
+      if (findbar && !kal) {
         g.fillStyle = 'rgba(255,255,255,.7)';
         g.font = '12.5px -apple-system, sans-serif';
         g.fillText('Siehst du sie trotzdem? Tippe darauf — dann stimmt die Richtung.',
