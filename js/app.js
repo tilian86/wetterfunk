@@ -88,6 +88,25 @@ function baueWolkenKonsens() {
 /** Bewölkung für eine Stunde — Mittelweg, sonst der Wert der Datenquelle. */
 const wolkenFuer = (zeitISO, ersatz) => wolkenMittel?.get(zeitISO) ?? ersatz;
 
+/* Der Wettercode kommt aus einem einzigen Modell — und damit auch das
+   Zeichen in der Stundenleiste. Ohne diesen Schritt widerspricht sich die
+   App: Im Tagesblatt stünde „heiter" aus dem Mittelweg, in der Leiste
+   darüber eine Sonne oder eine geschlossene Wolke aus ICON-D2.
+
+   Fällt nichts, richtet sich das Zeichen deshalb nach dem Mittelweg.
+   Fällt etwas — oder ist es Nebel oder Gewitter —, bleibt der Code des
+   feinen Modells: Dafür ist es da. */
+function himmelCode(i) {
+  const h = data?.hourly;
+  if (!h) return 0;
+  const code = h.weather_code[i];
+  if (code === 45 || code === 48) return code;          // Nebel
+  if (code >= 95) return code;                          // Gewitter
+  if ((h.precipitation[i] ?? 0) >= REGEN.nichts) return code;
+  const w = wolkenFuer(h.time[i], h.cloud_cover?.[i] ?? 0);
+  return w < 25 ? 0 : w < 55 ? 1 : w < 80 ? 2 : 3;
+}
+
 /** Auswählbare Datenquellen für Stunden- und Tageswerte. */
 const SOURCES = [
   { id: 'best_match', name: 'Bestes verfügbares', desc: 'Automatisch — in Deutschland DWD ICON-D2 (2 km) für die ersten zwei Tage, danach ICON-EU und ICON global. Das feinste Gitter gewinnt: 2 km sehen Täler und Höhenzüge, die ein 25-km-Modell überfliegt.', best: true },
@@ -454,14 +473,16 @@ function renderHero() {
      „Leichte Schauer", während draußen nichts fiel. Fällt zu wenig für den
      Code, wird auf die Bewölkung zurückgegriffen: Das beschreibt den Himmel
      ehrlicher als ein Regenwort ohne Regen. */
-  const codeRegen = c.weather_code >= 51 && c.weather_code <= 82;
   const m15 = data.minutely_15;
   const jetzt15 = m15?.time ? proStunde(m15.precipitation?.[nowIndex(m15.time)]) : 0;
-  const zuWenig = (c.precipitation ?? 0) < REGEN.nichts && jetzt15 < REGEN.nichts;
-  const jetztWolken = wolkenFuer(data.hourly?.time?.[nowIndex(data.hourly.time)],
-                                 c.cloud_cover ?? 0);
-  const wolkenCode = jetztWolken > 80 ? 3 : jetztWolken > 40 ? 2 : 1;
-  const zeigeCode = codeRegen && zuWenig ? wolkenCode : c.weather_code;
+  const nassJetzt = (c.precipitation ?? 0) >= REGEN.nichts || jetzt15 >= REGEN.nichts;
+  const hi = nowIndex(data.hourly.time);
+  /* Dieselbe Regel wie in der Leiste darunter: Fällt nichts, beschreibt
+     der Mittelweg den Himmel. Sonst gilt der Code des feinen Modells. */
+  const zeigeCode = nassJetzt || c.weather_code === 45 || c.weather_code === 48
+                    || c.weather_code >= 95
+    ? c.weather_code
+    : himmelCode(hi);
 
   $('#heroIcon').innerHTML = WX.icon(zeigeCode, c.is_day);
   $('#heroTemp').textContent = round(c.temperature_2m);
@@ -945,7 +966,7 @@ function renderHourly() {
     const isNow = n === 0 || (items[0].kind === 'sun' && n === 1);
     return `<div class="hcol${isNow ? ' is-now' : ''}" data-zeit="${x.t}" data-i="${i}">
       <span class="h-time">${isNow ? 'Jetzt' : hhmm(x.t)}</span>
-      <span class="h-icon">${WX.icon(h.weather_code[i], h.is_day[i])}</span>
+      <span class="h-icon">${WX.icon(himmelCode(i), h.is_day[i])}</span>
       <span class="h-temp" style="--rel:${rel.toFixed(2)}">${temp}°</span>
       <span class="h-rain ${prob >= 25 ? 'on' : ''}">
         <span class="h-bar"><i style="height:${clamp(prob, 3, 100)}%"></i></span>
@@ -1059,7 +1080,7 @@ function daySymbol(dayIndex) {
   if (idx.some(i => [95, 96, 99].includes(h.weather_code[i]))) return 95;
 
   // Sonst: mittlere Bewölkung der Tagstunden entscheidet
-  const cc = idx.map(i => h.cloud_cover?.[i]).filter(v => v != null);
+  const cc = idx.map(i => wolkenFuer(h.time[i], h.cloud_cover?.[i])).filter(v => v != null);
   if (!cc.length) return raw;
   const avg = cc.reduce((a, b) => a + b, 0) / cc.length;
   if (avg < 20) return 0;
@@ -3557,7 +3578,10 @@ function dayHours(dayISO) {
 function daySpans(stunden) {
   /* „Regen" ab 0,1 mm in der Stunde war zu großzügig: Darunter stand dann
      „🌧 Regen · kaum spürbar" in einer Zeile. Zwei Stufen lösen das auf. */
-  const art = (s) => (s.mm >= 0.5 ? 'regen' : s.mm >= 0.1 ? 'tropfen'
+  /* Dieselbe Schwelle wie überall sonst (REGEN.nichts): Bei 0,1 mm stand
+     hier „ein paar Tropfen", während die Leiste darüber „bedeckt" zeigte
+     und der Klartext „trocken" sagte — drei Aussagen für eine Stunde. */
+  const art = (s) => (s.mm >= 0.5 ? 'regen' : s.mm >= REGEN.nichts ? 'tropfen'
                     : !s.tags ? 'nacht'
                     : s.wolken < 25 ? 'sonnig' : s.wolken < 55 ? 'heiter'
                     : s.wolken < 80 ? 'wolkig' : 'bedeckt');
@@ -3701,10 +3725,10 @@ function openStundeSheet(i) {
   $('#explainTitle').textContent = `${tag}, ${hhmm(t)} Uhr`;
   $('#explainText').innerHTML = `
     <div class="sh-kopf">
-      <span class="sh-icon">${WX.icon(h.weather_code[i], h.is_day[i])}</span>
+      <span class="sh-icon">${WX.icon(himmelCode(i), h.is_day[i])}</span>
       <span class="sh-haupt">
         <b>${round(temp)}°</b>
-        <i>${esc(WX.text(h.weather_code[i], h.is_day[i]))}${wandel}</i>
+        <i>${esc(WX.text(himmelCode(i), h.is_day[i]))}${wandel}</i>
       </span>
     </div>
     <dl class="ds-facts">
