@@ -27,6 +27,7 @@
 import { sendPush } from './push.js';
 import { sonnenTermine, mondTermine, mondPhase } from './himmel.js';
 import { uebersicht } from './uebersicht.js';
+import { taeglichePruefung, pruefVerlauf, pruefeOrt } from './pruefung.js';
 
 // Nur diese Absender dürfen den Worker nutzen.
 const ALLOWED_ORIGINS = [
@@ -75,7 +76,8 @@ export default {
        aufgerufen wird und nicht aus der App heraus. Ihr Schutz ist das
        Kennwort, nicht die Herkunft. */
     if (url.pathname.startsWith('/uebersicht')) {
-      return uebersicht(url, request, env, { gleich, zuVieleAnfragen, sendPush });
+      return uebersicht(url, request, env, { gleich, zuVieleAnfragen, sendPush,
+                                            pruefung: { pruefeOrt, pruefVerlauf } });
     }
 
     /* Absender MUSS bekannt sein — auch wenn gar keiner mitgeschickt wird.
@@ -552,6 +554,13 @@ export default {
      nächsten zwei Stunden Regen beginnt und die letzte Meldung für diesen
      Ort mindestens drei Stunden her ist — sonst wird es zur Belästigung. */
   async scheduled(event, env, ctx) {
+    /* Zwei Zeitpläne: alle fünf Minuten die Regenwache, einmal am Tag der
+       Prüflauf. Der Prüflauf liegt um 03:20, wenn die Reanalyse für den
+       Vortag steht und niemand die App benutzt. */
+    if (event.cron === '20 3 * * *') {
+      ctx.waitUntil(taeglichePruefung(env));
+      return;
+    }
     ctx.waitUntil(regenPruefen(env));
   }
 };

@@ -30,7 +30,7 @@ const KOPF = {
 const sauber = (s, max) => String(s || '')
   .replace(/[\u0000-\u001f\u007f]/g, '').trim().slice(0, max);
 
-export async function uebersicht(url, request, env, { gleich, zuVieleAnfragen, sendPush }) {
+export async function uebersicht(url, request, env, { gleich, zuVieleAnfragen, sendPush, pruefung }) {
   if (!env.ADMIN_PASSWORT) {
     return new Response('Kennwort ist nicht eingerichtet.\n\n'
       + 'Einmalig setzen mit:  wrangler secret put ADMIN_PASSWORT\n',
@@ -99,6 +99,24 @@ export async function uebersicht(url, request, env, { gleich, zuVieleAnfragen, s
     }
     if (status >= 300) return antwort({ error: `Push-Dienst antwortet ${status}` }, 502);
     return antwort({ ok: true });
+  }
+
+  /* Der Prüflauf: Verlauf abrufen, oder von Hand anstoßen. Von Hand ist
+     für den ersten Lauf gedacht — sonst käme das Ergebnis erst am nächsten
+     Morgen, und bis dahin sähe die Seite leer und kaputt aus. */
+  if (url.pathname === '/uebersicht/pruefung') {
+    if (!pruefung) return antwort({ error: 'Prüflauf nicht eingebunden' }, 503);
+    if (req.starten) {
+      const tag = new Date(Date.now() - (req.vorTagen || 1) * 86400000).toISOString().slice(0, 10);
+      const r = await pruefung.pruefeOrt(req.lat ?? 48.5216, req.lon ?? 9.0576, tag);
+      if (!r) return antwort({ error: `Für ${tag} liegen keine vergleichbaren Messwerte vor` }, 404);
+      const vorhanden = await env.WF_PUSH.get(`pruef:${tag}`, 'json');
+      const orte = [...(vorhanden?.orte || []).filter(o => o.lat !== r.lat), r];
+      await env.WF_PUSH.put(`pruef:${tag}`, JSON.stringify({ tag, orte, stand: Date.now() }),
+                            { expirationTtl: 90 * 86400 });
+      return antwort({ ok: true, tag, ergebnis: r });
+    }
+    return antwort(await pruefung.pruefVerlauf(env, req.tage || 30));
   }
 
   if (url.pathname !== '/uebersicht/daten') return antwort({ error: 'Nicht gefunden' }, 404);
