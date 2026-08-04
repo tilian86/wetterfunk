@@ -867,8 +867,27 @@ function warnungMelden(daten, eintrag) {
 }
 
 /** Aus der Lage und dem zuletzt Gemeldeten ableiten, ob etwas zu sagen ist. */
+/* Nachts nur, wenn es sich lohnt. Ein paar Tropfen um Viertel vor zwölf
+   helfen niemandem, der schläft — der Alarm soll wecken, wenn es etwas zu
+   entscheiden gibt, nicht wenn die Kapuze reicht. Amtliche Warnungen und
+   kräftiger Regen kommen weiter jederzeit durch. */
+const NACHT_VON = 22, NACHT_BIS = 6;
+function istNacht(tz) {
+  try {
+    /* Auf Deutsch liefert Intl „00 Uhr" statt „00" — `+"00 Uhr"` ist NaN,
+       und mit NaN sind beide Vergleiche unten falsch. Die Nachtruhe griff
+       dadurch überhaupt nie. Deshalb die Ziffern herausziehen. */
+    const txt = new Intl.DateTimeFormat('de-DE',
+      { hour: '2-digit', hour12: false, timeZone: tz || 'Europe/Berlin' }).format(new Date());
+    const h = Number((txt.match(/\d+/) || [])[0]);
+    if (!Number.isFinite(h)) return false;
+    return h >= NACHT_VON || h < NACHT_BIS;
+  } catch { return false; }
+}
+
 function entscheide(lage, eintrag) {
   const alt = eintrag.gemeldet || {};
+  const nachts = istNacht(eintrag.tz);
 
   /* Solange es regnet, ist die Vorhersage vom Ende die eine Zahl, die zählt —
      und sie verschiebt sich. Deshalb wird nachgemeldet, wenn sie sich um mehr
@@ -894,12 +913,18 @@ function entscheide(lage, eintrag) {
         art: 'ende',
         titel: was,
         text: `Hält mindestens die nächste halbe Stunde an · ${lage.laeuft.rat}`,
-        merker: { art: 'haelt', ende: lage.laeuft.ende, wann: Date.now(), regnete: true }
+        merker: { art: 'haelt', ende: lage.laeuft.ende, wann: Date.now(),
+                  regnete: true, leicht: !!lage.laeuft.leicht }
       };
     }
 
     // Nur ansagen, wenn das Ende absehbar ist und nicht in zwei Minuten eintritt
     if (minuten < 10 || minuten > 180) return null;
+
+    /* „Tropfen bis etwa 00:20 — noch 10 Minuten" ist keine Nachricht wert.
+       Wer ein paar Tropfen abbekommt, merkt es selbst, und wann sie
+       aufhören, ändert keine Entscheidung. */
+    if (lage.laeuft.leicht) return null;
 
     const gleichesEnde = alt.art === 'ende'
       && Math.abs((alt.ende || 0) - lage.laeuft.ende) < ENDE_TOLERANZ;
@@ -914,14 +939,17 @@ function entscheide(lage, eintrag) {
       titel: `${was} bis etwa ${lage.laeuft.endeUhr}`,
       text: `Noch ${minuten} Min.${lage.laeuft.leicht ? ' · nur ein paar Tropfen' : ''}${
         lage.naechste ? ` · ab ${lage.naechste.startUhr} wieder` : ''}`,
-      merker: { art: 'ende', ende: lage.laeuft.ende, wann: Date.now(), regnete: true }
+      merker: { art: 'ende', ende: lage.laeuft.ende, wann: Date.now(),
+                regnete: true, leicht: !!lage.laeuft.leicht }
     };
   }
 
   /* Fall 1b: Es hat aufgehört. Beim letzten Durchgang lief noch Regen —
      dann gehört die Entwarnung dazu, sonst wartet man weiter im Trockenen
      auf ein Ende, das längst eingetreten ist. */
-  if (alt.regnete) {
+  /* Entwarnung nur, wenn vorher wirklich Regen gemeldet wurde. Nach ein
+     paar Tropfen ist „von oben kommt nichts mehr" eine Meldung über nichts. */
+  if (alt.regnete && !alt.leicht) {
     return {
       art: 'vorbei',
       titel: 'Von oben kommt nichts mehr',
@@ -948,6 +976,8 @@ function entscheide(lage, eintrag) {
      las, stand um 17 Uhr trotzdem überrascht im Regen. Weiter als 150
      Minuten voraus wird geschwiegen: Dafür gibt es die Tagesübersicht. */
   if (minuten > 150) return null;
+  // Nachts schweigt die Ankündigung, solange es bei Tropfen bleibt
+  if (nachts && p.leicht) return null;
 
   const gleichePhase = alt.art === 'start' && Math.abs((alt.start || 0) - p.start) < START_TOLERANZ;
   if (gleichePhase) {
