@@ -3914,9 +3914,19 @@ function arEinmessen(e) {
   const azVersatz = store.get('wf.arAz', 0) + (getipptAb - sollAb);
   const hoVersatz = store.get('wf.arHo', 0) + (getipptHoehe - hoehe);
 
-  // Über 45° ist es kein Messfehler mehr, sondern ein Fehlgriff
-  if (Math.abs(getipptAb - sollAb) > 45 || Math.abs(getipptHoehe - hoehe) > 45) {
-    toast('Das liegt zu weit auseinander. Drehe dich erst zur Sonne, dann genau darauf tippen.', 4500);
+  /* Hier stand eine Grenze von 45° auf die Abweichung — gedacht gegen
+     Fehlgriffe, in Wahrheit eine Sperre gegen genau den Fall, für den das
+     Einmessen da ist. Der Kompass eines iPhones liegt ohne Kalibrierung
+     gern 60° und mehr daneben, und die Neigung noch weiter: Am 3. August
+     stand die Sonne 46° über der gezeichneten Bahn, das Antippen wurde
+     abgelehnt, und der Fehler blieb.
+
+     Wer auf die Sonne tippt, hat recht — der Tipp IST die Messung. Geprüft
+     wird deshalb nur noch, ob das Ergebnis überhaupt eine Kompassabweichung
+     sein kann. Und wenn nicht, führt der Weg über „Zurück auf reine
+     Kompasswerte", nicht über eine Absage. */
+  if (Math.abs(azVersatz) > 150 || Math.abs(hoVersatz) > 80) {
+    toast('So weit kann kein Kompass danebenliegen. Erst zurücksetzen, dann neu einmessen.', 5000);
     return;
   }
 
@@ -4222,15 +4232,37 @@ function arZeichnen() {
       mp[0], mp[1] + 30);
   }
 
-  // Wenn nichts im Bild ist, in welche Richtung man sich drehen muss
-  if (blick != null && !sp) {
+  /* Wegweiser zur Sonne — aber nur, wenn sie wirklich nicht zu sehen ist.
+
+     Vorher hing das allein an `sp`, und `sp` fehlt schon, wenn die Sonne
+     seitlich mehr als 70° abliegt. Genau das behauptet ein unkalibrierter
+     Kompass ständig: „Sonne ist rechts", während sie geradeaus steht und
+     nur ein Baum davor. Deshalb wird jetzt unterschieden — seitlich daneben,
+     senkrecht daneben, oder im Bild. Und solange nicht eingemessen ist,
+     steht dabei, dass die Richtung selbst unsicher sein kann. */
+  if (blick != null) {
     let ab = sAzi - blick;
     while (ab > 180) ab -= 360;
     while (ab < -180) ab += 360;
-    g.fillStyle = 'rgba(255,255,255,.9)';
-    g.font = '600 15px -apple-system, sans-serif';
-    g.fillText(ab > 0 ? 'Sonne ist rechts →' : '← Sonne ist links',
-      b.width / 2, b.height / 2);
+
+    const seitlichDraussen = Math.abs(ab) > 70;
+    const senkrechtDraussen = sp && (sp[1] < 8 || sp[1] > b.height - 8);
+    let wort = null;
+    if (seitlichDraussen) wort = ab > 0 ? 'Sonne ist rechts →' : '← Sonne ist links';
+    else if (senkrechtDraussen) wort = sp[1] < 8 ? 'Sonne ist weiter oben ↑' : 'Sonne ist weiter unten ↓';
+
+    if (wort) {
+      const kal = Math.abs(kor.azimut) > 0.5 || Math.abs(kor.hoehe) > 0.5;
+      g.fillStyle = 'rgba(255,255,255,.9)';
+      g.font = '600 15px -apple-system, sans-serif';
+      g.fillText(wort, b.width / 2, b.height / 2);
+      if (!kal) {
+        g.fillStyle = 'rgba(255,255,255,.7)';
+        g.font = '12.5px -apple-system, sans-serif';
+        g.fillText('Siehst du sie trotzdem? Tippe darauf — dann stimmt die Richtung.',
+          b.width / 2, b.height / 2 + 22);
+      }
+    }
   }
   if (blick == null) {
     g.fillStyle = 'rgba(255,255,255,.75)';
