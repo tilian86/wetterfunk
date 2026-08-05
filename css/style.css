@@ -980,7 +980,10 @@ select#bfModel {
 .drow.is-today .d-day { color: var(--ink); font-weight: 700; }
 .drow:active { background: rgba(255,255,255,.03); }
 
-.d-day { font-size: 14.5px; font-weight: 500; color: var(--ink-dim); }
+/* Wochentag und Datum untereinander: „Do" allein ist über zehn Tage
+   zweideutig, und nebeneinander sprengt es die 44-px-Spalte. */
+.d-day { font-size: 14.5px; font-weight: 500; color: var(--ink-dim); line-height: 1.1; }
+.d-day i { display: block; font-style: normal; font-size: 10.5px; opacity: .62; }
 .d-icon { height: 30px; }
 .d-icon .wx { width: 30px; height: 30px; }
 
