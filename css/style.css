@@ -1604,6 +1604,25 @@ body.loading .hero-temp, body.loading .hero-desc { opacity: .45; }
   font-size: 11.5px; font-weight: 600;
   background: rgba(255,255,255,.06); border: 1px solid var(--card-line); color: var(--ink-dim);
 }
+/* Sichtaussage und Kalenderknopf teilen sich eine Zeile; wird es eng,
+   rutscht der Knopf darunter statt die Karte zu sprengen. */
+.sky-fuss {
+  display: flex; flex-wrap: wrap; align-items: center;
+  gap: 8px; justify-content: space-between; margin-top: 9px;
+}
+.sky-fuss .sky-view { margin-top: 0; }
+.sky-cal {
+  display: inline-flex; align-items: center; gap: 6px; margin-left: auto;
+  padding: 6px 12px; border-radius: 30px; font-size: 11.5px; font-weight: 600;
+  background: rgba(255,255,255,.06); border: 1px solid var(--card-line);
+  color: var(--ink-dim); cursor: pointer;
+}
+.sky-cal:active { background: rgba(255,255,255,.12); }
+.sky-cal svg {
+  width: 14px; height: 14px; flex: none;
+  fill: none; stroke: currentColor; stroke-width: 1.9;
+  stroke-linecap: round; stroke-linejoin: round;
+}
 .sky-view.ok  { color: var(--good); border-color: rgba(79,212,138,.35); }
 .sky-view.mid { color: var(--warn); border-color: rgba(255,179,64,.35); }
 .sky-view.bad { color: var(--bad);  border-color: rgba(255,107,94,.32); }
