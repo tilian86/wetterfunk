@@ -263,6 +263,10 @@ const store = {
 
 const hhmm = (d) => new Date(d).toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' });
 const weekday = (d) => new Date(d).toLocaleDateString('de-DE', { weekday: 'short' });
+/* „Do" ist über zehn Tage nicht eindeutig: Tag 2 und Tag 9 heißen beide so.
+   Überall dort, wo eine Liste über eine Woche hinausreicht, gehört das Datum
+   dazu — sonst sucht man das schöne Wochenende in der falschen Zeile. */
+const tagDatum = (d) => { const t = new Date(d); return `${t.getDate()}.${t.getMonth() + 1}.`; };
 
 function toast(msg, ms = 2600) {
   const t = $('#toast');
@@ -1300,7 +1304,8 @@ function renderDaily() {
     const worte = mm >= 0.2 ? rainWords(mm) : null;
 
     return `<div class="drow${isToday ? ' is-today' : ''}" data-day="${i}">
-      <span class="d-day">${isToday ? 'Heute' : weekday(day)}</span>
+      <span class="d-day">${isToday ? 'Heute' : weekday(day)}${
+        isToday ? '' : `<i>${tagDatum(day)}</i>`}</span>
       <span class="d-icon" title="${WX.text(daySymbol(i), 1)}">${WX.icon(daySymbol(i), 1)}</span>
       <span class="d-vals">
         <span class="d-sunval">☀ ${sun} Std.</span>
@@ -1525,8 +1530,11 @@ function renderMeteogramm() {
   let namen = '';
   for (let k = 0; k < n; k++) {
     if (zeiten[k].getHours() !== 12) continue;
+    /* Erste Woche als Wort, zweite als Datum: Ab da wiederholen sich die
+       Wochennamen, und „Do" stand sonst zweimal an derselben Achse. */
+    const tag = k / 24;
     namen += `<text class="mg-wtag" x="${X(k).toFixed(1)}" y="${METEO.h - 3}">${
-      k < 12 ? 'heute' : weekday(zeiten[k])}</text>`;
+      k < 12 ? 'heute' : tag >= 7 ? tagDatum(zeiten[k]) : weekday(zeiten[k])}</text>`;
   }
 
   // Nachtstreifen, damit man Tag und Nacht auseinanderhält
