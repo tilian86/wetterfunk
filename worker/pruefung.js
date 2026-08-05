@@ -34,16 +34,19 @@ async function holJson(url, ms = 20000) {
 /* Die nächste Station, die gestern wirklich gemeldet hat. Ohne Messung
    keine Prüfung — dann fehlt der Tag lieber, als dass er geraten wird. */
 async function messung(lat, lon, tag) {
-  /* `last_date` muss der FOLGETAG sein. Mit demselben Datum in beiden
-     Feldern liefert Bright Sky genau eine Stunde — Mitternacht — und die
-     Prüfung fiel mangels Messwerten still aus. */
+  /* Geholt wird nicht nur der Prüftag, sondern auch die 26 Tage davor:
+     Daraus lernt die Prüfung dieselbe Ortskorrektur, die auch die App
+     benutzt — sonst prüfte sie ein Verfahren, das niemand mehr sieht.
+     `last_date` muss dabei der FOLGETAG sein; mit demselben Datum in
+     beiden Feldern liefert Bright Sky genau eine Stunde. */
+  const von = iso(Date.parse(tag) - 26 * TAG);
   const bis = iso(Date.parse(tag) + TAG);
   const d = await holJson(`https://api.brightsky.dev/weather?lat=${lat}&lon=${lon}`
-    + `&date=${tag}&last_date=${bis}&tz=Europe/Berlin`);
-  const w = (d?.weather || []).filter(x => x.temperature != null && x.timestamp.startsWith(tag));
-  if (w.length < 12) return null;
+    + `&date=${von}&last_date=${bis}&tz=Europe/Berlin`, 30000);
+  const alle = (d?.weather || []).filter(x => x.temperature != null);
+  if (alle.filter(x => x.timestamp.startsWith(tag)).length < 12) return null;
   const karte = new Map();
-  for (const x of w) karte.set(x.timestamp.slice(0, 13), x);
+  for (const x of alle) karte.set(x.timestamp.slice(0, 13), x);
   return karte;
 }
 
@@ -64,7 +67,7 @@ export async function pruefeOrt(lat, lon, tag) {
      Luft. Mit fest eingetragenen zwei Tagen fehlte jeder Prüftag, der
      länger als gestern zurücklag — das Fenster reichte gar nicht dorthin. */
   const zurueck = Math.min(90, Math.max(2,
-    Math.ceil((Date.now() - Date.parse(tag)) / TAG) + 2));
+    Math.ceil((Date.now() - Date.parse(tag)) / TAG) + 27));
   const [vh, mess, wolken] = await Promise.all([
     holJson('https://previous-runs-api.open-meteo.com/v1/forecast?'
       + new URLSearchParams({
@@ -83,8 +86,36 @@ export async function pruefeOrt(lat, lon, tag) {
 
   const H = vh.hourly;
   const feld = (art, m) => H[`${art}_previous_day1_${m}`] || [];
+  const tempMittelBei = (i) => {
+    const w = MODELLE.map(x => feld('temperature_2m', x)[i]).filter(v => v != null)
+      .sort((a, b) => a - b);
+    if (w.length < 3) return null;
+    return w.length % 2 ? w[(w.length - 1) / 2] : (w[w.length / 2 - 1] + w[w.length / 2]) / 2;
+  };
+
+  /* Ortskorrektur wie in der App: je Tageszeit-Block der mittlere Fehler
+     der 25 Tage VOR dem Prüftag — die Korrektur kennt nur Vergangenheit,
+     sonst prüfte sie sich selbst. Für beide Grundlagen getrennt gelernt. */
+  const block = (h) => Math.floor(h / 4);
+  const lerne = (wertBei) => {
+    const summen = Array.from({ length: 6 }, () => ({ s: 0, n: 0 }));
+    for (let i = 0; i < H.time.length; i++) {
+      const t = H.time[i];
+      if (t.slice(0, 10) >= tag) continue;              // nur Vergangenheit
+      const m = mess?.get(t.slice(0, 13));
+      const v = wertBei(i);
+      if (!m || v == null) continue;
+      const b = block(+t.slice(11, 13));
+      summen[b].s += v - m.temperature; summen[b].n++;
+    }
+    if (summen.reduce((a, x) => a + x.n, 0) < 60) return null;
+    return summen.map(x => (x.n >= 8 ? x.s / x.n : 0));
+  };
+  const offsIcon = lerne((i) => feld('temperature_2m', 'icon_d2')[i]);
+  const offsMittel = lerne(tempMittelBei);
 
   const tempFehler = [], tempFehlerMittel = [];
+  const tempFehlerKorr = [], tempFehlerMittelKorr = [];
   let regenRichtig = 0, regenGesamt = 0, regenVerpasst = 0, regenFehlalarm = 0;
   const himmelEinzel = [], himmelMittel = [];
 
@@ -105,9 +136,16 @@ export async function pruefeOrt(lat, lon, tag) {
     const m = mess?.get(k);
     if (m) {
       const einzel = feld('temperature_2m', 'icon_d2')[i];
-      const alle = MODELLE.map(x => feld('temperature_2m', x)[i]).filter(v => v != null);
-      if (einzel != null) tempFehler.push(Math.abs(einzel - m.temperature));
-      if (alle.length >= 3) tempFehlerMittel.push(Math.abs(median(alle) - m.temperature));
+      const mittel = tempMittelBei(i);
+      const b = block(+t.slice(11, 13));
+      if (einzel != null) {
+        tempFehler.push(Math.abs(einzel - m.temperature));
+        if (offsIcon) tempFehlerKorr.push(Math.abs(einzel - offsIcon[b] - m.temperature));
+      }
+      if (mittel != null) {
+        tempFehlerMittel.push(Math.abs(mittel - m.temperature));
+        if (offsMittel) tempFehlerMittelKorr.push(Math.abs(mittel - offsMittel[b] - m.temperature));
+      }
 
       const vorhergesagt = feld('precipitation', 'icon_d2')[i];
       if (vorhergesagt != null && m.precipitation != null) {
@@ -137,6 +175,8 @@ export async function pruefeOrt(lat, lon, tag) {
     tag, lat, lon,
     station: mess ? mess.size : 0,
     temp:   { einzel: r2(mittelwert(tempFehler)), mittelweg: r2(mittelwert(tempFehlerMittel)),
+              einzelKorr: r2(mittelwert(tempFehlerKorr)),
+              mittelwegKorr: r2(mittelwert(tempFehlerMittelKorr)),
               stunden: tempFehler.length },
     regen:  regenGesamt ? { quote: r2(regenRichtig / regenGesamt), stunden: regenGesamt,
                             verpasst: regenVerpasst, fehlalarm: regenFehlalarm } : null,
@@ -198,6 +238,8 @@ export async function pruefVerlauf(env, tage = 30) {
     schnitt: {
       tempEinzel:     schnitt(mit(o => o.temp?.einzel)),
       tempMittelweg:  schnitt(mit(o => o.temp?.mittelweg)),
+      tempEinzelKorr: schnitt(mit(o => o.temp?.einzelKorr)),
+      tempAppVerfahren: schnitt(mit(o => o.temp?.mittelwegKorr)),
       regenQuote:     schnitt(mit(o => o.regen?.quote)),
       regenVerpasst:  mit(o => o.regen?.verpasst).reduce((a, b) => a + b, 0),
       regenFehlalarm: mit(o => o.regen?.fehlalarm).reduce((a, b) => a + b, 0),

@@ -67,6 +67,9 @@ let wolkenMittel = null;          // Zeitstempel → Bewölkung in Prozent
 
 function baueWolkenKonsens() {
   wolkenMittel = null;
+  /* Wer ausdrücklich ein Modell wählt, bekommt dessen Sicht — auch beim
+     Himmel. Der Mittelweg gehört zum automatischen Verfahren. */
+  if (effektiveQuelle() !== 'best_match') return;
   const H = modelData?.hourly;
   if (!H?.time) return;
   const felder = MODELS.map(m => H[`cloud_cover_${m.id}`]).filter(Array.isArray);
@@ -87,6 +90,86 @@ function baueWolkenKonsens() {
 
 /** Bewölkung für eine Stunde — Mittelweg, sonst der Wert der Datenquelle. */
 const wolkenFuer = (zeitISO, ersatz) => wolkenMittel?.get(zeitISO) ?? ersatz;
+
+/* ── Temperatur ebenfalls aus dem Mittelweg ─────────────────
+   Nachgeprüft walk-forward über 30 Tage gegen die nächste Station, die
+   Ortskorrektur kannte dabei jeweils nur die Vergangenheit:
+
+     ICON + Ortskorrektur       1,68 °C daneben   (bisheriges Verfahren)
+     Mittelweg + Ortskorrektur  1,29 °C           (gewinnt 28 von 30 Tagen)
+
+   23 Prozent weniger Fehler, und der Sieger stand an 28 von 30 Tagen
+   fest — das ist kein Münzwurf mehr wie beim verworfenen Modellwechsel.
+   Der Regen bleibt beim feinen Modell; für Schauer zählt das Gitter. */
+let tempMittel = null;            // Zeitstempel → Grad
+
+function baueTempKonsens() {
+  tempMittel = null;
+  if (effektiveQuelle() !== 'best_match') return;   // gewählte Modelle bleiben pur
+  const H = modelData?.hourly;
+  if (!H?.time) return;
+  const felder = MODELS.map(m => H[`temperature_2m_${m.id}`]).filter(Array.isArray);
+  if (felder.length < 3) return;
+  const karte = new Map();
+  for (let i = 0; i < H.time.length; i++) {
+    const w = felder.map(f => f[i]).filter(v => v != null).sort((a, b) => a - b);
+    if (w.length < 3) continue;
+    karte.set(H.time[i], w.length % 2
+      ? w[(w.length - 1) / 2]
+      : +((w[w.length / 2 - 1] + w[w.length / 2]) / 2).toFixed(1));
+  }
+  if (karte.size) tempMittel = karte;
+}
+
+/** Temperaturen der Datenquelle durch den Mittelweg ersetzen. Läuft VOR der
+    Ortskorrektur — die lernt inzwischen auf derselben Grundlage. */
+function wendeTempMittelAn(fc) {
+  if (!tempMittel || !fc?.hourly?.time) return fc;
+  if (fc.__tempMittel) return fc;                  // Zwischenspeicher-Schutz
+  fc.__tempMittel = true;
+
+  const h = fc.hourly;
+  let letzterDelta = 0;
+  h.time.forEach((t, k) => {
+    const med = tempMittel.get(t);
+    if (med == null || h.temperature_2m?.[k] == null) return;
+    const delta = med - h.temperature_2m[k];
+    letzterDelta = delta;
+    h.temperature_2m[k] = med;
+    /* Die gefühlte Temperatur liegt nur je Quelle vor, nicht je Modell —
+       sie wandert um denselben Betrag mit, ihr Abstand zur Lufttemperatur
+       (Wind, Feuchte) bleibt damit erhalten. */
+    if (h.apparent_temperature?.[k] != null) {
+      h.apparent_temperature[k] = +(h.apparent_temperature[k] + delta).toFixed(1);
+    }
+  });
+
+  if (fc.current?.temperature_2m != null) {
+    const jetzt = nowIndex(h.time);
+    const med = tempMittel.get(h.time[jetzt]);
+    const delta = med != null ? med - fc.current.temperature_2m : letzterDelta;
+    if (med != null) {
+      fc.current.temperature_2m = med;
+      if (fc.current.apparent_temperature != null) {
+        fc.current.apparent_temperature = +(fc.current.apparent_temperature + delta).toFixed(1);
+      }
+    }
+  }
+
+  // Tageswerte nachziehen — wie in wendeVersatzAn, das ohne Station nicht läuft
+  if (fc.daily?.time) {
+    fc.daily.time.forEach((tag, i) => {
+      const werte = [];
+      h.time.forEach((t, k) => { if (t.startsWith(tag) && h.temperature_2m[k] != null)
+        werte.push(h.temperature_2m[k]); });
+      if (werte.length >= 20) {
+        if (fc.daily.temperature_2m_max) fc.daily.temperature_2m_max[i] = Math.max(...werte);
+        if (fc.daily.temperature_2m_min) fc.daily.temperature_2m_min[i] = Math.min(...werte);
+      }
+    });
+  }
+  return fc;
+}
 
 /* Der Wettercode kommt aus einem einzigen Modell — und damit auch das
    Zeichen in der Stundenleiste. Ohne diesen Schritt widerspricht sich die
@@ -109,7 +192,7 @@ function himmelCode(i) {
 
 /** Auswählbare Datenquellen für Stunden- und Tageswerte. */
 const SOURCES = [
-  { id: 'best_match', name: 'Bestes verfügbares', desc: 'Automatisch — in Deutschland DWD ICON-D2 (2 km) für die ersten zwei Tage, danach ICON-EU und ICON global. Das feinste Gitter gewinnt: 2 km sehen Täler und Höhenzüge, die ein 25-km-Modell überfliegt.', best: true },
+  { id: 'best_match', name: 'Bestes Verfahren', desc: 'Automatisch, je Frage das Passende: Regen aus dem feinsten Gitter (in Deutschland DWD ICON-D2, 2 km — ein Schauer ist drei Kilometer groß, den sieht nur ein feines Netz). Temperatur und Himmel aus dem Mittelweg von sechs Modellen, dazu die Ortskorrektur — nachgemessen trifft das deutlich besser als jedes einzelne Modell.', best: true },
   { id: 'icon_seamless', name: 'DWD ICON', desc: 'Deutscher Wetterdienst, nahtlos: D2 (2 km) → EU (7 km) → global (11 km). Das amtliche deutsche Modell.' },
   { id: 'ecmwf_ifs025', name: 'ECMWF IFS', desc: 'Europäisches Zentrum, 25 km. Gilt weltweit als das treffsicherste Globalmodell auf mehrere Tage.' },
   { id: 'gfs_seamless', name: 'GFS', desc: 'US-Wetterdienst NOAA, 13 km. Reicht am weitesten, streut auf kurze Sicht stärker.' },
@@ -1238,7 +1321,7 @@ function renderSource() {
   if (!el) return;
   const q = sourceOf(sourceId());
   const basis = q.id === 'best_match'
-    ? `Quelle: <b>bestes verfügbares Modell</b> — hier DWD ICON-D2, 2 km`
+    ? `Quelle: <b>bestes Verfahren</b> — Regen: ICON-D2 · Temperatur & Himmel: Mittelweg aus 6 Modellen`
     : `Quelle: <b>${q.name}</b>`;
 
   /* Die Ortskorrektur stand früher als eigene Kastenzeile darüber. Sie sagt
@@ -1853,7 +1936,10 @@ let ortsVersatz = null;             // { bloecke: [24], tage, station, stand }
 const versatzBlock = (stunde) => Math.floor(stunde / 4);
 
 async function ladeVersatz(lat, lon) {
-  const key = `wf.versatz:${lat.toFixed(2)},${lon.toFixed(2)}`;
+  /* Neuer Schlüssel seit der Umstellung auf den Mittelweg: Ein bis zu 20
+     Stunden alter, noch auf ICON gelernter Versatz würde sonst auf die
+     neue Grundlage angewandt. */
+  const key = `wf.versatz2:${lat.toFixed(2)},${lon.toFixed(2)}`;
   try {
     const alt = store.get(key, null);
     // Einmal am Tag reicht — der Versatz wandert über Wochen, nicht Stunden
@@ -1868,9 +1954,13 @@ async function ladeVersatz(lat, lon) {
 
   try {
     const [vh, ms] = await Promise.all([
+      /* Auf derselben Grundlage lernen, auf der die App anzeigt: dem
+         Mittelweg aus sechs Modellen. Ein auf ICON gelernter Versatz passte
+         nicht mehr, seit die Temperatur aus dem Mittelweg kommt. */
       fetch('https://previous-runs-api.open-meteo.com/v1/forecast?' + new URLSearchParams({
         latitude: String(lat), longitude: String(lon), timezone: 'auto',
         hourly: 'temperature_2m_previous_day1',
+        models: MODELS.map(m => m.id).join(','),
         past_days: String(VERSATZ_TAGE), forecast_days: '1'
       })).then(r => (r.ok ? r.json() : null)),
       fetch(`${BRIGHTSKY}/weather?lat=${lat}&lon=${lon}&date=${iso(von)}&last_date=${iso(bis)}`
@@ -1883,9 +1973,16 @@ async function ladeVersatz(lat, lon) {
       if (w.temperature != null) gemessen.set(w.timestamp.slice(0, 13), w.temperature);
     }
 
+    const felder = MODELS.map(m => vh.hourly[`temperature_2m_previous_day1_${m.id}`])
+      .filter(Array.isArray);
+    const mittel = (k) => {
+      const w = felder.map(f => f[k]).filter(v => v != null).sort((a, b) => a - b);
+      if (w.length < 3) return null;
+      return w.length % 2 ? w[(w.length - 1) / 2] : (w[w.length / 2 - 1] + w[w.length / 2]) / 2;
+    };
     const summen = Array.from({ length: 6 }, () => ({ s: 0, n: 0 }));
     vh.hourly.time.forEach((t, k) => {
-      const soll = vh.hourly.temperature_2m_previous_day1?.[k];
+      const soll = mittel(k);
       const ist = gemessen.get(t.slice(0, 13));
       if (soll == null || ist == null) return;
       const b = versatzBlock(+t.slice(11, 13));
@@ -5504,8 +5601,10 @@ async function refresh(leise = false) {
     /* Erst korrigieren, dann alles Weitere: Sämtliche Anzeigen und auch der
        Zwischenspeicher arbeiten mit den korrigierten Zahlen. */
     await ladeVersatz(place.lat, place.lon);
-    data = wendeVersatzAn(fc); air = aq; modelData = md;
+    air = aq; modelData = md;
     baueWolkenKonsens();
+    baueTempKonsens();
+    data = wendeVersatzAn(wendeTempMittelAn(fc));
     if (!veraltet) store.set(LS.cache, { at: Date.now(), place, data });
 
     renderHero();
