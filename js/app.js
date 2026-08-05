@@ -6704,6 +6704,9 @@ const PUSH_ARTEN = [
 ];
 const pushArten = () => Object.fromEntries(
   PUSH_ARTEN.map(([name, key, , vor]) => [name, store.get(key, vor)]));
+/* Keine Meldungsart, sondern eine Uhrzeit — deshalb getrennt von PUSH_ARTEN
+   und außerhalb von nichtsGewaehlt(): Nachtruhe allein schaltet nichts ab. */
+const nachtruheAn = () => store.get('wf.nachtruhe', false);
 const nichtsGewaehlt = () => !Object.values(pushArten()).some(Boolean);
 /** Zeitzone des Geräts — der Worker formuliert die Uhrzeiten damit. */
 const geraeteZone = () => {
@@ -6745,7 +6748,7 @@ async function renderPush() {
       method: 'POST', headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ abo: abo.toJSON(), lat: place.lat, lon: place.lon,
                                 ort: place.name, kreis: place.county, arten: pushArten(),
-                                tz: geraeteZone() })
+                                tz: geraeteZone(), nachtruhe: nachtruheAn() })
     }).catch(() => {});
   }
 
@@ -6754,6 +6757,8 @@ async function renderPush() {
     const el = $(sel);
     if (el) el.checked = arten[name];
   });
+  const nrEl = $('#artNachtruhe');
+  if (nrEl) nrEl.checked = nachtruheAn();
 
   // Bei mehr als drei Häkchen wird die Aufzählung länger als die Zeile
   const namen = PUSH_ARTEN.filter(([n]) => arten[n]).map(([, , , , kurz]) => kurz);
@@ -6816,7 +6821,7 @@ async function pushUmschalten() {
       body: JSON.stringify({
         abo: abo.toJSON(), lat: place.lat, lon: place.lon,
         ort: place.name, kreis: place.county, arten: pushArten(),
-        tz: geraeteZone()
+        tz: geraeteZone(), nachtruhe: nachtruheAn()
       })
     });
     if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || `Server ${res.status}`);
@@ -7177,6 +7182,13 @@ function wire() {
         toast('Ohne Auswahl kommen keine Meldungen.', 3000);
       }
     });
+  });
+  $('#artNachtruhe')?.addEventListener('change', (e) => {
+    store.set('wf.nachtruhe', e.target.checked);
+    renderPush();      // meldet den Stand beim Worker nach
+    toast(e.target.checked
+      ? 'Zwischen 23 und 6 Uhr kommt nur noch Unwetter.'
+      : 'Meldungen kommen wieder rund um die Uhr.', 3000);
   });
   /* Drei Karten starten zugeklappt: Webcams (Bilder), Trefferquote und
      Wettermodelle (beides Auswertung, nicht Alltag). Zusammen waren das
