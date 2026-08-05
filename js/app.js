@@ -5274,6 +5274,110 @@ const SKY_EVENTS = [
     icon: 'meteor' }
 ];
 
+/* ── Termin für den Kalender ────────────────────────────────
+   Ein Himmelstermin nützt nur, wenn man zur richtigen Stunde daran denkt —
+   und das ist bei einer Finsternis in zwei Wochen genau die Stelle, an der
+   eine Wetter-App aufhört und der Kalender anfängt. Erzeugt wird eine echte
+   iCalendar-Datei, kein Link zu einem Anbieter: Sie funktioniert in Apple
+   Kalender, Google, Outlook und Thunderbird gleichermaßen und verlässt das
+   Gerät nicht. */
+
+/** Text für eine iCalendar-Zeile absichern: Komma, Semikolon, Backslash und
+    Zeilenumbruch haben dort eine eigene Bedeutung. */
+const icsText = (t) => String(t)
+  .replace(/\\/g, '\\\\').replace(/;/g, '\\;').replace(/,/g, '\\,')
+  .replace(/\n/g, '\\n');
+
+/** Zeilen auf 75 Bytes umbrechen — der Standard zählt Bytes, nicht Zeichen,
+    und „größte" belegt in UTF-8 sieben statt sechs. Nach Zeichen gefaltet
+    wären Zeilen mit Umlauten zu lang; manche Kalender verschlucken dann
+    stillschweigend den Rest der Beschreibung. Fortsetzungszeilen beginnen
+    mit einem Leerzeichen, und ein Zeichen wird nie zerschnitten. */
+function icsFalten(zeile) {
+  const bytes = (t) => new TextEncoder().encode(t).length;
+  if (bytes(zeile) <= 75) return zeile;
+  const teile = [];
+  let rest = zeile, grenze = 75;
+  while (bytes(rest) > grenze) {
+    let n = grenze;
+    while (bytes(rest.slice(0, n)) > grenze) n--;
+    teile.push((teile.length ? ' ' : '') + rest.slice(0, n));
+    rest = rest.slice(n);
+    grenze = 74;                      // das führende Leerzeichen zählt mit
+  }
+  if (rest) teile.push((teile.length ? ' ' : '') + rest);
+  return teile.join('\r\n');
+}
+
+/** Zeitstempel in UTC — damit der Termin unabhängig von der Zeitzone des
+    Kalenders auf denselben Moment fällt, ohne eine VTIMEZONE mitzuliefern. */
+const icsZeit = (d) => d.toISOString().replace(/[-:]/g, '').replace(/\.\d{3}/, '');
+
+function himmelTermin(e) {
+  const beschreibung = [
+    e.text,
+    e.warnung ? `Achtung: ${e.warnung}` : '',
+    'Ob der Himmel klar ist, steht in Wetterfunk: https://tilian86.github.io/wetterfunk/'
+  ].filter(Boolean).join('\n\n');
+
+  /* Feste Kennung je Termin: Wer zweimal tippt, bekommt keinen zweiten
+     Eintrag, sondern denselben aktualisiert. */
+  const uid = `wetterfunk-${e.von.replace(/[^0-9T]/g, '')}@tilian86.github.io`;
+
+  const zeilen = [
+    'BEGIN:VCALENDAR', 'VERSION:2.0', 'PRODID:-//Wetterfunk//DE', 'CALSCALE:GREGORIAN',
+    'BEGIN:VEVENT',
+    `UID:${uid}`,
+    `DTSTAMP:${icsZeit(new Date())}`,
+    `DTSTART:${icsZeit(e.start)}`,
+    `DTEND:${icsZeit(e.ende)}`,
+    `SUMMARY:${icsText(e.titel)}`,
+    `DESCRIPTION:${icsText(beschreibung)}`,
+    // Eine Stunde vorher erinnern — ohne Erinnerung nützt der Eintrag wenig
+    'BEGIN:VALARM', 'ACTION:DISPLAY', 'TRIGGER:-PT1H',
+    `DESCRIPTION:${icsText(e.titel)} — in einer Stunde`, 'END:VALARM',
+    'END:VEVENT', 'END:VCALENDAR'
+  ];
+  return zeilen.map(icsFalten).join('\r\n') + '\r\n';
+}
+
+async function himmelInKalender(index) {
+  const e = himmelListe[index];
+  if (!e) return;
+  const inhalt = himmelTermin(e);
+  const name = e.titel.toLowerCase()
+    .replace(/[^a-zäöüß0-9]+/g, '-').replace(/^-|-$/g, '') + '.ics';
+
+  /* Auf dem iPhone ist Teilen der kürzere Weg: Das Systemblatt bietet
+     „Zu Kalender hinzufügen" direkt an. Ein Download landete stattdessen
+     erst in „Dateien" und bräuchte zwei weitere Tipper. Wo Teilen von
+     Dateien fehlt (Desktop-Browser), bleibt es beim Download. */
+  try {
+    const datei = new File([inhalt], name, { type: 'text/calendar' });
+    if (navigator.canShare?.({ files: [datei] })) {
+      await navigator.share({ files: [datei], title: e.titel });
+      return;
+    }
+  } catch (err) {
+    // Abbruch durch den Nutzer ist kein Fehler — dann still zurück
+    if (err?.name === 'AbortError') return;
+  }
+
+  const blob = new Blob([inhalt], { type: 'text/calendar;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url; a.download = name;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  /* Erst später freigeben: Ein sofortiges revoke bricht den Download ab. */
+  setTimeout(() => URL.revokeObjectURL(url), 60000);
+  toast('Termin geladen — im Kalender öffnen und bestätigen.', 3500);
+}
+
+/* Die angezeigten Termine merken, damit der Knopf sie wiederfindet. */
+let himmelListe = [];
+
 function renderSky() {
   const box = $('#sky-events');
   if (!box) return;
@@ -5286,9 +5390,19 @@ function renderSky() {
 
   if (!kommend.length) { box.closest('section').hidden = true; return; }
   box.closest('section').hidden = false;
+  himmelListe = kommend;
+  /* Einmal am Behälter lauschen statt an jedem Knopf: Die Karten werden bei
+     jeder Aktualisierung neu gebaut, Knöpfe darin wären ihre Hörer los. */
+  if (!box.dataset.calGebunden) {
+    box.dataset.calGebunden = '1';
+    box.addEventListener('click', (ev) => {
+      const knopf = ev.target.closest('.sky-cal');
+      if (knopf) himmelInKalender(+knopf.dataset.termin);
+    });
+  }
 
   const h = data?.hourly;
-  box.innerHTML = kommend.map(e => {
+  box.innerHTML = kommend.map((e, nr) => {
     const tage = Math.ceil((e.start - jetzt) / 864e5);
     const wann = e.start.toLocaleDateString('de-DE', { weekday: 'long', day: 'numeric', month: 'long' });
 
@@ -5316,7 +5430,16 @@ function renderSky() {
       </div>
       <p class="sky-text">${e.text}</p>
       ${e.warnung ? `<p class="sky-warn">${e.warnung}</p>` : ''}
-      ${sicht}
+      <div class="sky-fuss">
+        ${sicht}
+        <button class="sky-cal" data-termin="${nr}">
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <rect x="3" y="5" width="18" height="16" rx="3"/>
+            <path d="M3 10h18M8 3v4M16 3v4"/>
+          </svg>
+          In den Kalender
+        </button>
+      </div>
     </article>`;
   }).join('');
 }
