@@ -906,12 +906,15 @@ function entscheide(lage, eintrag) {
        am Ende noch, ist das Ende schlicht unbekannt — dann eine Restdauer
        zu nennen wäre erfunden. */
     if (lage.laeuft.offen) {
+      /* Auch hier gilt: Tröpfeln ist keine Nachricht wert. Diese Lücke
+         blieb bei der ersten Entschlackung offen — anhaltender Niesel über
+         das Radarfenster hinaus hätte weiter gemeldet. */
+      if (lage.laeuft.leicht) return null;
       const gleicheLage = alt.art === 'haelt' && Date.now() - (alt.wann || 0) < NACHFASSEN_MS;
       if (gleicheLage) return null;
-      const was = lage.laeuft.leicht ? 'Es tröpfelt' : 'Es regnet';
       return {
         art: 'ende',
-        titel: was,
+        titel: 'Es regnet',
         text: `Hält mindestens die nächste halbe Stunde an · ${lage.laeuft.rat}`,
         merker: { art: 'haelt', ende: lage.laeuft.ende, wann: Date.now(),
                   regnete: true, leicht: !!lage.laeuft.leicht }
