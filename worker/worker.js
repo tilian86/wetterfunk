@@ -392,7 +392,7 @@ export default {
     if (url.pathname === '/push/an' && request.method === 'POST') {
       let req;
       try { req = await request.json(); } catch { return json({ error: 'Ungültige Anfrage' }, 400, origin); }
-      const { abo, lat, lon, ort, kreis, arten, tz, geraet } = req || {};
+      const { abo, lat, lon, ort, kreis, arten, tz, geraet, nachtruhe } = req || {};
       if (!abo?.endpoint || !abo?.keys?.p256dh || !abo?.keys?.auth) {
         return json({ error: 'Unvollständiges Abo' }, 400, origin);
       }
@@ -430,6 +430,11 @@ export default {
           untergang: arten?.untergang === true,
           mondaufgang: arten?.mondaufgang === true
         },
+        /* Nachtruhe ist AUS, solange sie niemand einschaltet: Wer nachts
+           unterwegs ist, will wissen, dass Regen kommt — und wer schlafen
+           will, stellt das Telefon leise. Diese Entscheidung gehört dem
+           Gerät, nicht dem Worker. */
+        nachtruhe: nachtruhe === true,
         /* Freiwilliger Gerätename. Ein Browser gibt keine Gerätekennung
            heraus — ohne diesen Namen sind zwei iPhones am selben Ort in der
            Übersicht nicht auseinanderzuhalten. Steuerzeichen raus, damit die
@@ -455,6 +460,7 @@ export default {
         && alt.ort === neu.ort && alt.kreis === neu.kreis && alt.tz === neu.tz
         && (alt.geraet || '') === (neu.geraet || '')
         && alt.abo?.endpoint === abo.endpoint
+        && !!alt.nachtruhe === neu.nachtruhe
         && JSON.stringify(alt.arten || {}) === JSON.stringify(neu.arten);
 
       if (!unveraendert) await env.WF_PUSH.put(key, JSON.stringify(neu));
@@ -636,6 +642,14 @@ async function regenPruefen(env) {
         }
       }
       if (!meldung) continue;
+
+      /* Nachtruhe, falls für dieses Gerät eingeschaltet: zwischen 23 und 6
+         Uhr schweigt alles — außer einer amtlichen Unwetterwarnung ab Stufe
+         3. Wer nachts gar nichts hören will, schaltet die Meldungen ganz aus
+         oder das Telefon leise; ein Unwetter ist der eine Fall, in dem
+         Wecken richtig ist. Genau so steht es auch im Schalter. */
+      if (nachtruheAktiv(eintrag) && !meldung.dringend) continue;
+
       /* Warnungen dürfen die Ruhefrist durchbrechen — bei Unwetter zählt
          Zeit. Himmelstermine ebenfalls: Sie kommen höchstens einmal am Tag
          und wären zwanzig Minuten später wertlos. */
@@ -858,6 +872,7 @@ function warnungMelden(daten, eintrag) {
 
   return {
     art: 'warnung',
+    dringend: stufe.dringend,
     titel: `${stufe.dringend ? '⚠️ ' : ''}${stufe.wort}: ${ereignis}`,
     text: `${w.regionName}${bis ? `, bis ${bis} Uhr` : ''}.${weitere} ` +
           `${String(w.description || '').slice(0, 150)}`.trim().slice(0, 180),
@@ -866,28 +881,33 @@ function warnungMelden(daten, eintrag) {
   };
 }
 
-/** Aus der Lage und dem zuletzt Gemeldeten ableiten, ob etwas zu sagen ist. */
-/* Nachts nur, wenn es sich lohnt. Ein paar Tropfen um Viertel vor zwölf
-   helfen niemandem, der schläft — der Alarm soll wecken, wenn es etwas zu
-   entscheiden gibt, nicht wenn die Kapuze reicht. Amtliche Warnungen und
-   kräftiger Regen kommen weiter jederzeit durch. */
-const NACHT_VON = 22, NACHT_BIS = 6;
-function istNacht(tz) {
+/* Nachtruhe war einmal eine feste Regel des Worker: nachts keine Tropfen.
+   Das war anmaßend — wer um zwei noch unterwegs ist, will es wissen, und wer
+   schläft, stellt das Telefon leise. Jetzt ist es eine Einstellung im Gerät,
+   die AUS ist, solange sie niemand einschaltet. Wer sie einschaltet, hat
+   zwischen 23 und 6 Uhr Ruhe — bis auf amtliche Unwetterwarnungen; das steht
+   so auch im Schalter. */
+const NACHT_VON = 23, NACHT_BIS = 6;
+function stundeIn(tz) {
   try {
     /* Auf Deutsch liefert Intl „00 Uhr" statt „00" — `+"00 Uhr"` ist NaN,
-       und mit NaN sind beide Vergleiche unten falsch. Die Nachtruhe griff
-       dadurch überhaupt nie. Deshalb die Ziffern herausziehen. */
+       und mit NaN wäre jeder Vergleich stillschweigend falsch. */
     const txt = new Intl.DateTimeFormat('de-DE',
       { hour: '2-digit', hour12: false, timeZone: tz || 'Europe/Berlin' }).format(new Date());
     const h = Number((txt.match(/\d+/) || [])[0]);
-    if (!Number.isFinite(h)) return false;
-    return h >= NACHT_VON || h < NACHT_BIS;
-  } catch { return false; }
+    return Number.isFinite(h) ? h : null;
+  } catch { return null; }
 }
+function nachtruheAktiv(eintrag) {
+  if (!eintrag?.nachtruhe) return false;
+  const h = stundeIn(eintrag.tz);
+  return h != null && (h >= NACHT_VON || h < NACHT_BIS);
+}
+
+/** Aus der Lage und dem zuletzt Gemeldeten ableiten, ob etwas zu sagen ist. */
 
 function entscheide(lage, eintrag) {
   const alt = eintrag.gemeldet || {};
-  const nachts = istNacht(eintrag.tz);
 
   /* Solange es regnet, ist die Vorhersage vom Ende die eine Zahl, die zählt —
      und sie verschiebt sich. Deshalb wird nachgemeldet, wenn sie sich um mehr
@@ -979,8 +999,6 @@ function entscheide(lage, eintrag) {
      las, stand um 17 Uhr trotzdem überrascht im Regen. Weiter als 150
      Minuten voraus wird geschwiegen: Dafür gibt es die Tagesübersicht. */
   if (minuten > 150) return null;
-  // Nachts schweigt die Ankündigung, solange es bei Tropfen bleibt
-  if (nachts && p.leicht) return null;
 
   const gleichePhase = alt.art === 'start' && Math.abs((alt.start || 0) - p.start) < START_TOLERANZ;
   if (gleichePhase) {
