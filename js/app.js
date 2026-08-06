@@ -1595,11 +1595,85 @@ function renderMeteogramm() {
       ${marke(iMax, tMax)}
       ${marke(iMin, tMin)}
       ${jetztLinie}
+      <g class="mg-zeiger" hidden>
+        <line y1="${METEO.oben}" y2="${METEO.achse}"/>
+        <circle r="2.6"/>
+      </g>
       <text class="mg-achsentext" x="${METEO.links - 4}" y="${METEO.oben + 3}">${Math.round(yMax)}°</text>
       <text class="mg-achsentext" x="${METEO.links - 4}" y="${METEO.tempUnten}">${Math.round(yMin)}°</text>
       <text class="mg-achsentext mg-regenachse" x="${METEO.links - 4}" y="${METEO.regenUnten}">${
         dez(regenMax)} mm</text>
     </svg>`;
+
+  meteoTasten(ziel, { i0, zeiten, temps, regen, X, Y, n });
+}
+
+/* ── Mit dem Finger am Verlauf entlangfahren ────────────────
+   Abgeschaut bei der WarnWetter-App des DWD — das eine, was sie besser
+   konnte: den Finger auf den Graphen legen und für genau diese Stunde
+   alles sehen. Hier genügt EIN Diagramm dafür, weil die Werte in einem
+   Kästchen zusammenkommen, statt auf vier Charts verteilt zu sein, durch
+   die man scrollen muss. `touch-action: pan-y` teilt die Gesten sauber:
+   waagerecht tasten, senkrecht weiter scrollen. */
+function meteoTasten(ziel, m) {
+  const svg = ziel.querySelector('.mg-svg');
+  const zeiger = ziel.querySelector('.mg-zeiger');
+  if (!svg || !zeiger) return;
+  const linie = zeiger.querySelector('line');
+  const punkt = zeiger.querySelector('circle');
+
+  let lupe = ziel.querySelector('.mg-lupe');
+  if (!lupe) {
+    lupe = document.createElement('div');
+    lupe.className = 'mg-lupe';
+    lupe.hidden = true;
+    ziel.appendChild(lupe);
+  }
+
+  const breite = METEO.w - METEO.links - METEO.rechts;
+  const zeige = (clientX) => {
+    const r = svg.getBoundingClientRect();
+    if (!r.width) return;
+    const vx = (clientX - r.left) / r.width * METEO.w;
+    const k = Math.max(0, Math.min(m.n - 1,
+      Math.round((vx - METEO.links) / breite * (m.n - 1))));
+    const x = m.X(k);
+
+    zeiger.hidden = false;
+    linie.setAttribute('x1', x.toFixed(1)); linie.setAttribute('x2', x.toFixed(1));
+    punkt.setAttribute('cx', x.toFixed(1));
+    punkt.setAttribute('cy', m.Y(m.temps[k]).toFixed(1));
+
+    const H = data.hourly, i = m.i0 + k, t = m.zeiten[k];
+    const wind = Math.round(H.wind_speed_10m?.[i] ?? 0);
+    const boe = Math.round(H.wind_gusts_10m?.[i] ?? 0);
+    const feucht = H.relative_humidity_2m?.[i];
+    const prob = H.precipitation_probability?.[i];
+    const mm = m.regen[k];
+    /* Regenspalte: gefallene Menge, wenn etwas fällt; sonst das Risiko,
+       wenn es nennenswert ist; sonst schlicht „trocken". */
+    const nass = mm >= 0.05 ? `${dez(mm)} mm Regen`
+               : (prob ?? 0) >= 20 ? `trocken, ${prob} % Risiko` : 'trocken';
+    /* Drei kurze Zeilen statt einer langen: Einzeilig war das Kästchen
+       breiter als ein halber iPhone-Schirm und klebte nur noch am Rand. */
+    lupe.hidden = false;
+    lupe.innerHTML = `<b>${k < 24 && t.getDate() === new Date().getDate()
+        ? 'heute' : weekday(t) + ' ' + tagDatum(t)} · ${String(t.getHours()).padStart(2, '0')} Uhr</b>
+      <span>${dez(m.temps[k])}° · ${nass}</span>
+      <span>Wind ${wind}${boe >= wind + 10 ? `, Böen ${boe}` : ''} km/h${
+        feucht != null ? ` · ${feucht} %` : ''}</span>`;
+
+    // Kästchen dem Finger nachführen, an den Rändern festhalten
+    const px = x / METEO.w * r.width;
+    const lw = lupe.offsetWidth;
+    lupe.style.left = `${Math.max(0, Math.min(r.width - lw, px - lw / 2))}px`;
+  };
+
+  svg.addEventListener('pointerdown', (e) => zeige(e.clientX));
+  svg.addEventListener('pointermove', (e) => {
+    // Maus: schon beim Überfahren; Finger: solange er aufliegt
+    if (e.pointerType === 'mouse' || e.buttons) zeige(e.clientX);
+  });
 }
 
 /* ── Regen im Detail ───────────────────────────────────────
