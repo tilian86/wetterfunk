@@ -2289,6 +2289,17 @@ body.ar-offen { overflow: hidden; }
   stroke: rgba(214,226,240,.6); stroke-width: 1.6;
   stroke-dasharray: 5 4; stroke-linecap: round;
 }
+/* Legende der Mondbahn: Strichmuster wie die Kurve, damit die Zuordnung
+   ohne Nachdenken klappt. text-anchor muss die Regel für .bogen-svg text
+   (middle) überschreiben — sonst rutscht das Wort auf den Strich. */
+.bg-legende-linie {
+  stroke: rgba(214,226,240,.6); stroke-width: 1.6;
+  stroke-dasharray: 4 3; stroke-linecap: round;
+}
+.bogen-svg text.bg-legende {
+  fill: rgba(214,226,240,.7); stroke: none; text-anchor: start;
+  font-size: 8px; font-weight: 600; letter-spacing: .03em;
+}
 .bg-mondscheibe { fill: #e8f0fc; }
 .bg-mondschatten { fill: #101a2c; }
 .bg-griff { transition: none; }
@@ -2786,3 +2797,8 @@ body.ar-offen { overflow: hidden; }
 .bf-set { display: block; margin-bottom: 10px; }
 .sonne-klapp { margin-top: 16px; border-top: 1px solid var(--card-line); padding-top: 14px; }
 .mg-note { margin: 0 0 8px; font-size: 10.5px; line-height: 1.5; color: var(--ink-faint); }
+/* Einladung zum Tasten — verschwindet nach der ersten Berührung für immer */
+.mg-wink {
+  margin: 3px 0 0; font-size: 10px; line-height: 1.4;
+  color: var(--ink-faint); text-align: center; font-style: italic;
+}
