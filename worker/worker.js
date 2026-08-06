@@ -592,6 +592,19 @@ async function regenPruefen(env) {
   const radarSpeicher = new Map();
   let radarVorrat = RADAR_PRO_LAUF;
 
+  /* Cloudflare erlaubt 50 ausgehende Anfragen je Durchgang. Fest verplant
+     sind: eine für die Warnungen, je Gerät eine für das Modell und im
+     Zweifel eine für die Meldung selbst. Was übrig bleibt, gehört dem
+     Radar — ein Vorposten kostet 1, ein voller Blick 20.
+
+     Vorher stand hier nur „höchstens zwei Orte". Das reichte, solange nur
+     der teure Blick am Radar hing; mit dem Vorposten je Gerät wäre die
+     Grenze ab dem fünften Gerät gerissen — und zwar stillschweigend, denn
+     Cloudflare wirft die überzähligen Anfragen einfach weg. */
+  const radarBudget = Math.max(0, 46 - 2 * liste.keys.length);
+  let radarAusgegeben = 0;
+  const reichtFuer = (n) => radarAusgegeben + n <= radarBudget;
+
   for (const eintragMeta of liste.keys) {
     const eintrag = await env.WF_PUSH.get(eintragMeta.name, 'json');
     if (!eintrag) continue;
@@ -616,11 +629,23 @@ async function regenPruefen(env) {
              hatte nichts, über der Stadt ging ein Schauer nieder. */
           const stillJetzt = !lage.laeuft
             && (!lage.naechste || lage.naechste.start - Date.now() > 30 * 60000);
-          if (stillJetzt && (lage.risiko ?? 0) >= RADAR_AB_RISIKO
-              && imRadargebiet(eintrag.lat, eintrag.lon)) {
+          /* Zwei Wege zum Radar: Das Modell hält Regen für möglich — oder
+             der Vorposten meldet, dass es bereits fällt. Der zweite Weg
+             wird nur beschritten, wenn der erste zu ist; sonst zahlte man
+             die Vorposten-Anfrage umsonst. */
+          let radarNoetig = false;
+          if (stillJetzt && imRadargebiet(eintrag.lat, eintrag.lon)) {
+            radarNoetig = (lage.risiko ?? 0) >= RADAR_AB_RISIKO;
+            if (!radarNoetig && radarVorrat > 0 && reichtFuer(1)) {
+              radarAusgegeben += 1;
+              radarNoetig = (await radarVorposten(eintrag.lat, eintrag.lon)) === true;
+            }
+          }
+          if (radarNoetig) {
             const schluessel = `${eintrag.lat.toFixed(2)},${eintrag.lon.toFixed(2)}`;
-            if (!radarSpeicher.has(schluessel) && radarVorrat > 0) {
+            if (!radarSpeicher.has(schluessel) && radarVorrat > 0 && reichtFuer(20)) {
               radarVorrat--;
+              radarAusgegeben += 20;
               radarSpeicher.set(schluessel,
                 await radarLage(eintrag.lat, eintrag.lon, eintrag.tz));
             }
@@ -1129,11 +1154,34 @@ async function regenLage(lat, lon) {
    war, wurde nass, und es kam keine Meldung.
 
    Deshalb schaut der Wächter bei Schauerlage zusätzlich aufs Radar. Nicht
-   immer: Ein Abruf kostet zwanzig Anfragen an den DWD, und an einem
-   wolkenlosen Tag wäre das reine Verschwendung. Zwei Bremsen:
-   · nur, wenn das Modell überhaupt Regenrisiko sieht (RADAR_AB_RISIKO)
-   · höchstens zwei Orte je Durchgang, gleiche Orte werden zusammengefasst */
-const RADAR_AB_RISIKO = 25;          // Prozent Regenwahrscheinlichkeit
+   immer: Ein voller Abruf kostet zwanzig Anfragen an den DWD, und an einem
+   wolkenlosen Tag wäre das reine Verschwendung. Höchstens zwei Orte je
+   Durchgang, gleiche Orte werden zusammengefasst.
+
+   Am 5. August fiel um 15:45 über Tübingen 1,5 mm Regen. ICON-D2 sagte für
+   den ganzen Nachmittag 0,0 mm und höchstens 20 % Risiko — unter der
+   damaligen Schwelle von 25 %. Das Radar wurde deshalb den ganzen
+   Nachmittag NICHT befragt, und es kam keine Meldung. Die Bremse hat genau
+   den Fall ausgebremst, für den die Einrichtung gebaut wurde.
+
+   Nachgemessen an 57 Tagen gegen die Station Rottenburg-Kiebingen: 19 mal
+   fiel Regen, den das Modell mit 0,0 mm gar nicht sah. Davon lagen über
+   der Schwelle
+       25 %:  5 von 19  (26 %)   ← alte Einstellung
+       10 %: 10 von 19  (53 %)   ← beste Ausbeute je Abruf im ganzen Feld
+        0 %: 19 von 19  (100 %), aber 24 statt 1,6 Abrufe am Tag
+
+   Daraus zwei Auslöser statt einem:
+   · RADAR_AB_RISIKO auf 10 — für Regen, der ERST KOMMT. Das Radar sieht
+     nur 90 Minuten voraus, das Modell weiter; unter 10 % lohnt der Abruf
+     nachweislich nicht mehr.
+   · Ein Vorposten für Regen, der SCHON DA IST: ein einziger Abruf für die
+     eigene Zelle, jetzt. Das kostet ein Zwanzigstel und läuft deshalb bei
+     jedem Durchgang — auch wenn das Modell 0 % sagt. Nur wenn er nass
+     meldet, folgt der volle Blick mit Umfeld und Zeitverlauf.
+     Damit hängt „es regnet gerade auf dich" nicht mehr daran, ob das
+     Modell den Schauer vorher geahnt hat. */
+const RADAR_AB_RISIKO = 10;          // Prozent Regenwahrscheinlichkeit
 const RADAR_PRO_LAUF  = 2;           // verschiedene Orte je Fünf-Minuten-Takt
 const RADAR_NASS      = 0.2;         // mm/h über der eigenen Zelle
 const RADAR_NAHE      = 0.5;         // mm/h im Umkreis von 2,5 km
@@ -1158,6 +1206,16 @@ async function radarWert(lat, lon, t) {
     const v = d?.features?.[0]?.properties?.RV_ANALYSIS;
     return typeof v === 'number' && v >= 0 ? v * 12 : 0;
   } catch { return null; }
+}
+
+/** Vorposten: Regnet es GERADE über dieser Koordinate? Ein einziger Abruf
+    statt zwanzig — billig genug, um bei jedem Durchgang zu laufen. Fällt der
+    DWD aus, kommt null zurück und es bleibt beim Modell; ein stiller Ausfall
+    darf keine Meldung erfinden. */
+async function radarVorposten(lat, lon) {
+  const jetzt = Math.floor(Date.now() / 300000) * 300000;
+  const v = await radarWert(lat, lon, jetzt);
+  return typeof v === 'number' ? v >= RADAR_NASS : null;
 }
 
 /* Die Stufen wie in der App, hier aber aus dem Stundenwert gebildet. Die

@@ -62,7 +62,15 @@ const MODELLE = ['icon_d2', 'icon_eu', 'ecmwf_ifs025', 'gfs_seamless',
                  'ukmo_seamless', 'meteofrance_seamless'];
 
 /** Ein Ort, ein Tag: Was war angesagt, was kam wirklich? */
-export async function pruefeOrt(lat, lon, tag) {
+export /* Offen und ungelöst: Der Prüflauf misst das MODELL, nicht die Meldungen.
+   Am 5.8. fiel um 15:45 über Tübingen 1,5 mm Regen; ICON-D2 sagte 0,0 mm bei
+   20 % Risiko, das Radar wurde nicht befragt, es kam keine Meldung — und
+   dieser Prüflauf hätte davon nichts bemerkt, weil er nur Vorhersage gegen
+   Messung stellt. Was fehlt, ist eine Zählung „Regenstunden, die gemeldet
+   wurden" gegen „Regenstunden insgesamt". Erst die zeigt, ob der Vorposten
+   wirklich hilft, statt es nur zu behaupten. */
+
+async function pruefeOrt(lat, lon, tag) {
   /* Wie weit muss der Rückblick reichen? Bis zum Prüftag, plus zwei Tage
      Luft. Mit fest eingetragenen zwei Tagen fehlte jeder Prüftag, der
      länger als gestern zurücklag — das Fenster reichte gar nicht dorthin. */
