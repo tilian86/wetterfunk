@@ -4732,6 +4732,11 @@ function renderSonnenuhr() {
       <circle class="uhr-punkt-aussen" cx="${sx.toFixed(1)}" cy="${sy.toFixed(1)}" r="5.5"/>
       <circle class="uhr-punkt-innen" cx="${mx.toFixed(1)}" cy="${my.toFixed(1)}" r="3.6"
               opacity="${mondJetzt ? 1 : 0.3}"/>
+      <g id="uhrGriff" hidden>
+        <line class="uhr-strahl" x1="0" y1="0" x2="0" y2="0"/>
+        <circle class="uhr-griff" cx="0" cy="0" r="6.5"/>
+      </g>
+      <circle id="uhrFeld" cx="${UHR.mitte}" cy="${UHR.mitte}" r="${UHR.zahlen}" fill="transparent"/>
     </svg>
     <div class="uhr-mitte">
       <span class="uhr-zeit">${hhmm(jetzt)}</span>
@@ -4739,7 +4744,100 @@ function renderSonnenuhr() {
       ${naechstes ? `<span class="uhr-next">${esc(naechstes.name)}<br>in ${restZeit(naechstes.t)}</span>` : ''}
     </div>`;
 
+  uhrText(null);
+  uhrAbfahrenBinden(tagStart);
   return { ev, mt, mp };
+}
+
+/* ── Die Ringuhr abfahren ───────────────────────────────────
+   Der Bogen ließ sich längst abfahren, die Uhr nicht — dabei ist sie die
+   Ansicht, in der die Frage „wie ist das Licht um halb zehn?" überhaupt
+   erst auftaucht. Der Winkel am Ring IST die Uhrzeit; die Umrechnung ist
+   nur die Umkehrung von `uhrWinkel` und `polar`.
+
+   Die Leiste steht ÜBER der Uhr, nicht darunter: Auf dem Handy liegt sonst
+   genau der Finger auf der Zahl, die man lesen will. */
+let uhrTagStart = null;
+
+/** Zeile über der Uhr — ohne Finger die Einladung, sonst die Werte. */
+function uhrText(p) {
+  const el = $('#uhrText');
+  if (!el || !place) return;
+  if (!p) {
+    el.innerHTML = '<i>Mit dem Finger über den Ring fahren — für jede Uhrzeit '
+      + 'Licht, Sonnenstand und Mond.</i>';
+    return;
+  }
+  const alt = sunAltitude(p.t, place.lat, place.lon);
+  const m = moonHorizont(p.t, place.lat, place.lon);
+  /* Knapp halten: Ausgeschriebene Himmelsrichtungen brachen die Zeile auf
+     dem iPhone auf drei Umbrüche, und dann sprang die Uhr beim Abfahren nach
+     unten. Kürzel und ein Minuszeichen für „unter dem Horizont" passen in
+     zwei Zeilen — genau die Höhe, die min-height freihält. */
+  const kurz = (grad) => ['N', 'NO', 'O', 'SO', 'S', 'SW', 'W', 'NW'][
+    Math.round(((grad % 360) + 360) % 360 / 45) % 8];
+  const sonne = alt > -0.833
+    ? `Sonne ${alt.toFixed(0)}° ${kurz(sunAzimut(p.t, place.lat, place.lon))}`
+    : `Sonne −${Math.abs(alt).toFixed(0)}°`;
+  const mond = m.hoehe > 0 ? `Mond ${m.hoehe.toFixed(0)}° ${kurz(m.azimut)}` : 'Mond unter';
+  el.innerHTML = `<b>${hhmm(p.t)}</b> · ${lichtWort(alt)}`
+    + `<br><i>${sonne} · ${mond}</i>`;
+}
+
+function uhrAbfahrenBinden(tagStart) {
+  uhrTagStart = tagStart;
+  const feld = $('#uhrFeld');
+  const griff = $('#uhrGriff');
+  const svg = feld?.ownerSVGElement;
+  if (!feld || !griff || !svg) return;
+
+  const nach = (ev) => {
+    const b = svg.getBoundingClientRect();
+    if (!b.width) return;
+    const t = ev.touches?.[0] || ev.changedTouches?.[0] || ev;
+    /* Bildpunkt → Zeichenfläche. Die viewBox beginnt bei -8, deshalb der
+       Versatz; ohne ihn läge die Mitte um acht Einheiten daneben. */
+    const x = (t.clientX - b.left) / b.width * 216 - 8;
+    const y = (t.clientY - b.top) / b.height * 216 - 8;
+    const dx = x - UHR.mitte, dy = y - UHR.mitte;
+    if (dx === 0 && dy === 0) return;
+    /* Umkehrung von polar(): dort ist der Winkel (grad - 90) im Bogenmaß. */
+    let grad = Math.atan2(dy, dx) * 180 / Math.PI + 90;
+    while (grad < -180) grad += 360;
+    while (grad >= 180) grad -= 360;
+    const min = Math.round((grad + 180) / 360 * 1440);
+    const zeit = new Date(uhrTagStart.getTime() + min * 60000);
+
+    const [gx, gy] = polar(grad, UHR.r);
+    /* Der Strahl beginnt erst am Mondring, nicht in der Mitte: Von der Mitte
+       aus lief er quer über Uhrzeit und Datum. */
+    const [ix, iy] = polar(grad, UHR.innen - 4);
+    griff.hidden = false;
+    griff.querySelector('.uhr-griff').setAttribute('cx', gx.toFixed(1));
+    griff.querySelector('.uhr-griff').setAttribute('cy', gy.toFixed(1));
+    const strahl = griff.querySelector('.uhr-strahl');
+    strahl.setAttribute('x1', ix.toFixed(1));
+    strahl.setAttribute('y1', iy.toFixed(1));
+    strahl.setAttribute('x2', gx.toFixed(1));
+    strahl.setAttribute('y2', gy.toFixed(1));
+    uhrText({ t: zeit });
+  };
+
+  const los = (ev) => {
+    ev.stopPropagation();          // sonst öffnet der Block seine Erklärung
+    ev.preventDefault();
+    nach(ev);
+    const zug = (e) => { e.preventDefault(); nach(e); };
+    const ende = () => {
+      window.removeEventListener('pointermove', zug);
+      window.removeEventListener('pointerup', ende);
+      window.removeEventListener('pointercancel', ende);
+    };
+    window.addEventListener('pointermove', zug);
+    window.addEventListener('pointerup', ende);
+    window.addEventListener('pointercancel', ende);
+  };
+  feld.addEventListener('pointerdown', los);
 }
 
 /** Nächste Sonnenmarke ab jetzt — für die Mitte der Uhr. */
@@ -5114,10 +5212,13 @@ function renderSonneDetail() {
     </div>
     <div class="sv-fenster">
       <div class="sv-buehne" id="svBuehne">
-        <div class="sv-panel"><div class="uhr-wrap" id="sonnenuhr"></div></div>
         <div class="sv-panel">
-          <div class="bogen-wrap" id="sonnenbogen"></div>
+          <p class="bogen-text" id="uhrText"></p>
+          <div class="uhr-wrap" id="sonnenuhr"></div>
+        </div>
+        <div class="sv-panel">
           <p class="bogen-text" id="bogenText"></p>
+          <div class="bogen-wrap" id="sonnenbogen"></div>
         </div>
       </div>
     </div>
@@ -5174,9 +5275,11 @@ function renderSonneDetail() {
   sonneAnsichtBinden();
   $$('.sm-block.has-info', ziel).forEach(b => {
     b.onclick = (e) => {
-      // Umschalter und der abfahrbare Bogen sind eigene Bedienelemente —
-      // sie sollen nicht die Erklärung öffnen.
-      if (e.target.closest('.sv-tabs, .bogen-wrap')) return;
+      /* Umschalter, Bogen und Ringuhr sind eigene Bedienelemente — sie
+         sollen nicht die Erklärung öffnen. `stopPropagation` beim Zeiger
+         reicht dafür nicht: Der Klick entsteht erst danach aus Druck und
+         Loslassen und läuft auf einem eigenen Weg nach oben. */
+      if (e.target.closest('.sv-tabs, .bogen-wrap, .uhr-wrap')) return;
       openExplain(b.dataset.info);
     };
   });
@@ -6212,6 +6315,17 @@ async function installAnstossen() {
    Kotangens: bei 45° genau die Körpergröße, bei 27° das Doppelte,
    bei 18° das Dreifache. Die Stufen sind danach gesetzt, damit Wort und
    Zahl in der Erklärung nicht auseinanderlaufen. */
+/** Wie die Ringfarben, nur als Wort: In welcher Lichtphase liegt diese
+    Sonnenhöhe? Die Grenzen sind dieselben wie in `stufen` der Ringuhr. */
+function lichtWort(alt) {
+  if (alt > 6)      return 'Tag';
+  if (alt > -0.833) return 'Goldene Stunde';
+  if (alt > -6)     return 'Blaue Stunde';
+  if (alt > -12)    return 'Nautische Dämmerung';
+  if (alt > -18)    return 'Astronomische Dämmerung';
+  return 'Nacht';
+}
+
 function winkelWort(grad) {
   if (grad < 6)  return 'sehr flach, Schatten zehnfach und länger';
   if (grad < 11) return 'flach, Schatten etwa fünfmal so lang wie du';

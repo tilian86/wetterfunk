@@ -2137,10 +2137,17 @@ body.map-full > *:not(.card-radar):not(.sky):not(.topbar):not(.toast) { visibili
 .sm-block .moon-row { display: flex; align-items: center; gap: 14px; }
 
 /* ── Sonnenuhr: 24 Stunden als Ring ───────────────────────── */
+/* touch-action: pan-y wie beim Bogen — am Ring entlangfahren, senkrecht
+   scrollt die Seite weiter. */
 .uhr-wrap {
   position: relative; width: 100%; max-width: 300px;
-  margin: 6px auto 4px; aspect-ratio: 1;
+  margin: 6px auto 4px; aspect-ratio: 1; touch-action: pan-y;
 }
+/* Die Mitte trägt nur Text; ohne diese Regel schluckte sie jeden Finger,
+   der zum Abfahren auf dem Ring landet. */
+.uhr-mitte { pointer-events: none; }
+.uhr-strahl { stroke: rgba(255,255,255,.35); stroke-width: 1; stroke-dasharray: 2.5 2.5; }
+.uhr-svg .uhr-griff { fill: #fff; stroke: #ffd60a; stroke-width: 2; }
 .uhr-svg { width: 100%; height: 100%; display: block; overflow: visible; }
 .uhr-svg text {
   font: 600 8px var(--font); fill: var(--ink-faint);
@@ -2274,8 +2281,11 @@ body.ar-offen { overflow: hidden; }
 .bg-griff { fill: rgba(255,255,255,.16); stroke: #fff; stroke-width: 2; }
 .bg-lot { stroke: rgba(255,255,255,.45); stroke-width: 1; stroke-dasharray: 2 3; }
 
+/* Die Leiste steht ÜBER Uhr und Bogen: Auf dem Handy liegt der Finger sonst
+   genau auf der Zahl, die man ablesen will. min-height hält die Höhe fest,
+   damit die Zeichnung darunter beim Abfahren nicht springt. */
 .bogen-text {
-  margin: 8px 0 0; text-align: center;
+  margin: 0 0 6px; text-align: center;
   font-size: 12.5px; color: var(--ink); line-height: 1.5;
   font-variant-numeric: tabular-nums; min-height: 2.6em;
 }
@@ -2307,8 +2317,9 @@ body.ar-offen { overflow: hidden; }
 #bogenGriff.ist-mond .bg-lot { stroke: rgba(232,240,252,.4); }
 
 /* `hidden` ist ein HTML-Attribut — bei SVG-Gruppen wirkt es nicht von
-   allein. Ohne diese Zeile blieb der Griff der letzten Berührung stehen. */
-#bogenGriff[hidden] { display: none; }
+   allein. Ohne diese Zeile blieb der Griff der letzten Berührung stehen —
+   beim Uhrgriff hätte er sogar von Anfang an bei 0,0 in der Ecke geklebt. */
+#bogenGriff[hidden], #uhrGriff[hidden] { display: none; }
 .hint-gruen { color: var(--good); font-weight: 600; }
 
 /* Überschrift innerhalb der Meldungsliste — trennt Wetter von Himmelsterminen */
