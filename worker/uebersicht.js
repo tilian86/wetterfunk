@@ -112,7 +112,11 @@ export async function uebersicht(url, request, env, { gleich, zuVieleAnfragen, s
       if (!r) return antwort({ error: `Für ${tag} liegen keine vergleichbaren Messwerte vor` }, 404);
       const vorhanden = await env.WF_PUSH.get(`pruef:${tag}`, 'json');
       const orte = [...(vorhanden?.orte || []).filter(o => o.lat !== r.lat), r];
-      await env.WF_PUSH.put(`pruef:${tag}`, JSON.stringify({ tag, orte, stand: Date.now() }),
+      /* Die Meldungs-Bilanz des Tages bleibt erhalten — der Hand-Anstoß
+         erneuert nur die Modell-Messung, nicht das Wach-Journal. */
+      await env.WF_PUSH.put(`pruef:${tag}`,
+                            JSON.stringify({ tag, orte, meldungen: vorhanden?.meldungen ?? null,
+                                             stand: Date.now() }),
                             { expirationTtl: 90 * 86400 });
       return antwort({ ok: true, tag, ergebnis: r });
     }

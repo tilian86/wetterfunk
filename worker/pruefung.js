@@ -62,15 +62,7 @@ const MODELLE = ['icon_d2', 'icon_eu', 'ecmwf_ifs025', 'gfs_seamless',
                  'ukmo_seamless', 'meteofrance_seamless'];
 
 /** Ein Ort, ein Tag: Was war angesagt, was kam wirklich? */
-export /* Offen und ungelöst: Der Prüflauf misst das MODELL, nicht die Meldungen.
-   Am 5.8. fiel um 15:45 über Tübingen 1,5 mm Regen; ICON-D2 sagte 0,0 mm bei
-   20 % Risiko, das Radar wurde nicht befragt, es kam keine Meldung — und
-   dieser Prüflauf hätte davon nichts bemerkt, weil er nur Vorhersage gegen
-   Messung stellt. Was fehlt, ist eine Zählung „Regenstunden, die gemeldet
-   wurden" gegen „Regenstunden insgesamt". Erst die zeigt, ob der Vorposten
-   wirklich hilft, statt es nur zu behaupten. */
-
-async function pruefeOrt(lat, lon, tag) {
+export async function pruefeOrt(lat, lon, tag) {
   /* Wie weit muss der Rückblick reichen? Bis zum Prüftag, plus zwei Tage
      Luft. Mit fest eingetragenen zwei Tagen fehlte jeder Prüftag, der
      länger als gestern zurücklag — das Fenster reichte gar nicht dorthin. */
@@ -194,6 +186,63 @@ async function pruefeOrt(lat, lon, tag) {
   };
 }
 
+/* ── Meldungs-Bilanz ─────────────────────────────────────────
+   Der Prüflauf oben misst das MODELL. Für den Nutzer zählt aber etwas
+   anderes: Kam eine Meldung, als es regnete — und regnete es, als eine kam?
+   Der 5. August (1,5 mm über Tübingen, keine Meldung) wäre oben unsichtbar
+   geblieben. Der Wächter schreibt deshalb ein Tages-Journal (wach:<tag>):
+   Radar-Beobachtungen am Ort (nur Übergänge nass/trocken), gesendete
+   Regenmeldungen, unterdrückte Meldungen. Hieraus entsteht die Bilanz.
+
+   Ehrlichkeit über die Grenzen: Beobachtet wird nur, wenn der Wächter aufs
+   Radar schaut — bei angekündigtem Regen ohne fällige Meldung entstehen
+   Lücken. Eine Phase ohne Gegenstimme wird nach einer Stunde geschlossen.
+   Die Bilanz ist damit eine Untergrenze der Wahrheit, kein Ersatz für sie. */
+export function meldungsBilanz(journal) {
+  const je = new Map();
+  for (const e of journal?.eintraege || []) {
+    if (!je.has(e.o)) je.set(e.o, []);
+    je.get(e.o).push(e);
+  }
+  const b = { phasen: 0, gemeldet: 0, verpasst: 0, ankuendigungen: 0,
+              treffer: 0, fehlalarm: 0, unbewertet: 0,
+              unterdrueckt: 0, unterdruecktFalsch: 0 };
+  for (const evs of je.values()) {
+    evs.sort((a, x) => a.t - x.t);
+    const obs = evs.filter(e => e.art === 'obs');
+    const meld = evs.filter(e => e.art === 'meldung');
+    const still = evs.filter(e => e.art === 'unterdrueckt');
+
+    // Regenphasen aus den Übergängen
+    const phasen = [];
+    let beginn = null;
+    for (const x of obs) {
+      if (x.nass && beginn == null) beginn = x.t;
+      if (!x.nass && beginn != null) { phasen.push({ von: beginn, bis: x.t }); beginn = null; }
+    }
+    if (beginn != null) phasen.push({ von: beginn, bis: beginn + 36e5 });
+
+    b.phasen += phasen.length;
+    for (const ph of phasen) {
+      // Ankündigung bis 150 Min vorher oder Meldung während der Phase
+      const ok = meld.some(m => m.t >= ph.von - 150 * 60000 && m.t <= ph.bis);
+      ok ? b.gemeldet++ : b.verpasst++;
+    }
+    for (const m of meld.filter(x => x.typ === 'start')) {
+      b.ankuendigungen++;
+      const danach = obs.filter(x => x.t >= m.t && x.t <= m.t + 3 * 36e5);
+      if (!danach.length) { b.unbewertet++; continue; }
+      danach.some(x => x.nass) ? b.treffer++ : b.fehlalarm++;
+    }
+    for (const u of still) {
+      b.unterdrueckt++;
+      // Wurde es kurz nach der Unterdrückung doch nass, war sie falsch
+      if (obs.some(x => x.nass && Math.abs(x.t - u.t) <= 45 * 60000)) b.unterdruecktFalsch++;
+    }
+  }
+  return b;
+}
+
 /** Der tägliche Lauf: gestern prüfen, Ergebnis ablegen. */
 export async function taeglichePruefung(env) {
   const tag = iso(Date.now() - TAG);
@@ -218,9 +267,14 @@ export async function taeglichePruefung(env) {
     const r = await pruefeOrt(o.lat, o.lon, tag);
     if (r) ergebnisse.push({ ...r, ort: o.ort });
   }
-  if (!ergebnisse.length) return;
 
-  await env.WF_PUSH.put(`pruef:${tag}`, JSON.stringify({ tag, orte: ergebnisse, stand: Date.now() }),
+  // Auch wenn die Station schweigt: Die Meldungs-Bilanz gibt es trotzdem
+  const journal = await env.WF_PUSH.get(`wach:${tag}`, 'json');
+  const meldungen = journal ? meldungsBilanz(journal) : null;
+  if (!ergebnisse.length && !meldungen) return;
+
+  await env.WF_PUSH.put(`pruef:${tag}`,
+                        JSON.stringify({ tag, orte: ergebnisse, meldungen, stand: Date.now() }),
                         { expirationTtl: HALTBAR });
 }
 
@@ -253,6 +307,18 @@ export async function pruefVerlauf(env, tage = 30) {
       regenFehlalarm: mit(o => o.regen?.fehlalarm).reduce((a, b) => a + b, 0),
       himmelEinzel:   schnitt(mit(o => o.himmel?.einzel)),
       himmelMittelweg: schnitt(mit(o => o.himmel?.mittelweg))
-    }
+    },
+    /* Summen statt Schnitt: „3 verpasste Phasen in 30 Tagen" ist die
+       Aussage, nicht „0,1 pro Tag". */
+    meldungen: (() => {
+      const m = eintraege.map(e => e.meldungen).filter(Boolean);
+      if (!m.length) return null;
+      const summe = (f) => m.reduce((a, x) => a + (x[f] || 0), 0);
+      return { tage: m.length, phasen: summe('phasen'), gemeldet: summe('gemeldet'),
+               verpasst: summe('verpasst'), ankuendigungen: summe('ankuendigungen'),
+               treffer: summe('treffer'), fehlalarm: summe('fehlalarm'),
+               unbewertet: summe('unbewertet'), unterdrueckt: summe('unterdrueckt'),
+               unterdruecktFalsch: summe('unterdruecktFalsch') };
+    })()
   };
 }

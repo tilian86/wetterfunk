@@ -595,7 +595,8 @@ async function regenPruefen(env) {
   /* Cloudflare erlaubt 50 ausgehende Anfragen je Durchgang. Fest verplant
      sind: eine für die Warnungen, je Gerät eine für das Modell und im
      Zweifel eine für die Meldung selbst. Was übrig bleibt, gehört dem
-     Radar — ein Vorposten kostet 1, ein voller Blick 20.
+     Radar — ein Vorposten kostet bis zu 2 (jetzt und der Trend +30 Min),
+     eine Gegenprobe vor dem Senden 1 bis 2, ein voller Blick 20.
 
      Vorher stand hier nur „höchstens zwei Orte". Das reichte, solange nur
      der teure Blick am Radar hing; mit dem Vorposten je Gerät wäre die
@@ -605,6 +606,35 @@ async function regenPruefen(env) {
   let radarAusgegeben = 0;
   const reichtFuer = (n) => radarAusgegeben + n <= radarBudget;
 
+  /* ── Wach-Journal ─────────────────────────────────────────
+     Der Prüflauf maß bisher nur das Modell — den 5. August (Regen ohne
+     Meldung) hätte er nie bemerkt. Hier schreibt der Wächter deshalb mit,
+     was das Radar am Ort sah (nur bei Änderung nass/trocken) und was
+     gemeldet oder unterdrückt wurde. Nachts rechnet meldungsBilanz daraus
+     die einzige Zahl, die für den Nutzer zählt: Wurde gemeldet, wenn es
+     regnete — und regnete es, wenn gemeldet wurde? Ein Schlüssel je Tag
+     (Ortszeit), höchstens eine Schreibaktion je Durchgang. */
+  const wachTag = new Intl.DateTimeFormat('en-CA',
+    { timeZone: 'Europe/Berlin', year: 'numeric', month: '2-digit', day: '2-digit' })
+    .format(new Date());
+  const journal = (await env.WF_PUSH.get(`wach:${wachTag}`, 'json')) || { eintraege: [] };
+  let journalNeu = false;
+  const merke = (o, art, extra = {}) => {
+    if (art === 'obs') {
+      // Nur Übergänge festhalten — sonst schriebe jeder trockene Tag 288-mal
+      for (let i = journal.eintraege.length - 1; i >= 0; i--) {
+        const e = journal.eintraege[i];
+        if (e.o === o && e.art === 'obs') {
+          if (e.nass === extra.nass) return;
+          break;
+        }
+      }
+    }
+    journal.eintraege.push({ t: Date.now(), o, art, ...extra });
+    if (journal.eintraege.length > 500) journal.eintraege = journal.eintraege.slice(-500);
+    journalNeu = true;
+  };
+
   for (const eintragMeta of liste.keys) {
     const eintrag = await env.WF_PUSH.get(eintragMeta.name, 'json');
     if (!eintrag) continue;
@@ -612,6 +642,9 @@ async function regenPruefen(env) {
 
     try {
       let meldung = null;
+      let regenlage = null;
+      const ortKey = typeof eintrag.lat === 'number'
+        ? `${eintrag.lat.toFixed(2)},${eintrag.lon.toFixed(2)}` : '?';
 
       /* Amtliche Warnungen haben Vorrang: Ein Unwetter ist wichtiger als die
          Ankündigung von Nieselregen. */
@@ -622,7 +655,7 @@ async function regenPruefen(env) {
          nachholen, eine Regenmeldung schon — die gilt für zwei Stunden. */
       if (!meldung) meldung = himmelMelden(eintrag);
       if (!meldung && arten.regen) {
-        const lage = await regenLage(eintrag.lat, eintrag.lon);
+        const lage = regenlage = await regenLage(eintrag.lat, eintrag.lon);
         if (lage) {
           /* Das Modell schweigt, aber es ist Schauerlage: Dann entscheidet
              das Radar. Genau hier lag der Fall vom 1. August — das Gitter
@@ -633,16 +666,21 @@ async function regenPruefen(env) {
              der Vorposten meldet, dass es bereits fällt. Der zweite Weg
              wird nur beschritten, wenn der erste zu ist; sonst zahlte man
              die Vorposten-Anfrage umsonst. */
-          let radarNoetig = false;
+          let radarNoetig = false, obsErfasst = false;
           if (stillJetzt && imRadargebiet(eintrag.lat, eintrag.lon)) {
             radarNoetig = (lage.risiko ?? 0) >= RADAR_AB_RISIKO;
-            if (!radarNoetig && radarVorrat > 0 && reichtFuer(1)) {
-              radarAusgegeben += 1;
-              radarNoetig = (await radarVorposten(eintrag.lat, eintrag.lon)) === true;
+            if (!radarNoetig && radarVorrat > 0 && reichtFuer(2)) {
+              radarAusgegeben += 2;
+              const vp = await radarVorposten(eintrag.lat, eintrag.lon);
+              if (vp) {
+                merke(ortKey, 'obs', { nass: vp.nun >= RADAR_NASS });
+                obsErfasst = true;
+                radarNoetig = vp.nun >= RADAR_NASS || (vp.gleich ?? 0) >= RADAR_NAHE;
+              }
             }
           }
           if (radarNoetig) {
-            const schluessel = `${eintrag.lat.toFixed(2)},${eintrag.lon.toFixed(2)}`;
+            const schluessel = ortKey;
             if (!radarSpeicher.has(schluessel) && radarVorrat > 0 && reichtFuer(20)) {
               radarVorrat--;
               radarAusgegeben += 20;
@@ -650,6 +688,7 @@ async function regenPruefen(env) {
                 await radarLage(eintrag.lat, eintrag.lon, eintrag.tz));
             }
             const rl = radarSpeicher.get(schluessel);
+            if (rl && !obsErfasst) merke(ortKey, 'obs', { nass: !!rl.laeuft });
             if (rl && (rl.laeuft || rl.naechste)) {
               lage.laeuft = rl.laeuft;
               /* Die spätere Phase des Modells bleibt stehen, wenn das Radar
@@ -681,6 +720,49 @@ async function regenPruefen(env) {
       if (meldung.art !== 'warnung' && meldung.art !== 'himmel'
           && Date.now() - (eintrag.zuletzt || 0) < MIN_ABSTAND) continue;
 
+      /* ── Gegenprobe vor dem Senden ──────────────────────
+         Eine Regenmeldung aus dem MODELL muss erst am Radar vorbei: „Es
+         regnet" wird nur gesendet, wenn es am Ort wirklich nass ist; eine
+         Ankündigung mit unter 45 Minuten Vorlauf nur, wenn das Radar zum
+         Startzeitpunkt (und zehn Minuten danach) etwas sieht — so weit
+         voraus ist das Radar verlässlicher als jedes Modell. Das ist die
+         andere Hälfte des Versprechens: nicht nur melden, wenn das Modell
+         blind war, sondern auch schweigen, wenn es Gespenster sieht. Wer
+         dreimal grundlos aufs Handy schaut, glaubt der vierten Meldung
+         nicht mehr.
+         Meldungen, deren Zahlen schon vom Radar stammen, sind geprüft.
+         Antwortet der DWD nicht (null), wird gesendet: Das Radar darf
+         Meldungen verhindern, sein Ausfall darf es nicht. */
+      if (regenlage && regenlage.quelle !== 'radar'
+          && ['ende', 'haelt', 'start'].includes(meldung.art)
+          && imRadargebiet(eintrag.lat, eintrag.lon)) {
+        let zeiten = null;
+        if (meldung.art !== 'start') {
+          zeiten = [Math.floor(Date.now() / 300000) * 300000];
+        } else if (regenlage.naechste
+                   && regenlage.naechste.start - Date.now() <= 45 * 60000) {
+          const start = Math.floor(regenlage.naechste.start / 300000) * 300000;
+          zeiten = [start, start + 6e5];
+        }
+        if (zeiten && reichtFuer(zeiten.length)) {
+          radarAusgegeben += zeiten.length;
+          const werte = await Promise.all(
+            zeiten.map(t => radarWert(eintrag.lat, eintrag.lon, t)));
+          if (werte.every(v => typeof v === 'number')) {
+            if (meldung.art !== 'start') {
+              merke(ortKey, 'obs', { nass: werte[0] >= RADAR_NASS });
+            }
+            if (!werte.some(v => v >= RADAR_NASS)) {
+              /* Kein Merker, kein zuletzt-Stempel: Der nächste Durchgang
+                 prüft neu. Solange das Modell Gespenster sieht, kostet das
+                 eine Anfrage alle fünf Minuten — der Preis der Ruhe. */
+              merke(ortKey, 'unterdrueckt', { typ: meldung.art });
+              continue;
+            }
+          }
+        }
+      }
+
       const status = await sendPush(eintrag.abo, JSON.stringify({
         titel: meldung.titel, text: meldung.text, art: meldung.art,
         // Eigene Kennung je Termin, damit sich die Meldungen nicht ersetzen
@@ -707,12 +789,20 @@ async function regenPruefen(env) {
           eintrag.himmelGemeldet = [...(eintrag.himmelGemeldet || []), meldung.merker].slice(-12);
         } else {
           eintrag.gemeldet = meldung.merker;
+          if (['start', 'ende', 'haelt'].includes(meldung.art)) {
+            merke(ortKey, 'meldung', { typ: meldung.art });
+          }
         }
         await env.WF_PUSH.put(eintragMeta.name, JSON.stringify(eintrag));
       }
     } catch (e) {
       console.log('Prüfung fehlgeschlagen:', eintragMeta.name, e.message);
     }
+  }
+
+  if (journalNeu) {
+    await env.WF_PUSH.put(`wach:${wachTag}`, JSON.stringify(journal),
+                          { expirationTtl: 3 * 86400 });
   }
 }
 
@@ -1208,14 +1298,21 @@ async function radarWert(lat, lon, t) {
   } catch { return null; }
 }
 
-/** Vorposten: Regnet es GERADE über dieser Koordinate? Ein einziger Abruf
-    statt zwanzig — billig genug, um bei jedem Durchgang zu laufen. Fällt der
-    DWD aus, kommt null zurück und es bleibt beim Modell; ein stiller Ausfall
-    darf keine Meldung erfinden. */
+/** Vorposten: Regnet es GERADE über dieser Koordinate — oder in einer
+    halben Stunde? Ein bis zwei Abrufe statt zwanzig, billig genug für jeden
+    Durchgang. Der zweite Schritt schaut auf den Radar-Trend +30 Minuten und
+    fängt damit Schauer, die anrollen, während das Modell noch 0 % sagt; er
+    entfällt, wenn es schon jetzt nass ist. Für den Trend gilt die höhere
+    Schwelle RADAR_NAHE — eine Vorhersage ist unsicherer als eine Messung.
+    Fällt der DWD aus, kommt null zurück und es bleibt beim Modell; ein
+    stiller Ausfall darf keine Meldung erfinden. */
 async function radarVorposten(lat, lon) {
-  const jetzt = Math.floor(Date.now() / 300000) * 300000;
-  const v = await radarWert(lat, lon, jetzt);
-  return typeof v === 'number' ? v >= RADAR_NASS : null;
+  const takt = Math.floor(Date.now() / 300000) * 300000;
+  const nun = await radarWert(lat, lon, takt);
+  if (typeof nun !== 'number') return null;
+  if (nun >= RADAR_NASS) return { nun, gleich: null };
+  const gleich = await radarWert(lat, lon, takt + 30 * 60000);
+  return { nun, gleich: typeof gleich === 'number' ? gleich : null };
 }
 
 /* Die Stufen wie in der App, hier aber aus dem Stundenwert gebildet. Die
