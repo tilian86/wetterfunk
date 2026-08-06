@@ -1669,10 +1669,35 @@ function meteoTasten(ziel, m) {
     lupe.style.left = `${Math.max(0, Math.min(r.width - lw, px - lw / 2))}px`;
   };
 
-  svg.addEventListener('pointerdown', (e) => zeige(e.clientX));
+  /* Ohne Hinweis findet die Fingerführung niemand — beim Sonnenbogen steht
+     derselbe Satz schon lange darunter. Er verschwindet für immer, sobald
+     man es einmal gemacht hat: Ein Hinweis, den man nicht mehr braucht,
+     ist ab dann nur noch Text, den Florian nicht lesen will. */
+  let wink = ziel.querySelector('.mg-wink');
+  const gelernt = () => store.get('wf.mgGetastet', false);
+  if (!gelernt()) {
+    if (!wink) {
+      wink = document.createElement('p');
+      wink.className = 'mg-wink';
+      wink.textContent = 'Mit dem Finger über den Verlauf fahren — für jede Stunde '
+        + 'Temperatur, Regen und Wind.';
+      ziel.appendChild(wink);
+    }
+  } else if (wink) {
+    wink.remove();
+  }
+
+  const getastet = (clientX) => {
+    zeige(clientX);
+    if (!gelernt()) {
+      store.set('wf.mgGetastet', true);
+      ziel.querySelector('.mg-wink')?.remove();
+    }
+  };
+  svg.addEventListener('pointerdown', (e) => getastet(e.clientX));
   svg.addEventListener('pointermove', (e) => {
     // Maus: schon beim Überfahren; Finger: solange er aufliegt
-    if (e.pointerType === 'mouse' || e.buttons) zeige(e.clientX);
+    if (e.pointerType === 'mouse' || e.buttons) getastet(e.clientX);
   });
 }
 
@@ -4880,6 +4905,21 @@ function renderSonnenbogen() {
   const jetztP = bahn.reduce((a, b) => (Math.abs(b.t - jetzt) < Math.abs(a.t - jetzt) ? b : a), bahn[0]);
   const jetztSichtbar = jetztP.alt > -7;
 
+  /* Die gestrichelte Bahn ist der Mond — nur sah man ihr das nicht an.
+     Florian hielt sie in seiner eigenen App für eine Hilfslinie und fragte,
+     ob man eine Mondbahn einbauen könne. Was niemand erkennt, ist nicht
+     eingebaut.
+
+     Ein Name direkt auf der Kurve ging nicht: Am 6. August lag der Mondgipfel
+     bei x=150/y=20, die Beschriftung des Sonnenhöchststands bei x=149/y=28 —
+     die beiden Bahnen laufen an manchen Tagen so dicht, dass es auf der Kurve
+     keinen sicheren Platz gibt. Deshalb eine feste kleine Legende oben links,
+     über beiden Bahnen (die Sonne erreicht hier nie den oberen Rand, weil
+     altMax immer acht Grad Luft lässt). */
+  const mondName = mondLinie ? `
+      <line class="bg-legende-linie" x1="${BOGEN.padX}" y1="9" x2="${BOGEN.padX + 13}" y2="9"/>
+      <text class="bg-legende" x="${BOGEN.padX + 17}" y="11.5">Mond</text>` : '';
+
   ziel.innerHTML = `
     <svg viewBox="0 0 ${BOGEN.w} ${BOGEN.h}" class="bogen-svg" role="img"
          aria-label="Bahn der Sonne über den Himmel — zum Abfahren antippen">
@@ -4895,6 +4935,7 @@ function renderSonnenbogen() {
             x2="${BOGEN.w - BOGEN.padX + 8}" y2="${BOGEN.horizont}"/>
       ${richtungen}
       ${mondLinie ? `<path class="bg-mondlinie" d="${mondLinie.trim()}" fill="none"/>` : ''}
+      ${mondName}
       ${mondScheibe}
       ${linie ? `<path class="bg-linie" d="${linie}" fill="none"/>` : ''}
       ${marke(auf, hhmm(auf.t))}
