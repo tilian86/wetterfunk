@@ -2429,8 +2429,11 @@ body.ar-offen { overflow: hidden; }
 }
 
 /* ── Meteogramm: zehn Tage Temperatur und Regen ────────────── */
-.meteo-wrap { margin: 2px 0 14px; }
-.mg-svg { width: 100%; height: auto; display: block; }
+/* position: relative trägt das Werte-Kästchen der Fingerführung;
+   touch-action: pan-y teilt die Gesten — waagerecht tasten, senkrecht
+   scrollt die Seite weiter. */
+.meteo-wrap { margin: 2px 0 14px; position: relative; }
+.mg-svg { width: 100%; height: auto; display: block; touch-action: pan-y; }
 .mg-svg text { stroke: none; text-anchor: middle; }
 /* Die globale Regel `svg { stroke: currentColor }` zog sonst eine helle
    Kontur um die gefüllte Temperaturfläche — sah aus wie eine Achse. */
@@ -2446,6 +2449,22 @@ body.ar-offen { overflow: hidden; }
   stroke-linejoin: round; stroke-linecap: round; fill: none;
 }
 .mg-regen { fill: #4aa8e8; }
+
+/* Fingerführung: Linie und Punkt müssen nach dem Strich-Reset oben ihre
+   Konturen ausdrücklich zurückbekommen — siehe die Kurve darüber. */
+.mg-zeiger line { stroke: rgba(255,255,255,.5); stroke-width: 1; stroke-dasharray: 2.5 2.5; }
+.mg-svg .mg-zeiger circle { fill: #fff; stroke: #ff9f6a; stroke-width: 1.6; }
+.mg-lupe {
+  position: absolute; top: 0; z-index: 3; pointer-events: none;
+  background: rgba(12,18,34,.94); border: 1px solid var(--card-line);
+  border-radius: 8px; padding: 4px 9px 5px;
+  font-size: 11px; line-height: 1.4; white-space: nowrap;
+  box-shadow: 0 3px 14px rgba(0,0,0,.35);
+}
+.mg-lupe b { display: block; font-size: 9.5px; font-weight: 600;
+             color: var(--ink-dim); letter-spacing: .02em; }
+.mg-lupe span { display: block; }
+.mg-lupe i { font-style: normal; color: var(--ink-dim); }
 .mg-punkt { fill: #fff; }
 .mg-wert  {
   font: 700 11.5px var(--font); fill: var(--ink);
