@@ -1639,7 +1639,11 @@ function meteoTasten(ziel, m) {
       Math.round((vx - METEO.links) / breite * (m.n - 1))));
     const x = m.X(k);
 
-    zeiger.hidden = false;
+    /* removeAttribute statt `.hidden = false`: Die Eigenschaft `hidden`
+       gehört zu HTMLElement — bei einer SVG-Gruppe setzt die Zuweisung nur
+       eine JS-Eigenschaft und lässt das Attribut stehen. Zusammen mit der
+       Regel `[hidden] { display: none }` blieb der Zeiger dadurch unsichtbar. */
+    zeiger.removeAttribute('hidden');
     linie.setAttribute('x1', x.toFixed(1)); linie.setAttribute('x2', x.toFixed(1));
     punkt.setAttribute('cx', x.toFixed(1));
     punkt.setAttribute('cy', m.Y(m.temps[k]).toFixed(1));
@@ -4749,6 +4753,307 @@ function renderSonnenuhr() {
   return { ev, mt, mp };
 }
 
+/* ── Licht im Jahr ──────────────────────────────────────────
+   Ringuhr und Bogen zeigen einen Tag. Diese Ansicht zeigt das Jahr — und
+   den Tag gleich mit: Waagerecht laufen die 365 Tage, senkrecht die 24
+   Stunden. Ein einzelner Tag ist damit die senkrechte Scheibe durch das
+   Bild, und die Farben sind dieselben wie im Ring. Man sieht die
+   Lichtsichel im Sommer aufgehen und im Winter zuschnüren — das ist die
+   Schiefe der Ekliptik (23,44°), sichtbar gemacht.
+
+   Warum nicht sunEvents für alle 365 Tage? Das tastet je Tag 1440 Minuten
+   ab — über ein Jahr wären das über eine halbe Million Rechnungen und ein
+   spürbares Hängen. Zum ZEICHNEN genügt die geschlossene Formel über den
+   Stundenwinkel: Bei 300 Pixeln Breite entspricht ein Pixel gut sechs
+   Minuten, da fällt ihre Ungenauigkeit von ein bis zwei Minuten nicht auf.
+   Für die abgelesenen ZAHLEN wird dann doch sunEvents gefragt — aber nur
+   für den einen Tag unter dem Finger. */
+const EKLIPTIK = 23.44;
+const JAHR = { w: 360, h: 208, links: 22, rechts: 20, oben: 8, unten: 176 };
+let jahrDaten = null;          // { schluessel, tage: [...] }
+
+/** Ortszeit-Stunde eines UTC-Zeitpunkts in der Zeitzone des Ortes.
+    Über Intl, damit die Sommerzeit für JEDEN Tag stimmt — ein einzelner
+    Versatz von heute läge im Winterhalbjahr eine Stunde daneben. */
+function stundeInZone(datum, zone) {
+  try {
+    const teile = new Intl.DateTimeFormat('de-DE', {
+      timeZone: zone, hour: '2-digit', minute: '2-digit', hour12: false
+    }).formatToParts(datum);
+    const h = Number(teile.find(x => x.type === 'hour')?.value);
+    const m = Number(teile.find(x => x.type === 'minute')?.value);
+    return Number.isFinite(h) && Number.isFinite(m) ? h + m / 60 : null;
+  } catch { return null; }
+}
+
+/** Sonnenstands-Schwellen eines Tages, geschlossen gerechnet. */
+function jahrTag(jdMitternacht, lat, lon) {
+  const rad = Math.PI / 180;
+  const n = Math.ceil(jdMitternacht - 2451545.0 + 0.0008);
+  const nStern = n - lon / 360;
+  const Mgrad = (357.5291 + 0.98560028 * nStern) % 360;
+  const M = rad * Mgrad;
+  const C = 1.9148 * Math.sin(M) + 0.02 * Math.sin(2 * M) + 0.0003 * Math.sin(3 * M);
+  const lambda = rad * ((Mgrad + C + 180 + 102.9372) % 360);
+  const transit = 2451545.0 + nStern + 0.0053 * Math.sin(M) - 0.0069 * Math.sin(2 * lambda);
+  const dec = Math.asin(Math.sin(lambda) * Math.sin(rad * EKLIPTIK));
+  const out = { transit, dec: dec / rad };
+  for (const [name, hoehe] of [['tag', 6], ['gold', -0.833], ['blau', -6],
+                               ['naut', -12], ['astro', -18]]) {
+    const cosW = (Math.sin(rad * hoehe) - Math.sin(rad * lat) * Math.sin(dec))
+               / (Math.cos(rad * lat) * Math.cos(dec));
+    /* Über 1: Die Sonne steigt nie so hoch (Polarnacht). Unter -1: Sie
+       sinkt nie so tief — dann füllt die Stufe die ganze Spalte, sonst
+       riss die Fläche im Hochsommer unten aus dem Bild. */
+    out[name] = cosW > 1 ? null : cosW < -1 ? 'immer'
+      : [transit - Math.acos(cosW) / rad / 360, transit + Math.acos(cosW) / rad / 360];
+  }
+  return out;
+}
+
+function baueJahrDaten() {
+  if (!place) return null;
+  const zone = data?.timezone || 'UTC';
+  const jahr = new Date().getFullYear();
+  const schluessel = `${place.lat.toFixed(3)},${place.lon.toFixed(3)},${zone},${jahr}`;
+  if (jahrDaten?.schluessel === schluessel) return jahrDaten;
+
+  const tage = [];
+  for (let t = 0; t < 365; t++) {
+    const ms = Date.UTC(jahr, 0, 1 + t);
+    const jd = ms / 86400000 + 2440587.5;
+    const roh = jahrTag(jd, place.lat, place.lon);
+    const stunde = (jdWert) => {
+      const h = stundeInZone(new Date((jdWert - 2440587.5) * 86400000), zone);
+      if (h == null) return null;
+      /* Ereignisse vor Mitternacht Ortszeit erscheinen als 23 Uhr des
+         Vortages — auf die Ränder klemmen, sonst springt die Fläche. */
+      const utcH = (jdWert - jd) * 24;
+      return utcH < -1 ? 0 : utcH > 25 ? 24 : h;
+    };
+    const z = {};
+    for (const k of ['tag', 'gold', 'blau', 'naut', 'astro']) {
+      const v = roh[k];
+      if (v === null) { z[k] = null; continue; }
+      if (v === 'immer') { z[k] = [0, 24]; continue; }
+      const a = stunde(v[0]), b = stunde(v[1]);
+      z[k] = (a == null || b == null || b < a) ? null : [a, b];
+    }
+    tage.push({ t, ms, z, dec: roh.dec });
+  }
+  jahrDaten = { schluessel, tage, zone, jahr };
+  return jahrDaten;
+}
+
+/** Tagesindex → die vier Eckpunkte des Jahres (aus den Daten, nicht geraten). */
+function jahrEckpunkte(tage) {
+  const laenge = tage.map(g => (g.z.gold ? g.z.gold[1] - g.z.gold[0] : null));
+  let iMax = 0, iMin = 0;
+  laenge.forEach((l, i) => {
+    if (l == null) return;
+    if (laenge[iMax] == null || l > laenge[iMax]) iMax = i;
+    if (laenge[iMin] == null || l < laenge[iMin]) iMin = i;
+  });
+  // Tagundnachtgleiche: wo die Länge die zwölf Stunden kreuzt
+  const kreuz = [];
+  for (let i = 1; i < laenge.length; i++) {
+    if (laenge[i - 1] == null || laenge[i] == null) continue;
+    if ((laenge[i - 1] - 12) * (laenge[i] - 12) <= 0) kreuz.push(i);
+  }
+  return { iMax, iMin, kreuz: kreuz.slice(0, 2) };
+}
+
+function renderJahrBand() {
+  const ziel = $('#jahrBand');
+  if (!ziel || !place) return;
+  const d = baueJahrDaten();
+  if (!d) return;
+  const { tage } = d;
+  const J = JAHR;
+  const X = (t) => J.links + t / 364 * (J.w - J.links - J.rechts);
+  const Y = (h) => J.oben + h / 24 * (J.unten - J.oben);
+
+  let flaechen = `<rect x="${J.links}" y="${J.oben}" width="${J.w - J.links - J.rechts}"
+    height="${J.unten - J.oben}" fill="#141d16"/>`;
+  for (const [name, farbe] of [['astro', '#1b3a6b'], ['naut', '#26548f'],
+                               ['blau', '#3f7fd4'], ['gold', '#ffb347'], ['tag', '#ffd60a']]) {
+    const oben = [], unten = [];
+    for (const g of tage) {
+      const v = g.z[name];
+      if (!v) continue;
+      oben.push(`${X(g.t).toFixed(1)},${Y(v[0]).toFixed(1)}`);
+      unten.push(`${X(g.t).toFixed(1)},${Y(v[1]).toFixed(1)}`);
+    }
+    if (oben.length < 2) continue;
+    flaechen += `<path class="jb-flaeche" d="M${oben.join(' L')} L${
+      unten.reverse().join(' L')} Z" fill="${farbe}"/>`;
+  }
+
+  let gitter = '';
+  for (const h of [0, 6, 12, 18, 24]) {
+    gitter += `<line class="jb-linie" x1="${J.links}" y1="${Y(h)}" x2="${J.w - J.rechts}" y2="${Y(h)}"/>
+      <text class="jb-achse" x="${J.links - 3}" y="${(Y(h) + 2.6).toFixed(1)}" text-anchor="end">${h}</text>`;
+  }
+  const kurz = ['J', 'F', 'M', 'A', 'M', 'J', 'J', 'A', 'S', 'O', 'N', 'D'];
+  kurz.forEach((m, i) => {
+    const t0 = Math.round(i / 12 * 365);
+    gitter += `<text class="jb-achse" x="${X(Math.min(364, t0 + 15)).toFixed(1)}"
+      y="${J.unten + 11}" text-anchor="middle">${m}</text>`;
+    if (i) gitter += `<line class="jb-monat" x1="${X(t0).toFixed(1)}" y1="${J.oben}"
+      x2="${X(t0).toFixed(1)}" y2="${J.unten}"/>`;
+  });
+
+  const eck = jahrEckpunkte(tage);
+  let marken = '';
+  const setzeMarke = (i, txt) => {
+    marken += `<line class="jb-marke" x1="${X(i).toFixed(1)}" y1="${J.oben}"
+      x2="${X(i).toFixed(1)}" y2="${J.unten}"/>
+      <text class="jb-markentext" x="${X(i).toFixed(1)}" y="${J.unten + 22}"
+        text-anchor="middle">${txt}</text>`;
+  };
+  setzeMarke(eck.iMax, 'längster');
+  setzeMarke(eck.iMin, 'kürzester');
+  eck.kreuz.forEach(i => setzeMarke(i, 'gleich'));
+
+  const jetzt = new Date();
+  const heuteT = Math.max(0, Math.min(364,
+    Math.floor((jetzt - new Date(jetzt.getFullYear(), 0, 1)) / 864e5)));
+  const heuteH = (stundeInZone(jetzt, d.zone) ?? jetzt.getHours());
+  const kreuzJetzt = `
+    <line class="jb-heute" x1="${X(heuteT).toFixed(1)}" y1="${J.oben}"
+          x2="${X(heuteT).toFixed(1)}" y2="${J.unten}"/>
+    <line class="jb-jetzt" x1="${J.links}" y1="${Y(heuteH).toFixed(1)}"
+          x2="${J.w - J.rechts}" y2="${Y(heuteH).toFixed(1)}"/>
+    <circle class="jb-punkt" cx="${X(heuteT).toFixed(1)}" cy="${Y(heuteH).toFixed(1)}" r="3.4"/>`;
+
+  ziel.innerHTML = `
+    <svg viewBox="0 0 ${J.w} ${J.h}" class="jb-svg" role="img"
+         aria-label="Helligkeit über das ganze Jahr: waagerecht die Tage, senkrecht die Stunden">
+      ${flaechen}${gitter}${marken}${kreuzJetzt}
+      <g id="jahrGriff" hidden>
+        <line class="jb-griff-linie" x1="0" y1="${J.oben}" x2="0" y2="${J.unten}"/>
+      </g>
+      <rect id="jahrFeld" x="0" y="0" width="${J.w}" height="${J.h}" fill="transparent"/>
+    </svg>
+    <p class="jb-legende">
+      <i style="background:#ffd60a"></i>Tag
+      <i style="background:#ffb347"></i>golden
+      <i style="background:#3f7fd4"></i>blau
+      <i style="background:#1b3a6b"></i>Dämmerung
+      <i style="background:#141d16;border:1px solid rgba(255,255,255,.18)"></i>Nacht
+    </p>
+    ${jahrBahnBild()}
+    <p class="jb-warum">Die Erdachse steht <b>${EKLIPTIK.toFixed(2).replace('.', ',')}°</b> schief und zeigt immer
+      in dieselbe Richtung — das ist die <b>Schiefe der Ekliptik</b>. Im Juni neigt sich die
+      Nordhalbkugel zur Sonne, im Dezember weg. Nicht die Entfernung macht die Jahreszeiten:
+      Im Januar ist die Erde der Sonne sogar am nächsten.</p>`;
+
+  jahrText(null);
+  jahrAbfahrenBinden(heuteT);
+}
+
+/** Die Erdbahn als Streifen: vier Stationen, die Achse überall gleich
+    geneigt. Ein Streifen statt einer Ellipse — auf dem Handy ist er breit
+    und flach, und die vier Stationen sind das, worauf es ankommt. */
+function jahrBahnBild() {
+  const B = { w: 360, h: 74, mitte: 37 };
+  const sonneX = 180;
+  let out = `<svg viewBox="0 0 ${B.w} ${B.h}" class="jb-bahn" role="img"
+    aria-label="Die Erde umrundet die Sonne, ihre Achse bleibt gleich geneigt">
+    <line class="jb-bahnlinie" x1="14" y1="${B.mitte}" x2="${B.w - 14}" y2="${B.mitte}"/>
+    <circle class="jb-sonne" cx="${sonneX}" cy="${B.mitte}" r="11"/>`;
+  const kipp = EKLIPTIK * Math.PI / 180;
+  const stationen = [
+    { x: 40,  txt: 'Juni',      zur: 1 },
+    { x: 110, txt: 'September', zur: 0 },
+    { x: 250, txt: 'Dezember',  zur: -1 },
+    { x: 320, txt: 'März',      zur: 0 }
+  ];
+  for (const st of stationen) {
+    /* Die Achse zeigt IMMER gleich — deshalb überall derselbe Winkel.
+       Genau das ist der Punkt des Bildes. */
+    const ax = Math.sin(kipp) * 13, ay = -Math.cos(kipp) * 13;
+    out += `
+      <circle class="jb-erde" cx="${st.x}" cy="${B.mitte}" r="9"/>
+      <line class="jb-achse2" x1="${(st.x - ax).toFixed(1)}" y1="${(B.mitte - ay).toFixed(1)}"
+            x2="${(st.x + ax).toFixed(1)}" y2="${(B.mitte + ay).toFixed(1)}"/>
+      <circle class="${st.zur > 0 ? 'jb-pol-hell' : st.zur < 0 ? 'jb-pol-dunkel' : 'jb-pol-mittel'}"
+              cx="${(st.x + ax * 0.62).toFixed(1)}" cy="${(B.mitte + ay * 0.62).toFixed(1)}" r="2.3"/>
+      <text class="jb-achse" x="${st.x}" y="${B.h - 6}" text-anchor="middle">${st.txt}</text>`;
+  }
+  out += `<text class="jb-achse" x="${sonneX}" y="${B.h - 6}" text-anchor="middle">Sonne</text>
+    <text class="jb-grad" x="${stationen[0].x + 16}" y="${B.mitte - 12}">${EKLIPTIK.toFixed(2).replace('.', ',')}°</text>
+    </svg>`;
+  return out;
+}
+
+/** Zeile über dem Jahresbild. Die Zahlen kommen aus sunEvents — also aus
+    derselben Quelle wie überall sonst in der App, nicht aus der Näherung,
+    mit der das Bild gemalt wird. */
+function jahrText(tIndex) {
+  const el = $('#jahrText');
+  if (!el || !jahrDaten) return;
+  if (tIndex == null) {
+    el.innerHTML = '<i>Mit dem Finger durchs Jahr fahren — für jeden Tag Aufgang, '
+      + 'Untergang und Tageslänge.</i>';
+    return;
+  }
+  const g = jahrDaten.tage[tIndex];
+  if (!g) return;
+  const tag = new Date(jahrDaten.jahr, 0, 1 + tIndex, 12);
+  const ev = sunEvents(tag, place.lat, place.lon);
+  const auf = ev.aufgang, unter = ev.untergang;
+  const dauer = auf && unter ? (unter - auf) / 60000 : null;
+
+  const vor = tIndex > 0 ? jahrDaten.tage[tIndex - 1] : null;
+  const laenge = (x) => (x?.z.gold ? (x.z.gold[1] - x.z.gold[0]) * 60 : null);
+  const diff = vor && laenge(g) != null && laenge(vor) != null
+    ? Math.round(laenge(g) - laenge(vor)) : null;
+
+  el.innerHTML = `<b>${tag.toLocaleDateString('de-DE', { day: 'numeric', month: 'long' })}</b>`
+    + (dauer != null ? ` · ${Math.floor(dauer / 60)} Std. ${Math.round(dauer % 60)} Min. hell` : '')
+    + `<br><i>${auf ? `↑ ${hhmm(auf)}` : 'kein Aufgang'} · ${unter ? `↓ ${hhmm(unter)}` : 'kein Untergang'}`
+    + (diff != null ? ` · ${diff >= 0 ? '+' : ''}${diff} Min. gegen den Vortag` : '') + `</i>`;
+}
+
+function jahrAbfahrenBinden(heuteT) {
+  const feld = $('#jahrFeld');
+  const griff = $('#jahrGriff');
+  const svg = feld?.ownerSVGElement;
+  if (!feld || !griff || !svg) return;
+  const J = JAHR;
+  const X = (t) => J.links + t / 364 * (J.w - J.links - J.rechts);
+
+  const nach = (ev) => {
+    const b = svg.getBoundingClientRect();
+    if (!b.width) return;
+    const p = ev.touches?.[0] || ev.changedTouches?.[0] || ev;
+    const x = (p.clientX - b.left) / b.width * J.w;
+    const t = Math.max(0, Math.min(364,
+      Math.round((x - J.links) / (J.w - J.links - J.rechts) * 364)));
+    const gx = X(t).toFixed(1);
+    griff.removeAttribute('hidden');   // siehe Meteogramm: SVG kennt `.hidden` nicht
+    const l = griff.querySelector('.jb-griff-linie');
+    l.setAttribute('x1', gx); l.setAttribute('x2', gx);
+    jahrText(t);
+  };
+  const los = (ev) => {
+    ev.stopPropagation();
+    ev.preventDefault();
+    nach(ev);
+    const zug = (e) => { e.preventDefault(); nach(e); };
+    const ende = () => {
+      window.removeEventListener('pointermove', zug);
+      window.removeEventListener('pointerup', ende);
+      window.removeEventListener('pointercancel', ende);
+    };
+    window.addEventListener('pointermove', zug);
+    window.addEventListener('pointerup', ende);
+    window.addEventListener('pointercancel', ende);
+  };
+  feld.addEventListener('pointerdown', los);
+}
+
 /* ── Die Ringuhr abfahren ───────────────────────────────────
    Der Bogen ließ sich längst abfahren, die Uhr nicht — dabei ist sie die
    Ansicht, in der die Frage „wie ist das Licht um halb zehn?" überhaupt
@@ -4812,7 +5117,7 @@ function uhrAbfahrenBinden(tagStart) {
     /* Der Strahl beginnt erst am Mondring, nicht in der Mitte: Von der Mitte
        aus lief er quer über Uhrzeit und Datum. */
     const [ix, iy] = polar(grad, UHR.innen - 4);
-    griff.hidden = false;
+    griff.removeAttribute('hidden');   // siehe Meteogramm: SVG kennt `.hidden` nicht
     griff.querySelector('.uhr-griff').setAttribute('cx', gx.toFixed(1));
     griff.querySelector('.uhr-griff').setAttribute('cy', gy.toFixed(1));
     const strahl = griff.querySelector('.uhr-strahl');
@@ -5106,7 +5411,7 @@ function bogenAbfahrenBinden() {
     }
     if (!beste) return;
     const px = beste.x, py = beste.y;
-    griff.hidden = false;
+    griff.removeAttribute('hidden');   // siehe Meteogramm: SVG kennt `.hidden` nicht
     griff.classList.toggle('ist-mond', beste.art === 'mond');
     griff.querySelector('.bg-griff').setAttribute('cx', px.toFixed(1));
     griff.querySelector('.bg-griff').setAttribute('cy', py.toFixed(1));
@@ -5144,13 +5449,18 @@ function sonneAnsichtBinden() {
   sonneAnsicht = store.get('wf.sonneAnsicht', 'uhr');
   const buehne = $('#svBuehne');
   if (!buehne) return;
+  const REIHE = ['uhr', 'bogen', 'jahr'];
   const setzen = (v) => {
-    sonneAnsicht = v;
-    store.set('wf.sonneAnsicht', v);
-    buehne.style.transform = v === 'bogen' ? 'translateX(-50%)' : 'translateX(0)';
+    const i = Math.max(0, REIHE.indexOf(v));
+    sonneAnsicht = REIHE[i];
+    store.set('wf.sonneAnsicht', sonneAnsicht);
+    /* Drei Tafeln nebeneinander in einer 300 % breiten Bühne: ein Schritt
+       ist ein Drittel. Bei zwei Tafeln war es die Hälfte — die Zahl darf
+       nicht stehen bleiben, sonst zeigt „Jahr" ins Leere. */
+    buehne.style.transform = `translateX(-${(i * 100 / REIHE.length).toFixed(4)}%)`;
     // Das Fenster wächst und schrumpft mit der gezeigten Tafel — sonst
     // stünde unter dem flachen Bogen die Lücke der runden Uhr.
-    const tafel = buehne.children[v === 'bogen' ? 1 : 0];
+    const tafel = buehne.children[i];
     if (tafel) buehne.parentElement.style.height = tafel.offsetHeight + 'px';
     $$('.sv-tab').forEach(t => {
       const an = t.dataset.view === v;
@@ -5167,7 +5477,7 @@ function sonneAnsichtBinden() {
   // Wischen zum Wechseln — aber nicht dort, wo der Finger den Bogen abfährt
   let startX = null, startY = null;
   buehne.addEventListener('touchstart', (e) => {
-    if (e.target.closest('.bogen-svg')) { startX = null; return; }
+    if (e.target.closest('.bogen-svg, .jb-svg, .uhr-svg')) { startX = null; return; }
     startX = e.touches[0].clientX; startY = e.touches[0].clientY;
   }, { passive: true });
   buehne.addEventListener('touchend', (e) => {
@@ -5175,7 +5485,8 @@ function sonneAnsichtBinden() {
     const dx = e.changedTouches[0].clientX - startX;
     const dy = e.changedTouches[0].clientY - startY;
     if (Math.abs(dx) > 45 && Math.abs(dx) > Math.abs(dy) * 1.5) {
-      setzen(dx < 0 ? 'bogen' : 'uhr');
+      const i = REIHE.indexOf(sonneAnsicht);
+      setzen(REIHE[Math.max(0, Math.min(REIHE.length - 1, i + (dx < 0 ? 1 : -1)))]);
     }
     startX = null;
   }, { passive: true });
@@ -5209,6 +5520,7 @@ function renderSonneDetail() {
     <div class="sv-tabs" role="tablist">
       <button class="sv-tab" data-view="uhr" role="tab">Ringuhr</button>
       <button class="sv-tab" data-view="bogen" role="tab">Sonnenbahn</button>
+      <button class="sv-tab" data-view="jahr" role="tab">Jahr</button>
     </div>
     <div class="sv-fenster">
       <div class="sv-buehne" id="svBuehne">
@@ -5216,9 +5528,13 @@ function renderSonneDetail() {
           <p class="bogen-text" id="uhrText"></p>
           <div class="uhr-wrap" id="sonnenuhr"></div>
         </div>
-        <div class="sv-panel">
+        <div class="sv-panel sv-mitte">
           <p class="bogen-text" id="bogenText"></p>
           <div class="bogen-wrap" id="sonnenbogen"></div>
+        </div>
+        <div class="sv-panel sv-mitte">
+          <p class="bogen-text" id="jahrText"></p>
+          <div class="jahr-wrap" id="jahrBand"></div>
         </div>
       </div>
     </div>
@@ -5272,6 +5588,7 @@ function renderSonneDetail() {
   ziel.innerHTML = teile.join('');
   renderSonnenuhr();          // braucht den Container aus teile
   renderSonnenbogen();
+  renderJahrBand();
   sonneAnsichtBinden();
   $$('.sm-block.has-info', ziel).forEach(b => {
     b.onclick = (e) => {
@@ -5279,7 +5596,7 @@ function renderSonneDetail() {
          sollen nicht die Erklärung öffnen. `stopPropagation` beim Zeiger
          reicht dafür nicht: Der Klick entsteht erst danach aus Druck und
          Loslassen und läuft auf einem eigenen Weg nach oben. */
-      if (e.target.closest('.sv-tabs, .bogen-wrap, .uhr-wrap')) return;
+      if (e.target.closest('.sv-tabs, .bogen-wrap, .uhr-wrap, .jahr-wrap')) return;
       openExplain(b.dataset.info);
     };
   });
