@@ -2249,18 +2249,57 @@ body.ar-offen { overflow: hidden; }
   overflow: hidden; margin: 0 -2px;
   transition: height .32s cubic-bezier(.32,.72,0,1);
 }
+/* Drei Tafeln nebeneinander: Ring, Bahn, Jahr. */
 .sv-buehne {
-  display: flex; width: 200%; align-items: flex-start;
+  display: flex; width: 300%; align-items: flex-start;
   transition: transform .32s cubic-bezier(.32,.72,0,1);
 }
-.sv-panel { width: 50%; flex: 0 0 50%; padding: 0 2px; }
+.sv-panel { width: 33.3333%; flex: 0 0 33.3333%; padding: 0 2px; }
 
-/* Die Bahn bekommt dieselbe Höhe wie der Ring, damit beim Wischen
-   nichts springt. */
-.sv-panel:last-child {
+/* Bahn und Jahr sind flach — mittig setzen, damit beim Wischen zur runden
+   Uhr nichts springt. Vorher hing das an :last-child; mit der dritten
+   Tafel hätte diese Regel die falsche getroffen. */
+.sv-panel.sv-mitte {
   display: flex; flex-direction: column; justify-content: center;
 }
 .bogen-wrap { width: 100%; max-width: 300px; margin: 0 auto; touch-action: pan-y; }
+.jahr-wrap { width: 100%; margin: 0 auto; touch-action: pan-y; }
+.jb-svg { width: 100%; height: auto; display: block; }
+/* Die globale Regel `svg { stroke: currentColor }` zog sonst einen hellen
+   Rahmen um die Tastfläche und die Farbflächen. */
+.jb-svg text, .jb-svg rect, .jb-bahn text, .jb-bahn circle { stroke: none; }
+.jb-flaeche { stroke: none; }
+.jb-achse { font-size: 8px; fill: rgba(232,238,248,.45); }
+.jb-markentext { font-size: 8px; fill: rgba(232,238,248,.62); font-weight: 600; }
+.jb-linie { stroke: rgba(255,255,255,.10); stroke-width: .6; }
+.jb-monat { stroke: rgba(255,255,255,.06); stroke-width: .6; }
+.jb-marke { stroke: rgba(255,255,255,.32); stroke-width: .8; stroke-dasharray: 2 2; }
+.jb-heute { stroke: #fff; stroke-width: 1.3; }
+.jb-jetzt { stroke: rgba(255,255,255,.5); stroke-width: .9; stroke-dasharray: 3 3; }
+.jb-svg .jb-punkt { fill: #fff; stroke: #0b1220; stroke-width: 1.3; }
+.jb-griff-linie { stroke: #ffd60a; stroke-width: 1.4; }
+#jahrGriff[hidden] { display: none; }
+.jb-legende {
+  display: flex; flex-wrap: wrap; gap: 3px 11px; justify-content: center;
+  margin: 8px 0 0; font-size: 10px; color: var(--ink-faint);
+}
+.jb-legende i {
+  width: 9px; height: 9px; border-radius: 2px; display: inline-block;
+  margin-right: 4px; vertical-align: -1px;
+}
+.jb-bahn { width: 100%; height: auto; display: block; margin-top: 12px; }
+.jb-bahnlinie { stroke: rgba(255,255,255,.14); stroke-width: .8; stroke-dasharray: 3 3; }
+.jb-bahn .jb-sonne { fill: #ffd60a; }
+.jb-bahn .jb-erde  { fill: #2f6fb5; }
+.jb-achse2 { stroke: #fff; stroke-width: 1.3; stroke-linecap: round; }
+.jb-bahn .jb-pol-hell   { fill: #ffd60a; }
+.jb-bahn .jb-pol-dunkel { fill: #3f7fd4; }
+.jb-bahn .jb-pol-mittel { fill: #cbd5e1; }
+.jb-grad { font-size: 9px; fill: #ffd60a; font-weight: 700; }
+.jb-warum {
+  margin: 8px 0 0; font-size: 11px; line-height: 1.55; color: var(--ink-faint);
+}
+.jb-warum b { color: var(--ink-dim); font-weight: 600; }
 /* Nicht sichtbar überlaufen lassen: Sonst malt die verborgene Tafel neben
    dem Ring mit — alle Beschriftungen liegen ohnehin innerhalb. */
 .bogen-svg { width: 100%; height: auto; display: block; overflow: hidden; }
