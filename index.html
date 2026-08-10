@@ -36,10 +36,10 @@
 <meta name="theme-color" content="#0b1220">
 <link rel="apple-touch-icon" href="icons/icon-180.png">
 <link rel="icon" href="icons/icon-192.png">
-<link rel="manifest" href="manifest.webmanifest?v=152">
+<link rel="manifest" href="manifest.webmanifest?v=156">
 
-<link rel="stylesheet" href="vendor/maplibre-gl.css?v=152">
-<link rel="stylesheet" href="css/style.css?v=152">
+<link rel="stylesheet" href="vendor/maplibre-gl.css?v=156">
+<link rel="stylesheet" href="css/style.css?v=156">
 </head>
 <body>
 
@@ -344,6 +344,24 @@
     <div class="klapp-body" id="skyBody" hidden><div id="sky-events"></div></div>
   </section>
 
+  <!-- ══ ERDE (ausklappbar) ══
+       Die zwei Drehungen zum Anfassen: waagerecht der Tag, senkrecht das
+       Jahr. Zugeklappt, weil es Schaustück ist und nicht Alltag. -->
+  <section class="card klapp" id="erdeKarte" hidden>
+    <button class="klapp-kopf" aria-expanded="false" aria-controls="erdeBody">
+      <h2>Erde</h2>
+      <span class="klapp-sub">Tag, Jahr und die Neigung</span>
+      <svg class="klapp-pfeil" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 9l6 6 6-6"/></svg>
+    </button>
+    <div class="klapp-body" id="erdeBody" hidden>
+      <p class="bogen-text" id="globusText"></p>
+      <div class="globus-wrap" id="globus"></div>
+      <p class="jb-warum">Die Achse steht <b>23,44°</b> schief und zeigt immer in dieselbe
+        Richtung — die <b>Schiefe der Ekliptik</b>. Wisch senkrecht durchs Jahr: Im Juni
+        bleibt der Nordpol im Licht, im Dezember im Dunkeln. Das sind die Jahreszeiten.</p>
+    </div>
+  </section>
+
   <!-- ══ WEBCAMS (ausklappbar) ══
        Bilder sind schön, machen die Seite aber lang. Zugeklappt bleibt die
        Karte eine Zeile; wer hinsehen will, tippt sie auf. -->
@@ -627,11 +645,12 @@
 
 <div class="toast" id="toast" hidden></div>
 
-<script src="vendor/maplibre-gl.js?v=152"></script>
-<script src="js/icons.js?v=152"></script>
-<script src="js/radar.js?v=152"></script>
-<script src="js/forecast.js?v=152"></script>
-<script src="js/briefing.js?v=152"></script>
-<script src="js/app.js?v=152"></script>
+<script src="vendor/maplibre-gl.js?v=156"></script>
+<script src="js/icons.js?v=156"></script>
+<script src="js/kueste.js?v=156"></script>
+<script src="js/radar.js?v=156"></script>
+<script src="js/forecast.js?v=156"></script>
+<script src="js/briefing.js?v=156"></script>
+<script src="js/app.js?v=156"></script>
 </body>
 </html>

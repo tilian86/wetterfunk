@@ -2300,6 +2300,27 @@ body.ar-offen { overflow: hidden; }
   margin: 8px 0 0; font-size: 11px; line-height: 1.55; color: var(--ink-faint);
 }
 .jb-warum b { color: var(--ink-dim); font-weight: 600; }
+
+/* ── Globus ──────────────────────────────────────────────── */
+.globus-wrap { width: 100%; max-width: 320px; margin: 4px auto 2px; touch-action: none; }
+.gl-svg { width: 100%; height: auto; display: block; }
+/* Der globale Strich um jedes SVG-Element würde die Kugel umranden und die
+   Nachtfläche einfassen — hier ausdrücklich abbestellt. */
+.gl-svg circle, .gl-svg rect, .gl-svg path { stroke: none; }
+.gl-kugel { fill: #123055; }
+.gl-svg .gl-rand { stroke: rgba(255,255,255,.22); stroke-width: 1; fill: none; }
+.gl-svg path.gl-netz { stroke: rgba(255,255,255,.13); stroke-width: .6; }
+.gl-svg path.gl-aequator { stroke: rgba(255,255,255,.3); stroke-width: .9; }
+.gl-svg path.gl-wende { stroke: rgba(255,214,10,.34); stroke-width: .7; stroke-dasharray: 3 3; }
+.gl-svg path.gl-kueste { stroke: #6fd6a0; stroke-width: .85; stroke-linejoin: round; }
+.gl-nacht { fill: rgba(4,10,22,.66); }
+.gl-svg path.gl-grenze { stroke: rgba(255,214,10,.6); stroke-width: 1; }
+.gl-svg .gl-achse { stroke: rgba(255,255,255,.55); stroke-width: 1.4; stroke-dasharray: 4 3; }
+.gl-svg .gl-pol { fill: #fff; }
+.gl-svg .gl-sonnenpunkt { fill: #ffd60a; }
+.gl-svg .gl-ort { stroke: #0b1220; stroke-width: 1.5; }
+.gl-ort.ist-hell   { fill: #ff6b5e; }
+.gl-ort.ist-dunkel { fill: #8fa6c4; }
 /* Nicht sichtbar überlaufen lassen: Sonst malt die verborgene Tafel neben
    dem Ring mit — alle Beschriftungen liegen ohnehin innerhalb. */
 .bogen-svg { width: 100%; height: auto; display: block; overflow: hidden; }
