@@ -4753,6 +4753,305 @@ function renderSonnenuhr() {
   return { ev, mt, mp };
 }
 
+/* ── Globus: die zwei Drehungen zum Anfassen ────────────────
+   Die Erde dreht sich in 24 Stunden um sich selbst und in einem Jahr um
+   die Sonne. Beide Drehungen liegen hier unter demselben Finger: waagerecht
+   wischen dreht den Tag, senkrecht wischen schiebt durchs Jahr.
+
+   Gerechnet wird in einem festen Bezugssystem, in dem die Bahnebene die
+   XY-Ebene ist. Die Erdachse N steht darin um 23,44° geneigt und zeigt
+   IMMER in dieselbe Richtung — genau das macht die Jahreszeiten, und genau
+   das sieht man, wenn man durchs Jahr wischt.
+
+   Keine Fremdbibliothek: Eine orthografische Kugel ist ein Skalarprodukt.
+   Ein Punkt ist sichtbar, wenn er zur Kamera zeigt, und beleuchtet, wenn er
+   zur Sonne zeigt. Mehr braucht es nicht. */
+const GLOBUS = { w: 320, h: 320, r: 132 };
+let globusZeit = null;        // Zeitpunkt, den der Globus zeigt
+
+const vAdd = (a, b) => [a[0] + b[0], a[1] + b[1], a[2] + b[2]];
+const vMul = (a, k) => [a[0] * k, a[1] * k, a[2] * k];
+const vDot = (a, b) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+const vKreuz = (a, b) => [a[1] * b[2] - a[2] * b[1],
+                          a[2] * b[0] - a[0] * b[2],
+                          a[0] * b[1] - a[1] * b[0]];
+const vNorm = (a) => { const l = Math.hypot(...a) || 1; return vMul(a, 1 / l); };
+
+/** Alles, was die Lage der Erde zu einem Zeitpunkt beschreibt. */
+function globusLage(zeit) {
+  const rad = Math.PI / 180;
+  const eps = EKLIPTIK * rad;
+  /* Achse fest im Raum, um eps aus der Bahnebene gekippt. Die Neigung
+     gehört NUR hierher: Sie zusätzlich in die Sonnenrichtung zu rechnen
+     verschob die Jahreszeiten um ein Vierteljahr — zur Tagundnachtgleiche
+     stand die Sonne dann über dem Wendekreis statt über dem Äquator. */
+  const N = [0, Math.sin(eps), Math.cos(eps)];
+
+  /* Ekliptikale Länge der Sonne, von der Erde aus gesehen. Bei 0° steht die
+     Sonne im Frühlingspunkt — dann trifft sie den Äquator senkrecht. */
+  const tage = (zeit - Date.UTC(2000, 0, 1, 12)) / 86400000;
+  const M = rad * ((357.529 + 0.98560028 * tage) % 360);
+  const C = 1.915 * Math.sin(M) + 0.02 * Math.sin(2 * M);
+  const lam = rad * (((280.459 + 0.98564736 * tage) + C) % 360);
+
+  /* Richtung Erde → Sonne, per Definition in der Bahnebene. Damit gilt
+     sin(Sonnenhöhe über dem Äquator) = S·N = sin(eps)·sin(lam): null zur
+     Tagundnachtgleiche, ±23,44° zu den Sonnenwenden. */
+  const S = [Math.cos(lam), Math.sin(lam), 0];
+
+  // Erdfeste Achsen: e3 = N, e1 senkrecht dazu in der Bahnebene
+  const e1 = vNorm(vKreuz([0, 0, 1], N).some(x => x) ? vKreuz([0, 0, 1], N) : [1, 0, 0]);
+  const e2 = vKreuz(N, e1);
+
+  /* Drehung so setzen, dass der Punkt unter der Sonne den richtigen
+     Längengrad hat: um 12 Uhr UTC steht die Sonne über 0°, je Stunde
+     wandert sie 15° nach Westen. */
+  const utcStunden = (zeit % 86400000) / 3600000;
+  const lonSub = rad * (180 - 15 * utcStunden);
+  const lamS = Math.atan2(vDot(S, e2), vDot(S, e1));
+  const theta = lamS - lonSub;
+
+  const punkt = (latGrad, lonGrad) => {
+    const ph = latGrad * rad, la = lonGrad * rad + theta;
+    return vAdd(vAdd(vMul(e1, Math.cos(ph) * Math.cos(la)),
+                     vMul(e2, Math.cos(ph) * Math.sin(la))),
+                vMul(N, Math.sin(ph)));
+  };
+
+  /* Kamera in festem Winkel zur Sonne, damit man immer die Tagseite mit
+     der Grenze sieht — stünde sie fest im Raum, schaute man im Winter auf
+     die Nachtseite. Der Bildschirm-Hoch ist die Bahnebenen-Normale, sonst
+     stünde die Achse immer senkrecht und die Neigung wäre unsichtbar. */
+  /* 55° statt 42°: Bei knapperem Winkel füllte die Tagseite fast die ganze
+     Scheibe, und die Grenze klebte am Rand. So bleibt immer eine sichtbare
+     Nachtsichel — und darum geht es hier. */
+  const dreh = 55 * rad;
+  const C0 = [S[0] * Math.cos(dreh) - S[1] * Math.sin(dreh),
+              S[0] * Math.sin(dreh) + S[1] * Math.cos(dreh), S[2]];
+  const kam = vNorm([C0[0], C0[1], C0[2] + 0.34]);
+  const rechts = vNorm(vKreuz([0, 0, 1], kam));
+  const hoch = vKreuz(kam, rechts);
+
+  return { N, S, punkt, kam, rechts, hoch,
+           sichtbar: (p) => vDot(p, kam) > 0,
+           hell: (p) => vDot(p, S) > 0,
+           bild: (p) => [GLOBUS.w / 2 + vDot(p, rechts) * GLOBUS.r,
+                         GLOBUS.h / 2 - vDot(p, hoch) * GLOBUS.r] };
+}
+
+let kuestenLinien = null;
+/** Die Küsten einmal aus der Textform in Zahlen holen. */
+function kuesten() {
+  if (kuestenLinien) return kuestenLinien;
+  const roh = window.WF_KUESTE;
+  if (!roh) return (kuestenLinien = []);
+  kuestenLinien = roh.split(';').map(z => z.split(',').map(pp => {
+    const [a, b] = pp.split(' ');
+    return [+b / 10, +a / 10];              // [Breite, Länge]
+  }));
+  return kuestenLinien;
+}
+
+function renderGlobus() {
+  const ziel = $('#globus');
+  if (!ziel || !place) return;
+  const zeit = globusZeit ?? Date.now();
+  const L = globusLage(zeit);
+  const G = GLOBUS;
+  const M = [G.w / 2, G.h / 2];
+
+  /* ── Tag-Nacht-Grenze und Nachtfläche ─────────────────────
+     Beide Kurven — die Grenze auf der Kugel und der Kugelrand — werden von
+     einer Ebene in genau zwei Bögen geteilt: sichtbar/verdeckt beim Rand,
+     hell/dunkel bei der Grenze. Ein solcher Bogen ist zusammenhängend, kann
+     aber über den Anfang der Liste laufen. Genau daran zerriss die
+     Nachtfläche vorher — deshalb wird die Liste erst so gedreht, dass der
+     gesuchte Bogen an einem Stück liegt. */
+  const bogenAmStueck = (liste, gilt) => {
+    const n = liste.length;
+    const trifft = liste.map(gilt);
+    if (trifft.every(x => x)) return liste.slice();
+    if (!trifft.some(x => x)) return [];
+    let start = 0;
+    for (let i = 0; i < n; i++) {
+      if (trifft[i] && !trifft[(i - 1 + n) % n]) { start = i; break; }
+    }
+    const out = [];
+    for (let k = 0; k < n; k++) {
+      const i = (start + k) % n;
+      if (!trifft[i]) break;
+      out.push(liste[i]);
+    }
+    return out;
+  };
+
+  const kreisUm = (achse) => {
+    const u = vNorm(vKreuz(achse, [0, 0, 1]).some(x => x)
+      ? vKreuz(achse, [0, 0, 1]) : vKreuz(achse, [1, 0, 0]));
+    const v = vKreuz(achse, u);
+    const pts = [];
+    for (let a = 0; a < 360; a += 2) {
+      const w = a * Math.PI / 180;
+      pts.push(vAdd(vMul(u, Math.cos(w)), vMul(v, Math.sin(w))));
+    }
+    return pts;
+  };
+
+  const grenzeVoll = kreisUm(L.S);                 // Kreis senkrecht zur Sonne
+  const randVoll = kreisUm(L.kam);                 // Kugelrand aus Sicht der Kamera
+  const grenzeSicht = bogenAmStueck(grenzeVoll, L.sichtbar);
+  const randDunkel = bogenAmStueck(randVoll, (q) => !L.hell(q));
+
+  const alsPfad = (pts) => pts.map(q => {
+    const b = L.bild(q); return `${b[0].toFixed(1)},${b[1].toFixed(1)}`;
+  }).join(' L');
+
+  let grenze = grenzeSicht.length > 1
+    ? `<path class="gl-grenze" fill="none" d="M${alsPfad(grenzeSicht)}"/>` : '';
+
+  let nacht = '';
+  if (randDunkel.length > 1 && grenzeSicht.length > 1) {
+    /* Der Ring schließt sich aus beidem. Damit kein Zickzack entsteht, wird
+       die Grenze so herum angehängt, dass ihr Anfang am Ende des dunklen
+       Randbogens liegt. */
+    const ende = L.bild(randDunkel[randDunkel.length - 1]);
+    const gA = L.bild(grenzeSicht[0]);
+    const gE = L.bild(grenzeSicht[grenzeSicht.length - 1]);
+    const nah = (a, b) => (a[0] - b[0]) ** 2 + (a[1] - b[1]) ** 2;
+    const teil = nah(ende, gA) <= nah(ende, gE) ? grenzeSicht : [...grenzeSicht].reverse();
+    nacht = `<path class="gl-nacht" d="M${alsPfad(randDunkel)} L${alsPfad(teil)} Z"/>`;
+  } else if (randDunkel.length > 2) {
+    nacht = `<path class="gl-nacht" d="M${alsPfad(randDunkel)} Z"/>`;
+  }
+
+  // Gradnetz
+  let netz = '';
+  const linie = (punkte, klasse) => {
+    const stuecke = [];
+    let akt = null;
+    for (const p of punkte) {
+      if (L.sichtbar(p)) { if (!akt) stuecke.push(akt = []); akt.push(L.bild(p)); }
+      else akt = null;
+    }
+    return stuecke.filter(x => x.length > 1).map(x =>
+      `<path class="${klasse}" fill="none" d="M${x.map(q => `${q[0].toFixed(1)},${q[1].toFixed(1)}`).join(' L')}"/>`).join('');
+  };
+  for (let lat = -60; lat <= 60; lat += 30) {
+    const pts = [];
+    for (let lon = -180; lon <= 180; lon += 4) pts.push(L.punkt(lat, lon));
+    netz += linie(pts, lat === 0 ? 'gl-aequator' : 'gl-netz');
+  }
+  for (let lon = -180; lon < 180; lon += 30) {
+    const pts = [];
+    for (let lat = -90; lat <= 90; lat += 4) pts.push(L.punkt(lat, lon));
+    netz += linie(pts, 'gl-netz');
+  }
+  // Wendekreise — dort steht die Sonne zu den Sonnenwenden senkrecht
+  for (const lat of [EKLIPTIK, -EKLIPTIK]) {
+    const pts = [];
+    for (let lon = -180; lon <= 180; lon += 4) pts.push(L.punkt(lat, lon));
+    netz += linie(pts, 'gl-wende');
+  }
+
+  let land = '';
+  for (const kette of kuesten()) {
+    land += linie(kette.map(([la, lo]) => L.punkt(la, lo)), 'gl-kueste');
+  }
+
+  // Erdachse: hinten und vorne getrennt, damit sie hinter der Kugel blasst
+  /* 1,12 statt 1,28: Bei steiler Achse ragte das Südende unten aus dem
+     Bild und wurde abgeschnitten. */
+  const nord = vMul(L.N, 1.12), sued = vMul(L.N, -1.12);
+  const [nx, ny] = L.bild(nord), [sx2, sy2] = L.bild(sued);
+  const achse = `<line class="gl-achse" x1="${sx2.toFixed(1)}" y1="${sy2.toFixed(1)}"
+                       x2="${nx.toFixed(1)}" y2="${ny.toFixed(1)}"/>
+    <circle class="gl-pol" cx="${nx.toFixed(1)}" cy="${ny.toFixed(1)}" r="2.6"/>`;
+
+  // Der eigene Ort
+  const eigen = L.punkt(place.lat, place.lon);
+  let ortSvg = '';
+  if (L.sichtbar(eigen)) {
+    const [ox, oy] = L.bild(eigen);
+    ortSvg = `<circle class="gl-ort ${L.hell(eigen) ? 'ist-hell' : 'ist-dunkel'}"
+      cx="${ox.toFixed(1)}" cy="${oy.toFixed(1)}" r="4"/>`;
+  }
+
+  // Sonnenrichtung als Strahl am Rand
+  const sBild = L.sichtbar(L.S) ? L.bild(L.S) : null;
+  const sonne = sBild
+    ? `<circle class="gl-sonnenpunkt" cx="${sBild[0].toFixed(1)}" cy="${sBild[1].toFixed(1)}" r="3.2"/>`
+    : '';
+
+  ziel.innerHTML = `
+    <svg viewBox="0 0 ${G.w} ${G.h}" class="gl-svg" role="img"
+         aria-label="Die Erde als Kugel mit Tag- und Nachtseite">
+      <circle class="gl-kugel" cx="${M[0]}" cy="${M[1]}" r="${G.r}"/>
+      ${netz}${land}${nacht}${grenze}${sonne}${ortSvg}${achse}
+      <circle class="gl-rand" cx="${M[0]}" cy="${M[1]}" r="${G.r}" fill="none"/>
+      <rect id="globusFeld" x="0" y="0" width="${G.w}" height="${G.h}" fill="transparent"/>
+    </svg>`;
+  globusText(zeit, L);
+  globusBinden();
+}
+
+function globusText(zeit, L) {
+  const el = $('#globusText');
+  if (!el) return;
+  const d = new Date(zeit);
+  const eigen = L.punkt(place.lat, place.lon);
+  const hell = L.hell(eigen);
+  // Wo steht die Sonne senkrecht?
+  const dek = Math.asin(vDot(L.S, L.N)) * 180 / Math.PI;
+  const zone = data?.timezone || 'Europe/Berlin';
+  const uhr = new Intl.DateTimeFormat('de-DE', { timeZone: zone, hour: '2-digit',
+    minute: '2-digit', hour12: false }).format(d);
+  const datum = new Intl.DateTimeFormat('de-DE', { timeZone: zone, day: 'numeric',
+    month: 'long' }).format(d);
+  el.innerHTML = `<b>${datum} · ${uhr} Uhr</b> · ${
+      hell ? 'bei dir ist es hell' : 'bei dir ist es dunkel'}`
+    + `<br><i>Sonne senkrecht über ${Math.abs(dek).toFixed(1)}° ${dek >= 0 ? 'Nord' : 'Süd'}`
+    + ` · waagerecht wischen dreht den Tag, senkrecht das Jahr</i>`;
+}
+
+function globusBinden() {
+  const feld = $('#globusFeld');
+  const svg = feld?.ownerSVGElement;
+  if (!feld || !svg) return;
+  let start = null, startZeit = 0;
+  const los = (ev) => {
+    ev.stopPropagation();
+    ev.preventDefault();
+    const p = ev.touches?.[0] || ev;
+    start = [p.clientX, p.clientY];
+    startZeit = globusZeit ?? Date.now();
+    const zug = (e) => {
+      e.preventDefault();
+      const q = e.touches?.[0] || e;
+      const b = svg.getBoundingClientRect();
+      if (!b.width) return;
+      /* Eine Bildbreite = ein ganzer Tag, eine Bildhöhe = ein halbes Jahr.
+         So liegen beide Drehungen unter demselben Finger.
+         Senkrecht wird auf GANZE Tage gerundet: Sonst verschöbe das Wischen
+         durchs Jahr nebenbei die Uhrzeit, und man wüsste nicht mehr, ob sich
+         gerade die Jahreszeit oder der Tag geändert hat. */
+      const dx = (q.clientX - start[0]) / b.width;
+      const dy = (q.clientY - start[1]) / b.height;
+      const tage = Math.round(dy * 182.5);
+      globusZeit = startZeit + dx * 86400000 + tage * 86400000;
+      renderGlobus();
+    };
+    const ende = () => {
+      window.removeEventListener('pointermove', zug);
+      window.removeEventListener('pointerup', ende);
+      window.removeEventListener('pointercancel', ende);
+    };
+    window.addEventListener('pointermove', zug);
+    window.addEventListener('pointerup', ende);
+    window.addEventListener('pointercancel', ende);
+  };
+  feld.addEventListener('pointerdown', los);
+}
+
 /* ── Licht im Jahr ──────────────────────────────────────────
    Ringuhr und Bogen zeigen einen Tag. Diese Ansicht zeigt das Jahr — und
    den Tag gleich mit: Waagerecht laufen die 365 Tage, senkrecht die 24
@@ -5589,6 +5888,9 @@ function renderSonneDetail() {
   renderSonnenuhr();          // braucht den Container aus teile
   renderSonnenbogen();
   renderJahrBand();
+  // Der Globus lebt in einer eigenen Karte, wird aber vom selben Ort gespeist
+  const erde = $('#erdeKarte');
+  if (erde) { erde.hidden = false; renderGlobus(); }
   sonneAnsichtBinden();
   $$('.sm-block.has-info', ziel).forEach(b => {
     b.onclick = (e) => {
