@@ -8487,11 +8487,13 @@ const NAV = [
   { id: 'nav-dwd',     ziel: '.card-dwd',       name: 'DWD' },
   { id: 'nav-bericht', ziel: '.card-brief',     name: 'Bericht' },
   { id: 'nav-himmel',  ziel: '.card-sky',       name: 'Himmel' },
-  { id: 'nav-erde',    ziel: '#erdeKarte',      name: 'Erde' },
+  { id: 'nav-erde',    ziel: '#erdeKarte',      name: 'Jahreszeiten' },
   { id: 'nav-cams',    ziel: '.card-cams',      name: 'Webcams' },
   { id: 'nav-rueck',   ziel: '.card-rueck',     name: 'Treffer' },
   { id: 'nav-push',    ziel: '.card-push',      name: 'Meldungen' },
-  { id: 'nav-install', ziel: '.card-install',   name: 'Als App' }
+  /* „App" statt „Als App": Mit dem längeren Reiter „Jahreszeiten" rutschte
+     die Leiste sonst auf vier Zeilen und fraß auf jedem Bildschirm Platz. */
+  { id: 'nav-install', ziel: '.card-install',   name: 'App' }
 ];
 
 /** Waagerechte Leiste unter dem Kopf: springt zum Abschnitt und hebt hervor,
@@ -8747,7 +8749,7 @@ function wire() {
      stumm. Jede Klapp-Karte braucht ihre eigene Zeile hier; das Muster hat
      keinen Sammellauf über alle .klapp-kopf. */
   klappen('#erdeKopf', '#erdeBody', 'wf.erdeAuf', renderGlobus,
-    (auf) => (auf ? '' : 'Tag, Jahr und die Neigung'));
+    (auf) => (auf ? '' : 'Warum Sommer warm ist'));
   klappen('#rueckKopf', '#rueckBody', 'wf.rueckAuf', null,
     (auf) => (auf ? rueckStandText : 'Vorhersage gegen Messung'));
   klappen('#modelKopf', '#modelBody', 'wf.modelAuf', null,
