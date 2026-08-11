@@ -4832,7 +4832,7 @@ function globusLage(zeit) {
   const rechts = vNorm(vKreuz([0, 0, 1], kam));
   const hoch = vKreuz(kam, rechts);
 
-  return { N, S, punkt, kam, rechts, hoch,
+  return { N, S, punkt, kam, rechts, hoch, e1, e2, theta,
            sichtbar: (p) => vDot(p, kam) > 0,
            hell: (p) => vDot(p, S) > 0,
            bild: (p) => [GLOBUS.w / 2 + vDot(p, rechts) * GLOBUS.r,
@@ -4852,145 +4852,234 @@ function kuesten() {
   return kuestenLinien;
 }
 
-function renderGlobus() {
-  const ziel = $('#globus');
-  if (!ziel || !place) return;
-  const zeit = globusZeit ?? Date.now();
-  const L = globusLage(zeit);
-  const G = GLOBUS;
-  const M = [G.w / 2, G.h / 2];
+/* ── Zeichnen auf Canvas statt SVG ──────────────────────────
+   Die erste Fassung baute bei jeder Fingerbewegung das komplette SVG als
+   Text neu und ließ es den Browser parsen — auf dem iPhone ruckelte das
+   Drehen spürbar (Florian: „richtig stockend"). Jetzt: alle Linien EINMAL
+   als Einheitsvektoren im erdfesten System vorberechnet; je Bild dreht nur
+   noch die Basis (neun Multiplikationen pro Punkt, keine Winkelfunktion),
+   gezeichnet wird direkt in ein Canvas, angestoßen höchstens einmal je
+   Bildschirmtakt über requestAnimationFrame. */
+let globusFest = null;
 
-  /* ── Tag-Nacht-Grenze und Nachtfläche ─────────────────────
-     Beide Kurven — die Grenze auf der Kugel und der Kugelrand — werden von
-     einer Ebene in genau zwei Bögen geteilt: sichtbar/verdeckt beim Rand,
-     hell/dunkel bei der Grenze. Ein solcher Bogen ist zusammenhängend, kann
-     aber über den Anfang der Liste laufen. Genau daran zerriss die
-     Nachtfläche vorher — deshalb wird die Liste erst so gedreht, dass der
-     gesuchte Bogen an einem Stück liegt. */
-  const bogenAmStueck = (liste, gilt) => {
-    const n = liste.length;
-    const trifft = liste.map(gilt);
-    if (trifft.every(x => x)) return liste.slice();
-    if (!trifft.some(x => x)) return [];
-    let start = 0;
-    for (let i = 0; i < n; i++) {
-      if (trifft[i] && !trifft[(i - 1 + n) % n]) { start = i; break; }
-    }
-    const out = [];
-    for (let k = 0; k < n; k++) {
-      const i = (start + k) % n;
-      if (!trifft[i]) break;
-      out.push(liste[i]);
-    }
-    return out;
-  };
-
-  const kreisUm = (achse) => {
-    const u = vNorm(vKreuz(achse, [0, 0, 1]).some(x => x)
-      ? vKreuz(achse, [0, 0, 1]) : vKreuz(achse, [1, 0, 0]));
-    const v = vKreuz(achse, u);
-    const pts = [];
-    for (let a = 0; a < 360; a += 2) {
-      const w = a * Math.PI / 180;
-      pts.push(vAdd(vMul(u, Math.cos(w)), vMul(v, Math.sin(w))));
-    }
-    return pts;
-  };
-
-  const grenzeVoll = kreisUm(L.S);                 // Kreis senkrecht zur Sonne
-  const randVoll = kreisUm(L.kam);                 // Kugelrand aus Sicht der Kamera
-  const grenzeSicht = bogenAmStueck(grenzeVoll, L.sichtbar);
-  const randDunkel = bogenAmStueck(randVoll, (q) => !L.hell(q));
-
-  const alsPfad = (pts) => pts.map(q => {
-    const b = L.bild(q); return `${b[0].toFixed(1)},${b[1].toFixed(1)}`;
-  }).join(' L');
-
-  let grenze = grenzeSicht.length > 1
-    ? `<path class="gl-grenze" fill="none" d="M${alsPfad(grenzeSicht)}"/>` : '';
-
-  let nacht = '';
-  if (randDunkel.length > 1 && grenzeSicht.length > 1) {
-    /* Der Ring schließt sich aus beidem. Damit kein Zickzack entsteht, wird
-       die Grenze so herum angehängt, dass ihr Anfang am Ende des dunklen
-       Randbogens liegt. */
-    const ende = L.bild(randDunkel[randDunkel.length - 1]);
-    const gA = L.bild(grenzeSicht[0]);
-    const gE = L.bild(grenzeSicht[grenzeSicht.length - 1]);
-    const nah = (a, b) => (a[0] - b[0]) ** 2 + (a[1] - b[1]) ** 2;
-    const teil = nah(ende, gA) <= nah(ende, gE) ? grenzeSicht : [...grenzeSicht].reverse();
-    nacht = `<path class="gl-nacht" d="M${alsPfad(randDunkel)} L${alsPfad(teil)} Z"/>`;
-  } else if (randDunkel.length > 2) {
-    nacht = `<path class="gl-nacht" d="M${alsPfad(randDunkel)} Z"/>`;
-  }
-
-  // Gradnetz
-  let netz = '';
-  const linie = (punkte, klasse) => {
-    const stuecke = [];
-    let akt = null;
-    for (const p of punkte) {
-      if (L.sichtbar(p)) { if (!akt) stuecke.push(akt = []); akt.push(L.bild(p)); }
-      else akt = null;
-    }
-    return stuecke.filter(x => x.length > 1).map(x =>
-      `<path class="${klasse}" fill="none" d="M${x.map(q => `${q[0].toFixed(1)},${q[1].toFixed(1)}`).join(' L')}"/>`).join('');
-  };
+function globusVektoren() {
+  if (globusFest) return globusFest;
+  const rad = Math.PI / 180;
+  const vek = (la, lo) => [Math.cos(la * rad) * Math.cos(lo * rad),
+                           Math.cos(la * rad) * Math.sin(lo * rad),
+                           Math.sin(la * rad)];
+  const linien = [];
   for (let lat = -60; lat <= 60; lat += 30) {
     const pts = [];
-    for (let lon = -180; lon <= 180; lon += 4) pts.push(L.punkt(lat, lon));
-    netz += linie(pts, lat === 0 ? 'gl-aequator' : 'gl-netz');
+    for (let lo = -180; lo <= 180; lo += 5) pts.push(vek(lat, lo));
+    linien.push({ art: lat === 0 ? 'aequator' : 'netz', pts });
   }
-  for (let lon = -180; lon < 180; lon += 30) {
+  for (let lo = -180; lo < 180; lo += 30) {
     const pts = [];
-    for (let lat = -90; lat <= 90; lat += 4) pts.push(L.punkt(lat, lon));
-    netz += linie(pts, 'gl-netz');
+    for (let la = -90; la <= 90; la += 5) pts.push(vek(la, lo));
+    linien.push({ art: 'netz', pts });
   }
-  // Wendekreise — dort steht die Sonne zu den Sonnenwenden senkrecht
   for (const lat of [EKLIPTIK, -EKLIPTIK]) {
     const pts = [];
-    for (let lon = -180; lon <= 180; lon += 4) pts.push(L.punkt(lat, lon));
-    netz += linie(pts, 'gl-wende');
+    for (let lo = -180; lo <= 180; lo += 5) pts.push(vek(lat, lo));
+    linien.push({ art: 'wende', pts });
   }
-
-  let land = '';
   for (const kette of kuesten()) {
-    land += linie(kette.map(([la, lo]) => L.punkt(la, lo)), 'gl-kueste');
+    linien.push({ art: 'kueste', pts: kette.map(([la, lo]) => vek(la, lo)) });
+  }
+  globusFest = linien;
+  return linien;
+}
+
+/** Bogen „am Stück" aus einer ringförmigen Punktliste — siehe Nachtfläche. */
+function bogenAmStueck(liste, gilt) {
+  const n = liste.length;
+  const trifft = liste.map(gilt);
+  if (trifft.every(x => x)) return liste.slice();
+  if (!trifft.some(x => x)) return [];
+  let start = 0;
+  for (let i = 0; i < n; i++) {
+    if (trifft[i] && !trifft[(i - 1 + n) % n]) { start = i; break; }
+  }
+  const out = [];
+  for (let k = 0; k < n; k++) {
+    const i = (start + k) % n;
+    if (!trifft[i]) break;
+    out.push(liste[i]);
+  }
+  return out;
+}
+
+function kreisUm(achse) {
+  const u = vNorm(vKreuz(achse, [0, 0, 1]).some(x => x)
+    ? vKreuz(achse, [0, 0, 1]) : vKreuz(achse, [1, 0, 0]));
+  const v = vKreuz(achse, u);
+  const pts = [];
+  for (let a = 0; a < 360; a += 2) {
+    const w = a * Math.PI / 180;
+    pts.push(vAdd(vMul(u, Math.cos(w)), vMul(v, Math.sin(w))));
+  }
+  return pts;
+}
+
+function globusMalen(zeit) {
+  const wrap = $('#globus');
+  if (!wrap || !place) return;
+  let cv = wrap.querySelector('canvas');
+  if (!cv) {
+    wrap.innerHTML = '<canvas class="gl-canvas"></canvas>';
+    cv = wrap.querySelector('canvas');
+  }
+  const w = GLOBUS.w, dpr = Math.min(2, window.devicePixelRatio || 1);
+  if (cv.width !== w * dpr) { cv.width = w * dpr; cv.height = w * dpr; }
+  const ctx = cv.getContext('2d');
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.clearRect(0, 0, w, w);
+
+  const L = globusLage(zeit);
+  const M = w / 2, R = GLOBUS.r;
+
+  // Erdfeste Basis für diesen Moment — der einzige Ort mit Winkelfunktionen
+  const ct = Math.cos(L.theta), st = Math.sin(L.theta);
+  const E1 = vAdd(vMul(L.e1, ct), vMul(L.e2, st));
+  const E2 = vAdd(vMul(L.e1, -st), vMul(L.e2, ct));
+  const N = L.N, kam = L.kam, re = L.rechts, ho = L.hoch;
+
+  /** Erdfester Einheitsvektor → [x, y, vorn?] in einem Rutsch. */
+  const P = (v) => {
+    const px = v[0] * E1[0] + v[1] * E2[0] + v[2] * N[0];
+    const py = v[0] * E1[1] + v[1] * E2[1] + v[2] * N[1];
+    const pz = v[0] * E1[2] + v[1] * E2[2] + v[2] * N[2];
+    return [M + (px * re[0] + py * re[1] + pz * re[2]) * R,
+            M - (px * ho[0] + py * ho[1] + pz * ho[2]) * R,
+            px * kam[0] + py * kam[1] + pz * kam[2] > 0];
+  };
+  const Pfrei = (p) => [M + vDot(p, re) * R, M - vDot(p, ho) * R];
+
+  // Kugel
+  ctx.beginPath(); ctx.arc(M, M, R, 0, 7);
+  ctx.fillStyle = '#123055'; ctx.fill();
+
+  // Alle Linien, nach Art gebündelt (ein Stilwechsel je Art, nicht je Linie)
+  const stile = {
+    netz:     { s: 'rgba(255,255,255,.13)', b: 0.6, strich: null },
+    aequator: { s: 'rgba(255,255,255,.30)', b: 0.9, strich: null },
+    wende:    { s: 'rgba(255,214,10,.34)',  b: 0.7, strich: [3, 3] },
+    kueste:   { s: '#6fd6a0',               b: 0.9, strich: null }
+  };
+  const alle = globusVektoren();
+  for (const art of ['netz', 'aequator', 'wende', 'kueste']) {
+    const st2 = stile[art];
+    ctx.strokeStyle = st2.s; ctx.lineWidth = st2.b;
+    ctx.setLineDash(st2.strich || []);
+    ctx.lineJoin = 'round';
+    ctx.beginPath();
+    for (const linie of alle) {
+      if (linie.art !== art) continue;
+      let vorher = false;
+      for (const v of linie.pts) {
+        const [x, y, vorn] = P(v);
+        if (vorn && vorher) ctx.lineTo(x, y);
+        else if (vorn) ctx.moveTo(x, y);
+        vorher = vorn;
+      }
+    }
+    ctx.stroke();
+  }
+  ctx.setLineDash([]);
+
+  // Nachtseite + Tag-Nacht-Grenze (Logik wie gehabt, nur als Canvas-Pfad)
+  const grenzeSicht = bogenAmStueck(kreisUm(L.S), L.sichtbar);
+  const randDunkel = bogenAmStueck(kreisUm(kam), (q) => !L.hell(q));
+  if (randDunkel.length > 1) {
+    ctx.beginPath();
+    const start = Pfrei(randDunkel[0]);
+    ctx.moveTo(start[0], start[1]);
+    for (const q of randDunkel.slice(1)) { const b = Pfrei(q); ctx.lineTo(b[0], b[1]); }
+    if (grenzeSicht.length > 1) {
+      const ende = Pfrei(randDunkel[randDunkel.length - 1]);
+      const gA = Pfrei(grenzeSicht[0]);
+      const gE = Pfrei(grenzeSicht[grenzeSicht.length - 1]);
+      const nah = (a, b) => (a[0]-b[0])**2 + (a[1]-b[1])**2;
+      const teil = nah(ende, gA) <= nah(ende, gE) ? grenzeSicht : [...grenzeSicht].reverse();
+      for (const q of teil) { const b = Pfrei(q); ctx.lineTo(b[0], b[1]); }
+    }
+    ctx.closePath();
+    ctx.fillStyle = 'rgba(4,10,22,.66)'; ctx.fill();
+  }
+  if (grenzeSicht.length > 1) {
+    ctx.beginPath();
+    const g0 = Pfrei(grenzeSicht[0]); ctx.moveTo(g0[0], g0[1]);
+    for (const q of grenzeSicht.slice(1)) { const b = Pfrei(q); ctx.lineTo(b[0], b[1]); }
+    ctx.strokeStyle = 'rgba(255,214,10,.6)'; ctx.lineWidth = 1; ctx.stroke();
   }
 
-  // Erdachse: hinten und vorne getrennt, damit sie hinter der Kugel blasst
-  /* 1,12 statt 1,28: Bei steiler Achse ragte das Südende unten aus dem
-     Bild und wurde abgeschnitten. */
-  const nord = vMul(L.N, 1.12), sued = vMul(L.N, -1.12);
-  const [nx, ny] = L.bild(nord), [sx2, sy2] = L.bild(sued);
-  const achse = `<line class="gl-achse" x1="${sx2.toFixed(1)}" y1="${sy2.toFixed(1)}"
-                       x2="${nx.toFixed(1)}" y2="${ny.toFixed(1)}"/>
-    <circle class="gl-pol" cx="${nx.toFixed(1)}" cy="${ny.toFixed(1)}" r="2.6"/>`;
+  /* Die Sonne: vorher ein nackter gelber Punkt, den niemand zuordnen konnte.
+     Jetzt eine kleine Sonne mit Strahlen und dem Wort daneben — sie markiert
+     die Stelle, über der die Sonne gerade senkrecht steht. */
+  if (L.sichtbar(L.S)) {
+    const [sx, sy] = Pfrei(L.S);
+    ctx.strokeStyle = '#ffd60a'; ctx.lineWidth = 1.4; ctx.beginPath();
+    for (let k = 0; k < 8; k++) {
+      const a = k * Math.PI / 4;
+      ctx.moveTo(sx + Math.cos(a) * 5.5, sy + Math.sin(a) * 5.5);
+      ctx.lineTo(sx + Math.cos(a) * 8.5, sy + Math.sin(a) * 8.5);
+    }
+    ctx.stroke();
+    ctx.beginPath(); ctx.arc(sx, sy, 4, 0, 7);
+    ctx.fillStyle = '#ffd60a'; ctx.fill();
+    ctx.font = '600 10px -apple-system, sans-serif';
+    ctx.fillStyle = 'rgba(255,214,10,.85)';
+    ctx.textAlign = sx > w - 60 ? 'right' : 'left';
+    ctx.fillText('Sonne', sx + (sx > w - 60 ? -12 : 12), sy + 3.5);
+  }
 
-  // Der eigene Ort
+  // Der eigene Ort — mit Namen, damit klar ist, welcher Punkt man selbst ist
   const eigen = L.punkt(place.lat, place.lon);
-  let ortSvg = '';
   if (L.sichtbar(eigen)) {
-    const [ox, oy] = L.bild(eigen);
-    ortSvg = `<circle class="gl-ort ${L.hell(eigen) ? 'ist-hell' : 'ist-dunkel'}"
-      cx="${ox.toFixed(1)}" cy="${oy.toFixed(1)}" r="4"/>`;
+    const [ox, oy] = Pfrei(eigen);
+    ctx.beginPath(); ctx.arc(ox, oy, 4, 0, 7);
+    ctx.fillStyle = L.hell(eigen) ? '#ff6b5e' : '#8fa6c4';
+    ctx.fill();
+    ctx.strokeStyle = '#0b1220'; ctx.lineWidth = 1.5; ctx.stroke();
+    ctx.font = '600 10px -apple-system, sans-serif';
+    ctx.fillStyle = 'rgba(232,238,248,.85)';
+    ctx.textAlign = ox > w - 70 ? 'right' : 'left';
+    ctx.fillText(place.name || 'dein Ort', ox + (ox > w - 70 ? -9 : 9), oy - 7);
   }
 
-  // Sonnenrichtung als Strahl am Rand
-  const sBild = L.sichtbar(L.S) ? L.bild(L.S) : null;
-  const sonne = sBild
-    ? `<circle class="gl-sonnenpunkt" cx="${sBild[0].toFixed(1)}" cy="${sBild[1].toFixed(1)}" r="3.2"/>`
-    : '';
+  // Erdachse mit Polpunkt
+  const nP = Pfrei(vMul(L.N, 1.12)), sP = Pfrei(vMul(L.N, -1.12));
+  ctx.strokeStyle = 'rgba(255,255,255,.55)'; ctx.lineWidth = 1.4;
+  ctx.setLineDash([4, 3]);
+  ctx.beginPath(); ctx.moveTo(sP[0], sP[1]); ctx.lineTo(nP[0], nP[1]); ctx.stroke();
+  ctx.setLineDash([]);
+  ctx.beginPath(); ctx.arc(nP[0], nP[1], 2.6, 0, 7);
+  ctx.fillStyle = '#fff'; ctx.fill();
 
-  ziel.innerHTML = `
-    <svg viewBox="0 0 ${G.w} ${G.h}" class="gl-svg" role="img"
-         aria-label="Die Erde als Kugel mit Tag- und Nachtseite">
-      <circle class="gl-kugel" cx="${M[0]}" cy="${M[1]}" r="${G.r}"/>
-      ${netz}${land}${nacht}${grenze}${sonne}${ortSvg}${achse}
-      <circle class="gl-rand" cx="${M[0]}" cy="${M[1]}" r="${G.r}" fill="none"/>
-      <rect id="globusFeld" x="0" y="0" width="${G.w}" height="${G.h}" fill="transparent"/>
-    </svg>`;
-  globusText(zeit, L);
+  // Rand
+  ctx.beginPath(); ctx.arc(M, M, R, 0, 7);
+  ctx.strokeStyle = 'rgba(255,255,255,.22)'; ctx.lineWidth = 1; ctx.stroke();
+}
+
+// Höchstens ein Bild je Bildschirmtakt, egal wie schnell der Finger meldet
+let globusRaf = false;
+let globusFormat = null;
+function globusZeichnen() {
+  if (globusRaf) return;
+  globusRaf = true;
+  requestAnimationFrame(() => {
+    globusRaf = false;
+    const zeit = globusZeit ?? Date.now();
+    globusMalen(zeit);
+    globusText(zeit, globusLage(zeit));
+  });
+}
+
+function renderGlobus() {
+  if (!$('#globus') || !place) return;
+  globusMalen(globusZeit ?? Date.now());
+  globusText(globusZeit ?? Date.now(), globusLage(globusZeit ?? Date.now()));
   globusBinden();
 }
 
@@ -5003,10 +5092,19 @@ function globusText(zeit, L) {
   // Wo steht die Sonne senkrecht?
   const dek = Math.asin(vDot(L.S, L.N)) * 180 / Math.PI;
   const zone = data?.timezone || 'Europe/Berlin';
-  const uhr = new Intl.DateTimeFormat('de-DE', { timeZone: zone, hour: '2-digit',
-    minute: '2-digit', hour12: false }).format(d);
-  const datum = new Intl.DateTimeFormat('de-DE', { timeZone: zone, day: 'numeric',
-    month: 'long' }).format(d);
+  /* Die Formatierer sind teuer im Aufbau und liefen vorher bei JEDEM Bild
+     neu an — beim Drehen sechzigmal je Sekunde. Einmal je Zeitzone reicht. */
+  if (globusFormat?.zone !== zone) {
+    globusFormat = {
+      zone,
+      uhr: new Intl.DateTimeFormat('de-DE', { timeZone: zone, hour: '2-digit',
+        minute: '2-digit', hour12: false }),
+      datum: new Intl.DateTimeFormat('de-DE', { timeZone: zone, day: 'numeric',
+        month: 'long' })
+    };
+  }
+  const uhr = globusFormat.uhr.format(d);
+  const datum = globusFormat.datum.format(d);
   el.innerHTML = `<b>${datum} · ${uhr} Uhr</b> · ${
       hell ? 'bei dir ist es hell' : 'bei dir ist es dunkel'}`
     + `<br><i>Sonne senkrecht über ${Math.abs(dek).toFixed(1)}° ${dek >= 0 ? 'Nord' : 'Süd'}`
@@ -5014,9 +5112,9 @@ function globusText(zeit, L) {
 }
 
 function globusBinden() {
-  const feld = $('#globusFeld');
-  const svg = feld?.ownerSVGElement;
-  if (!feld || !svg) return;
+  const feld = $('#globus')?.querySelector('canvas');
+  if (!feld || feld.dataset.gebunden) return;
+  feld.dataset.gebunden = '1';
   let start = null, startZeit = 0;
   const los = (ev) => {
     ev.stopPropagation();
@@ -5027,7 +5125,7 @@ function globusBinden() {
     const zug = (e) => {
       e.preventDefault();
       const q = e.touches?.[0] || e;
-      const b = svg.getBoundingClientRect();
+      const b = feld.getBoundingClientRect();
       if (!b.width) return;
       /* Eine Bildbreite = ein ganzer Tag, eine Bildhöhe = ein halbes Jahr.
          So liegen beide Drehungen unter demselben Finger.
@@ -5038,7 +5136,7 @@ function globusBinden() {
       const dy = (q.clientY - start[1]) / b.height;
       const tage = Math.round(dy * 182.5);
       globusZeit = startZeit + dx * 86400000 + tage * 86400000;
-      renderGlobus();
+      globusZeichnen();
     };
     const ende = () => {
       window.removeEventListener('pointermove', zug);

@@ -2311,6 +2311,7 @@ body.ar-offen { overflow: hidden; }
 
 /* ── Globus ──────────────────────────────────────────────── */
 .globus-wrap { width: 100%; max-width: 320px; margin: 4px auto 2px; touch-action: none; }
+.gl-canvas { width: 100%; aspect-ratio: 1; display: block; border-radius: 12px; }
 .gl-svg { width: 100%; height: auto; display: block; }
 /* Der globale Strich um jedes SVG-Element würde die Kugel umranden und die
    Nachtfläche einfassen — hier ausdrücklich abbestellt. */
