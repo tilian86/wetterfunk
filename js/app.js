@@ -4951,7 +4951,23 @@ function globusMalen(zeit) {
   ctx.clearRect(0, 0, w, w);
 
   const L = globusLage(zeit);
-  const M = w / 2, R = GLOBUS.r;
+  const R = GLOBUS.r;
+
+  /* Erst die Sonnenrichtung, dann die Mitte: Kugel UND Sonne bilden zusammen
+     das Bild, und die Sonne sitzt immer seitlich davon. Mittig war bisher
+     nur die Kugel — dadurch ragte die Sonne links über den Rand und die
+     Erde wirkte angeschnitten. Jetzt wird der umschließende Kasten aus
+     beidem gebildet und der ins Bild gerückt. */
+  const SONNE_WEG = R + 42, SONNE_AUSSEN = 25;
+  const sdx0 = vDot(L.S, L.rechts), sdy0 = -vDot(L.S, L.hoch);
+  const sl0 = Math.hypot(sdx0, sdy0) || 1;
+  const sn = [sdx0 / sl0, sdy0 / sl0];
+  const kastenX = [Math.min(-R, sn[0] * SONNE_WEG - SONNE_AUSSEN),
+                   Math.max(R, sn[0] * SONNE_WEG + SONNE_AUSSEN)];
+  const kastenY = [Math.min(-R, sn[1] * SONNE_WEG - SONNE_AUSSEN),
+                   Math.max(R, sn[1] * SONNE_WEG + SONNE_AUSSEN)];
+  const Mx = w / 2 - (kastenX[0] + kastenX[1]) / 2;
+  const My = w / 2 - (kastenY[0] + kastenY[1]) / 2;
 
   // Erdfeste Basis für diesen Moment — der einzige Ort mit Winkelfunktionen
   const ct = Math.cos(L.theta), st = Math.sin(L.theta);
@@ -4964,14 +4980,14 @@ function globusMalen(zeit) {
     const px = v[0] * E1[0] + v[1] * E2[0] + v[2] * N[0];
     const py = v[0] * E1[1] + v[1] * E2[1] + v[2] * N[1];
     const pz = v[0] * E1[2] + v[1] * E2[2] + v[2] * N[2];
-    return [M + (px * re[0] + py * re[1] + pz * re[2]) * R,
-            M - (px * ho[0] + py * ho[1] + pz * ho[2]) * R,
+    return [Mx + (px * re[0] + py * re[1] + pz * re[2]) * R,
+            My - (px * ho[0] + py * ho[1] + pz * ho[2]) * R,
             px * kam[0] + py * kam[1] + pz * kam[2] > 0];
   };
-  const Pfrei = (p) => [M + vDot(p, re) * R, M - vDot(p, ho) * R];
+  const Pfrei = (p) => [Mx + vDot(p, re) * R, My - vDot(p, ho) * R];
 
   // Kugel
-  ctx.beginPath(); ctx.arc(M, M, R, 0, 7);
+  ctx.beginPath(); ctx.arc(Mx, My, R, 0, 7);
   ctx.fillStyle = '#123055'; ctx.fill();
 
   // Alle Linien, nach Art gebündelt (ein Stilwechsel je Art, nicht je Linie)
@@ -5037,10 +5053,7 @@ function globusMalen(zeit) {
      bleibt sie am Bildschirm an derselben Stelle — und man sieht beim
      Wischen durchs Jahr, wie sich die ACHSE gegen das Licht neigt. Genau
      das ist die Schiefe der Ekliptik. */
-  const sdx = vDot(L.S, re), sdy = -vDot(L.S, ho);
-  const sdl = Math.hypot(sdx, sdy) || 1;
-  const sn = [sdx / sdl, sdy / sdl];                   // Richtung zur Sonne im Bild
-  const sonneP = [M + sn[0] * (R + 42), M + sn[1] * (R + 42)];
+  const sonneP = [Mx + sn[0] * SONNE_WEG, My + sn[1] * SONNE_WEG];
   const quer = [-sn[1], sn[0]];
 
   // Parallele Strahlen — Sonnenlicht kommt als Bündel, nicht aus einem Punkt
@@ -5049,7 +5062,7 @@ function globusMalen(zeit) {
   for (const v of [-30, -15, 0, 15, 30]) {
     const ax = sonneP[0] + quer[0] * v - sn[0] * 20;
     const ay = sonneP[1] + quer[1] * v - sn[1] * 20;
-    const laenge = R + 42 - 20 - Math.sqrt(Math.max(0, R * R - v * v)) - 6;
+    const laenge = SONNE_WEG - 20 - Math.sqrt(Math.max(0, R * R - v * v)) - 6;
     ctx.moveTo(ax, ay);
     ctx.lineTo(ax - sn[0] * laenge, ay - sn[1] * laenge);
   }
@@ -5080,8 +5093,8 @@ function globusMalen(zeit) {
     ctx.strokeStyle = '#0b1220'; ctx.lineWidth = 1.5; ctx.stroke();
     ctx.font = '600 10px -apple-system, sans-serif';
     ctx.fillStyle = 'rgba(232,238,248,.85)';
-    ctx.textAlign = ox > w - 70 ? 'right' : 'left';
-    ctx.fillText(place.name || 'dein Ort', ox + (ox > w - 70 ? -9 : 9), oy - 7);
+    ctx.textAlign = ox > w - 74 ? 'right' : 'left';
+    ctx.fillText(place.name || 'dein Ort', ox + (ox > w - 74 ? -9 : 9), oy - 7);
   }
 
   // Erdachse mit Polpunkt
@@ -5094,7 +5107,7 @@ function globusMalen(zeit) {
   ctx.fillStyle = '#fff'; ctx.fill();
 
   // Rand
-  ctx.beginPath(); ctx.arc(M, M, R, 0, 7);
+  ctx.beginPath(); ctx.arc(Mx, My, R, 0, 7);
   ctx.strokeStyle = 'rgba(255,255,255,.22)'; ctx.lineWidth = 1; ctx.stroke();
 }
 
@@ -5129,9 +5142,12 @@ function bahnDaten() {
     const [x, y] = bahnPunkt([-L.S[0], -L.S[1]]);   // Erde = Gegenrichtung der Sonne
     tage.push({ ms, x, y });
   }
+  /* Auf den Monatsersten, nicht die Monatsmitte: Wer „Jul" antippt,
+     erwartet den 1. Juli. Die Marke sitzt damit auch dort, wo der Monat
+     auf der Bahn beginnt. */
   const monate = ['Jan', 'Feb', 'Mär', 'Apr', 'Mai', 'Jun',
                   'Jul', 'Aug', 'Sep', 'Okt', 'Nov', 'Dez'].map((name, m) => {
-    const ms = Date.UTC(jahr, m, 15, 12);
+    const ms = Date.UTC(jahr, m, 1, 12);
     const L = globusLage(ms);
     const w = [-L.S[0], -L.S[1]];
     const [x, y] = bahnPunkt(w);
@@ -5317,8 +5333,10 @@ function globusText(zeit, L) {
   const datum = globusFormat.datum.format(d);
   el.innerHTML = `<b>${datum} · ${uhr} Uhr</b> · ${
       hell ? 'bei dir ist es hell' : 'bei dir ist es dunkel'}`
+    /* Kurz halten: Der lange Bedienhinweis brauchte zwei Zeilen und drückte
+       den erklärenden Text unter den Bildschirmrand. */
     + `<br><i>Sonne senkrecht über ${Math.abs(dek).toFixed(1)}° ${dek >= 0 ? 'Nord' : 'Süd'}`
-    + ` · waagerecht wischen dreht den Tag, senkrecht das Jahr</i>`;
+    + ` · quer wischen = Tag, hoch/runter = Jahr</i>`;
 }
 
 function globusBinden() {
