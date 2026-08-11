@@ -5070,22 +5070,6 @@ function globusMalen(zeit) {
   ctx.fillText('Sonne', sonneP[0] - sn[0] * 34, sonneP[1] - sn[1] * 34 + 3);
   ctx.textAlign = 'left';
 
-  /* ── Wo im Jahr stehen wir? Kleine Bahn in der freien Ecke ──
-     Sonne in der Mitte, die Erde als Punkt auf ihrer Bahn — die laufende
-     Antwort auf „wo stehe ich gerade zur Sonne". */
-  const ex = sn[0] > 0 ? 42 : w - 42, ey = w - 42;
-  ctx.strokeStyle = 'rgba(255,255,255,.22)'; ctx.lineWidth = .8;
-  ctx.setLineDash([2.5, 2.5]);
-  ctx.beginPath(); ctx.arc(ex, ey, 26, 0, 7); ctx.stroke();
-  ctx.setLineDash([]);
-  ctx.beginPath(); ctx.arc(ex, ey, 4.5, 0, 7); ctx.fillStyle = '#ffd60a'; ctx.fill();
-  const ea = Math.atan2(-(-L.S[1]), -L.S[0]);          // Erde = Gegenrichtung der Sonne
-  const epx = ex + Math.cos(ea) * 26, epy = ey + Math.sin(ea) * 26;
-  ctx.strokeStyle = 'rgba(255,255,255,.25)'; ctx.lineWidth = .7;
-  ctx.beginPath(); ctx.moveTo(ex, ey); ctx.lineTo(epx, epy); ctx.stroke();
-  ctx.beginPath(); ctx.arc(epx, epy, 3.4, 0, 7); ctx.fillStyle = '#2f6fb5'; ctx.fill();
-  ctx.strokeStyle = 'rgba(255,255,255,.7)'; ctx.lineWidth = 1; ctx.stroke();
-
   // Der eigene Ort — mit Namen, damit klar ist, welcher Punkt man selbst ist
   const eigen = L.punkt(place.lat, place.lon);
   if (L.sichtbar(eigen)) {
@@ -5114,6 +5098,177 @@ function globusMalen(zeit) {
   ctx.strokeStyle = 'rgba(255,255,255,.22)'; ctx.lineWidth = 1; ctx.stroke();
 }
 
+/* ── Die Weltraum-Ansicht: die Erde AUF ihrer Bahn ──────────
+   Florian: „dass man sieht, wo die Erde gerade im Weltall bei der Sonne
+   ist". Sonne in der Mitte, die Bahn als flache Ellipse, die Erde wandert
+   darauf — und ihre Achse zeigt an JEDER Stelle in dieselbe Richtung.
+   Zwölf Positionen, ein Winkel: Das ist das ganze Geheimnis der
+   Jahreszeiten, und hier steht es als Bild.
+
+   Die Monate am Rand sind antippbar, die Erde lässt sich auch direkt an
+   der Bahn entlangziehen. Beides stellt dieselbe Zeit, die auch der
+   Globus darüber zeigt — eine Zeit, zwei Blickwinkel. */
+const BAHN = { w: 320, h: 190, cx: 160, cy: 96, rx: 118, quetsch: 0.36 };
+const BAHN_BLICK = -0.6;          // Blickdrehung: so steht die Achse sichtbar schräg
+let bahnJahrDaten = null;
+
+function bahnPunkt(weltXY) {
+  const c = Math.cos(BAHN_BLICK), s2 = Math.sin(BAHN_BLICK);
+  const x = weltXY[0] * c - weltXY[1] * s2;
+  const y = weltXY[0] * s2 + weltXY[1] * c;
+  return [BAHN.cx + x * BAHN.rx, BAHN.cy - y * BAHN.rx * BAHN.quetsch];
+}
+
+function bahnDaten() {
+  const jahr = new Date().getFullYear();
+  if (bahnJahrDaten?.jahr === jahr) return bahnJahrDaten;
+  const tage = [];
+  for (let t = 0; t < 365; t++) {
+    const ms = Date.UTC(jahr, 0, 1 + t, 12);
+    const L = globusLage(ms);
+    const [x, y] = bahnPunkt([-L.S[0], -L.S[1]]);   // Erde = Gegenrichtung der Sonne
+    tage.push({ ms, x, y });
+  }
+  const monate = ['Jan', 'Feb', 'Mär', 'Apr', 'Mai', 'Jun',
+                  'Jul', 'Aug', 'Sep', 'Okt', 'Nov', 'Dez'].map((name, m) => {
+    const ms = Date.UTC(jahr, m, 15, 12);
+    const L = globusLage(ms);
+    const w = [-L.S[0], -L.S[1]];
+    const [x, y] = bahnPunkt(w);
+    const [ax, ay] = bahnPunkt([w[0] * 1.24, w[1] * 1.24]);
+    return { name, ms, x, y, ax, ay };
+  });
+  return (bahnJahrDaten = { jahr, tage, monate });
+}
+
+function bahnMalen(zeit) {
+  const wrap = $('#bahnWrap');
+  if (!wrap) return;
+  let cv = wrap.querySelector('canvas');
+  if (!cv) {
+    wrap.innerHTML = '<canvas class="gl-canvas bahn-canvas"></canvas>';
+    cv = wrap.querySelector('canvas');
+    bahnBinden(cv);
+  }
+  const dpr = Math.min(2, window.devicePixelRatio || 1);
+  if (cv.width !== BAHN.w * dpr) { cv.width = BAHN.w * dpr; cv.height = BAHN.h * dpr; }
+  const ctx = cv.getContext('2d');
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.clearRect(0, 0, BAHN.w, BAHN.h);
+  const d = bahnDaten();
+
+  // Bahn als geschlossener Zug durch die echten Tagespositionen
+  ctx.strokeStyle = 'rgba(255,255,255,.22)'; ctx.lineWidth = .8;
+  ctx.setLineDash([3, 3]);
+  ctx.beginPath();
+  d.tage.forEach((g, i) => i ? ctx.lineTo(g.x, g.y) : ctx.moveTo(g.x, g.y));
+  ctx.closePath(); ctx.stroke();
+  ctx.setLineDash([]);
+
+  // Sonne in der Mitte
+  ctx.beginPath(); ctx.arc(BAHN.cx, BAHN.cy, 10, 0, 7);
+  ctx.fillStyle = '#ffd60a'; ctx.fill();
+  ctx.strokeStyle = 'rgba(255,214,10,.5)'; ctx.lineWidth = 1; ctx.beginPath();
+  for (let k = 0; k < 8; k++) {
+    const a = k * Math.PI / 4;
+    ctx.moveTo(BAHN.cx + Math.cos(a) * 12, BAHN.cy + Math.sin(a) * 12);
+    ctx.lineTo(BAHN.cx + Math.cos(a) * 15, BAHN.cy + Math.sin(a) * 15);
+  }
+  ctx.stroke();
+
+  // Monatsmarken samt Namen — antippbar
+  ctx.font = '600 8.5px -apple-system, sans-serif';
+  for (const m of d.monate) {
+    ctx.beginPath(); ctx.arc(m.x, m.y, 1.6, 0, 7);
+    ctx.fillStyle = 'rgba(255,255,255,.4)'; ctx.fill();
+    ctx.fillStyle = 'rgba(232,238,248,.55)';
+    ctx.textAlign = 'center';
+    ctx.fillText(m.name, m.ax, m.ay + 3);
+  }
+
+  // Die Erde an ihrer heutigen Stelle — Tagesposition, Zeit interessiert hier nicht
+  const jetzt = new Date(zeit);
+  const tIdx = Math.max(0, Math.min(364,
+    Math.floor((Date.UTC(jetzt.getUTCFullYear(), jetzt.getUTCMonth(), jetzt.getUTCDate())
+      - Date.UTC(d.jahr, 0, 1)) / 86400000)));
+  const g = d.tage[tIdx];
+
+  // Nachtseite der Mini-Erde: die sonnenabgewandte Hälfte
+  const zurSonne = Math.atan2(BAHN.cy - g.y, BAHN.cx - g.x);
+  ctx.beginPath(); ctx.arc(g.x, g.y, 7, 0, 7);
+  ctx.fillStyle = '#2f6fb5'; ctx.fill();
+  ctx.beginPath();
+  ctx.arc(g.x, g.y, 7, zurSonne + Math.PI / 2, zurSonne + 3 * Math.PI / 2);
+  ctx.fillStyle = 'rgba(4,10,22,.75)'; ctx.fill();
+  ctx.beginPath(); ctx.arc(g.x, g.y, 7, 0, 7);
+  ctx.strokeStyle = 'rgba(255,255,255,.5)'; ctx.lineWidth = .8; ctx.stroke();
+
+  /* Die Achse: an jeder Position DIESELBE Richtung. Projiziert aus
+     N = (0, sin eps, cos eps) mit derselben Blickdrehung wie die Bahn. */
+  const eps = EKLIPTIK * Math.PI / 180;
+  const c = Math.cos(BAHN_BLICK), s2 = Math.sin(BAHN_BLICK);
+  const nx = -Math.sin(eps) * s2;
+  const nSchirm = [nx, -(Math.sin(eps) * c * BAHN.quetsch + Math.cos(eps))];
+  const nl = Math.hypot(...nSchirm);
+  const dA = [nSchirm[0] / nl * 12, nSchirm[1] / nl * 12];
+  ctx.strokeStyle = 'rgba(255,255,255,.75)'; ctx.lineWidth = 1.1;
+  ctx.setLineDash([2.5, 2]);
+  ctx.beginPath();
+  ctx.moveTo(g.x - dA[0], g.y - dA[1]); ctx.lineTo(g.x + dA[0], g.y + dA[1]);
+  ctx.stroke(); ctx.setLineDash([]);
+  ctx.beginPath(); ctx.arc(g.x + dA[0], g.y + dA[1], 1.8, 0, 7);
+  ctx.fillStyle = '#fff'; ctx.fill();
+}
+
+function bahnBinden(cv) {
+  const springe = (clientX, clientY) => {
+    const b = cv.getBoundingClientRect();
+    if (!b.width) return;
+    const x = (clientX - b.left) / b.width * BAHN.w;
+    const y = (clientY - b.top) / b.height * BAHN.h;
+    const d = bahnDaten();
+    /* Erst die Monatsnamen (großzügige Trefferfläche), sonst der nächste
+       Tag auf der Bahn — so ist Tippen UND Ziehen dieselbe Geste. */
+    for (const m of d.monate) {
+      if ((m.ax - x) ** 2 + (m.ay - y) ** 2 < 14 ** 2) return setzeTag(m.ms);
+    }
+    let best = null, dist = Infinity;
+    for (const g of d.tage) {
+      const dd = (g.x - x) ** 2 + (g.y - y) ** 2;
+      if (dd < dist) { dist = dd; best = g; }
+    }
+    if (best && dist < 45 ** 2) setzeTag(best.ms);
+  };
+  const setzeTag = (ms) => {
+    /* Der Sprung wechselt den TAG, nicht die Uhrzeit — wie beim
+       senkrechten Wischen am Globus. */
+    const alt = new Date(globusZeit ?? Date.now());
+    const ziel = new Date(ms);
+    ziel.setUTCHours(alt.getUTCHours(), alt.getUTCMinutes(), 0, 0);
+    globusZeit = ziel.getTime();
+    globusZeichnen();
+  };
+  const los = (ev) => {
+    ev.stopPropagation(); ev.preventDefault();
+    const p = ev.touches?.[0] || ev;
+    springe(p.clientX, p.clientY);
+    const zug = (e) => {
+      e.preventDefault();
+      const q = e.touches?.[0] || e;
+      springe(q.clientX, q.clientY);
+    };
+    const ende = () => {
+      window.removeEventListener('pointermove', zug);
+      window.removeEventListener('pointerup', ende);
+      window.removeEventListener('pointercancel', ende);
+    };
+    window.addEventListener('pointermove', zug);
+    window.addEventListener('pointerup', ende);
+    window.addEventListener('pointercancel', ende);
+  };
+  cv.addEventListener('pointerdown', los);
+}
+
 // Höchstens ein Bild je Bildschirmtakt, egal wie schnell der Finger meldet
 let globusRaf = false;
 let globusFormat = null;
@@ -5124,14 +5279,17 @@ function globusZeichnen() {
     globusRaf = false;
     const zeit = globusZeit ?? Date.now();
     globusMalen(zeit);
+    bahnMalen(zeit);
     globusText(zeit, globusLage(zeit));
   });
 }
 
 function renderGlobus() {
   if (!$('#globus') || !place) return;
-  globusMalen(globusZeit ?? Date.now());
-  globusText(globusZeit ?? Date.now(), globusLage(globusZeit ?? Date.now()));
+  const zeit = globusZeit ?? Date.now();
+  globusMalen(zeit);
+  bahnMalen(zeit);
+  globusText(zeit, globusLage(zeit));
   globusBinden();
 }
 

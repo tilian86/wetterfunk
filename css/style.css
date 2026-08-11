@@ -2321,6 +2321,8 @@ body.ar-offen { overflow: hidden; }
 }
 .gl-jetzt:active { background: rgba(255,255,255,.2); }
 .gl-jetzt[hidden] { display: none; }
+.bahn-wrap { width: 100%; max-width: 320px; margin: 6px auto 0; touch-action: none; }
+.bahn-canvas { aspect-ratio: 320 / 190; border-radius: 12px; }
 .gl-canvas { width: 100%; aspect-ratio: 1; display: block; border-radius: 12px; }
 .gl-svg { width: 100%; height: auto; display: block; }
 /* Der globale Strich um jedes SVG-Element würde die Kugel umranden und die
