@@ -4766,7 +4766,10 @@ function renderSonnenuhr() {
    Keine Fremdbibliothek: Eine orthografische Kugel ist ein Skalarprodukt.
    Ein Punkt ist sichtbar, wenn er zur Kamera zeigt, und beleuchtet, wenn er
    zur Sonne zeigt. Mehr braucht es nicht. */
-const GLOBUS = { w: 320, h: 320, r: 132 };
+/* r 108 statt 132: Der Rand braucht Platz für die Sonne als Scheibe mit
+   Strahlen. Ohne sie sah es aus, „als würde sich die Achse einfach so
+   bewegen" — die Neigung wird erst als Neigung ZUR SONNE lesbar. */
+const GLOBUS = { w: 320, h: 320, r: 108 };
 let globusZeit = null;        // Zeitpunkt, den der Globus zeigt
 
 const vAdd = (a, b) => [a[0] + b[0], a[1] + b[1], a[2] + b[2]];
@@ -4927,9 +4930,20 @@ function globusMalen(zeit) {
   if (!wrap || !place) return;
   let cv = wrap.querySelector('canvas');
   if (!cv) {
-    wrap.innerHTML = '<canvas class="gl-canvas"></canvas>';
+    wrap.innerHTML = '<canvas class="gl-canvas"></canvas>'
+      + '<button class="gl-jetzt" id="globusJetzt" hidden>Jetzt</button>';
     cv = wrap.querySelector('canvas');
+    $('#globusJetzt').addEventListener('click', (e) => {
+      e.stopPropagation();
+      globusZeit = null;
+      globusZeichnen();
+    });
   }
+  /* Der Rückweg ins Jetzt: Wer durchs Jahr gewischt hat, fand vorher nur
+     über Neuladen zurück. Der Knopf zeigt sich, sobald die gezeigte Zeit
+     mehr als eine Minute vom Jetzt abweicht. */
+  const jetztKnopf = $('#globusJetzt');
+  if (jetztKnopf) jetztKnopf.hidden = Math.abs(zeit - Date.now()) < 60000;
   const w = GLOBUS.w, dpr = Math.min(2, window.devicePixelRatio || 1);
   if (cv.width !== w * dpr) { cv.width = w * dpr; cv.height = w * dpr; }
   const ctx = cv.getContext('2d');
@@ -5014,25 +5028,63 @@ function globusMalen(zeit) {
     ctx.strokeStyle = 'rgba(255,214,10,.6)'; ctx.lineWidth = 1; ctx.stroke();
   }
 
-  /* Die Sonne: vorher ein nackter gelber Punkt, den niemand zuordnen konnte.
-     Jetzt eine kleine Sonne mit Strahlen und dem Wort daneben — sie markiert
-     die Stelle, über der die Sonne gerade senkrecht steht. */
-  if (L.sichtbar(L.S)) {
-    const [sx, sy] = Pfrei(L.S);
-    ctx.strokeStyle = '#ffd60a'; ctx.lineWidth = 1.4; ctx.beginPath();
-    for (let k = 0; k < 8; k++) {
-      const a = k * Math.PI / 4;
-      ctx.moveTo(sx + Math.cos(a) * 5.5, sy + Math.sin(a) * 5.5);
-      ctx.lineTo(sx + Math.cos(a) * 8.5, sy + Math.sin(a) * 8.5);
-    }
-    ctx.stroke();
-    ctx.beginPath(); ctx.arc(sx, sy, 4, 0, 7);
-    ctx.fillStyle = '#ffd60a'; ctx.fill();
-    ctx.font = '600 10px -apple-system, sans-serif';
-    ctx.fillStyle = 'rgba(255,214,10,.85)';
-    ctx.textAlign = sx > w - 60 ? 'right' : 'left';
-    ctx.fillText('Sonne', sx + (sx > w - 60 ? -12 : 12), sy + 3.5);
+  /* ── Die Sonne als Körper, nicht als Punkt ────────────────
+     Vorher markierte ein gelber Punkt auf der ERDE die Stelle unter der
+     Sonne — Florian: „da ist einfach so ein gelber Punkt", und die Neigung
+     der Achse wirkte wie ein Wackeln der Erde selbst. Jetzt steht die
+     Sonne als Scheibe neben der Kugel, mit parallelen Strahlen darauf zu.
+     Weil die Kamera das ganze Jahr im festen Winkel zur Sonne steht,
+     bleibt sie am Bildschirm an derselben Stelle — und man sieht beim
+     Wischen durchs Jahr, wie sich die ACHSE gegen das Licht neigt. Genau
+     das ist die Schiefe der Ekliptik. */
+  const sdx = vDot(L.S, re), sdy = -vDot(L.S, ho);
+  const sdl = Math.hypot(sdx, sdy) || 1;
+  const sn = [sdx / sdl, sdy / sdl];                   // Richtung zur Sonne im Bild
+  const sonneP = [M + sn[0] * (R + 42), M + sn[1] * (R + 42)];
+  const quer = [-sn[1], sn[0]];
+
+  // Parallele Strahlen — Sonnenlicht kommt als Bündel, nicht aus einem Punkt
+  ctx.strokeStyle = 'rgba(255,214,10,.35)'; ctx.lineWidth = 1.2;
+  ctx.beginPath();
+  for (const v of [-30, -15, 0, 15, 30]) {
+    const ax = sonneP[0] + quer[0] * v - sn[0] * 20;
+    const ay = sonneP[1] + quer[1] * v - sn[1] * 20;
+    const laenge = R + 42 - 20 - Math.sqrt(Math.max(0, R * R - v * v)) - 6;
+    ctx.moveTo(ax, ay);
+    ctx.lineTo(ax - sn[0] * laenge, ay - sn[1] * laenge);
   }
+  ctx.stroke();
+
+  ctx.beginPath(); ctx.arc(sonneP[0], sonneP[1], 17, 0, 7);
+  ctx.fillStyle = '#ffd60a'; ctx.fill();
+  ctx.strokeStyle = 'rgba(255,214,10,.5)'; ctx.lineWidth = 1.2; ctx.beginPath();
+  for (let k = 0; k < 12; k++) {
+    const a = k * Math.PI / 6;
+    ctx.moveTo(sonneP[0] + Math.cos(a) * 20, sonneP[1] + Math.sin(a) * 20);
+    ctx.lineTo(sonneP[0] + Math.cos(a) * 25, sonneP[1] + Math.sin(a) * 25);
+  }
+  ctx.stroke();
+  ctx.font = '600 10px -apple-system, sans-serif';
+  ctx.fillStyle = 'rgba(255,214,10,.85)';
+  ctx.textAlign = 'center';
+  ctx.fillText('Sonne', sonneP[0] - sn[0] * 34, sonneP[1] - sn[1] * 34 + 3);
+  ctx.textAlign = 'left';
+
+  /* ── Wo im Jahr stehen wir? Kleine Bahn in der freien Ecke ──
+     Sonne in der Mitte, die Erde als Punkt auf ihrer Bahn — die laufende
+     Antwort auf „wo stehe ich gerade zur Sonne". */
+  const ex = sn[0] > 0 ? 42 : w - 42, ey = w - 42;
+  ctx.strokeStyle = 'rgba(255,255,255,.22)'; ctx.lineWidth = .8;
+  ctx.setLineDash([2.5, 2.5]);
+  ctx.beginPath(); ctx.arc(ex, ey, 26, 0, 7); ctx.stroke();
+  ctx.setLineDash([]);
+  ctx.beginPath(); ctx.arc(ex, ey, 4.5, 0, 7); ctx.fillStyle = '#ffd60a'; ctx.fill();
+  const ea = Math.atan2(-(-L.S[1]), -L.S[0]);          // Erde = Gegenrichtung der Sonne
+  const epx = ex + Math.cos(ea) * 26, epy = ey + Math.sin(ea) * 26;
+  ctx.strokeStyle = 'rgba(255,255,255,.25)'; ctx.lineWidth = .7;
+  ctx.beginPath(); ctx.moveTo(ex, ey); ctx.lineTo(epx, epy); ctx.stroke();
+  ctx.beginPath(); ctx.arc(epx, epy, 3.4, 0, 7); ctx.fillStyle = '#2f6fb5'; ctx.fill();
+  ctx.strokeStyle = 'rgba(255,255,255,.7)'; ctx.lineWidth = 1; ctx.stroke();
 
   // Der eigene Ort — mit Namen, damit klar ist, welcher Punkt man selbst ist
   const eigen = L.punkt(place.lat, place.lon);

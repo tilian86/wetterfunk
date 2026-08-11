@@ -2310,7 +2310,17 @@ body.ar-offen { overflow: hidden; }
 .jb-warum b { color: var(--ink-dim); font-weight: 600; }
 
 /* ── Globus ──────────────────────────────────────────────── */
-.globus-wrap { width: 100%; max-width: 320px; margin: 4px auto 2px; touch-action: none; }
+.globus-wrap { width: 100%; max-width: 320px; margin: 4px auto 2px;
+  touch-action: none; position: relative; }
+.gl-jetzt {
+  position: absolute; top: 8px; right: 8px;
+  padding: 5px 13px; border-radius: 30px;
+  font-size: 11.5px; font-weight: 600;
+  background: rgba(255,255,255,.1); border: 1px solid var(--card-line);
+  color: var(--ink); cursor: pointer;
+}
+.gl-jetzt:active { background: rgba(255,255,255,.2); }
+.gl-jetzt[hidden] { display: none; }
 .gl-canvas { width: 100%; aspect-ratio: 1; display: block; border-radius: 12px; }
 .gl-svg { width: 100%; height: auto; display: block; }
 /* Der globale Strich um jedes SVG-Element würde die Kugel umranden und die
