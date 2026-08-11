@@ -7969,6 +7969,7 @@ const NAV = [
   { id: 'nav-dwd',     ziel: '.card-dwd',       name: 'DWD' },
   { id: 'nav-bericht', ziel: '.card-brief',     name: 'Bericht' },
   { id: 'nav-himmel',  ziel: '.card-sky',       name: 'Himmel' },
+  { id: 'nav-erde',    ziel: '#erdeKarte',      name: 'Erde' },
   { id: 'nav-cams',    ziel: '.card-cams',      name: 'Webcams' },
   { id: 'nav-rueck',   ziel: '.card-rueck',     name: 'Treffer' },
   { id: 'nav-push',    ziel: '.card-push',      name: 'Meldungen' },
@@ -8224,6 +8225,11 @@ function wire() {
     const n = (store.get(LS.cams, []) || []).length;
     return n ? `${n} Kameras aus der Region` : 'Bilder aus der Region';
   });
+  /* Die Erde-Karte hatte den Kopf, aber nie diesen Aufruf — der Knopf war
+     stumm. Jede Klapp-Karte braucht ihre eigene Zeile hier; das Muster hat
+     keinen Sammellauf über alle .klapp-kopf. */
+  klappen('#erdeKopf', '#erdeBody', 'wf.erdeAuf', renderGlobus,
+    (auf) => (auf ? '' : 'Tag, Jahr und die Neigung'));
   klappen('#rueckKopf', '#rueckBody', 'wf.rueckAuf', null,
     (auf) => (auf ? rueckStandText : 'Vorhersage gegen Messung'));
   klappen('#modelKopf', '#modelBody', 'wf.modelAuf', null,
