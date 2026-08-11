@@ -4829,7 +4829,15 @@ function globusLage(zeit) {
      die Achse steht in beiden fest — so, wie es im Weltall auch ist. Der
      Preis: Je nach Jahreszeit sieht man mehr oder weniger Nachtseite.
      Das ist kein Fehler, sondern der Blickwinkel. */
-  const blick = -0.6, sinH = 0.36, cosH = Math.sqrt(1 - sinH * sinH);
+  /* Blickrichtung (Azimut) wie in der Bahnansicht — daran hängt, auf
+     welcher SEITE die Sonne steht, und das war Florians Punkt. Die Blick-
+     HÖHE ist dagegen steiler als dort (45° statt 21°), und das aus einem
+     gemessenen Grund: Bei 21° schwankte der beleuchtete Anteil der Scheibe
+     übers Jahr zwischen 3 % und 97 % — die halbe Zeit war der Globus fast
+     schwarz. Bei 45° bleibt er zwischen 15 % und 85 %, es ist immer eine
+     Tag-Nacht-Grenze zu sehen. Die Schräge der Achse im Bild ändert sich
+     dabei kaum (13,0° gegen 14,3°), es kostet also nichts. */
+  const blick = -0.6, sinH = 0.707, cosH = Math.sqrt(1 - sinH * sinH);
   const rechts = [Math.cos(blick), -Math.sin(blick), 0];
   /* Bild-hoch = die Weltrichtung, die auf dem Schirm nach oben führt. Mit
      Minuszeichen davor war sie gespiegelt — die Sonne stand dann exakt auf
@@ -4978,14 +4986,16 @@ function globusMalen(zeit) {
   const E2 = vAdd(vMul(L.e1, -st), vMul(L.e2, ct));
   const N = L.N, kam = L.kam, re = L.rechts, ho = L.hoch;
 
-  /** Erdfester Einheitsvektor → [x, y, vorn?] in einem Rutsch. */
+  /** Erdfester Einheitsvektor → [x, y, vorn?, beleuchtet?] in einem Rutsch. */
+  const Sv = L.S;
   const P = (v) => {
     const px = v[0] * E1[0] + v[1] * E2[0] + v[2] * N[0];
     const py = v[0] * E1[1] + v[1] * E2[1] + v[2] * N[1];
     const pz = v[0] * E1[2] + v[1] * E2[2] + v[2] * N[2];
     return [Mx + (px * re[0] + py * re[1] + pz * re[2]) * R,
             My - (px * ho[0] + py * ho[1] + pz * ho[2]) * R,
-            px * kam[0] + py * kam[1] + pz * kam[2] > 0];
+            px * kam[0] + py * kam[1] + pz * kam[2] > 0,
+            px * Sv[0] + py * Sv[1] + pz * Sv[2] > 0];
   };
   const Pfrei = (p) => [Mx + vDot(p, re) * R, My - vDot(p, ho) * R];
 
@@ -5001,7 +5011,7 @@ function globusMalen(zeit) {
     kueste:   { s: '#6fd6a0',               b: 0.9, strich: null }
   };
   const alle = globusVektoren();
-  for (const art of ['netz', 'aequator', 'wende', 'kueste']) {
+  for (const art of ['netz', 'aequator', 'wende']) {
     const st2 = stile[art];
     ctx.strokeStyle = st2.s; ctx.lineWidth = st2.b;
     ctx.setLineDash(st2.strich || []);
@@ -5047,15 +5057,39 @@ function globusMalen(zeit) {
     ctx.strokeStyle = 'rgba(255,214,10,.6)'; ctx.lineWidth = 1; ctx.stroke();
   }
 
+  /* Küsten erst NACH der Nachtfläche, in zwei Durchgängen: Tagseite voll,
+     Nachtseite gedimmt statt verdeckt. Vorher lagen sie UNTER der dunklen
+     Fläche — fällt der Blick auf die Nachtseite (Juli bis Oktober), war der
+     Globus fast leer und sah kaputt aus. Florian: „vorne manchmal so Nacht
+     — ist das gewollt?" */
+  ctx.lineJoin = 'round'; ctx.lineWidth = 0.9; ctx.setLineDash([]);
+  for (const lauf of [{ tag: true, farbe: '#6fd6a0' },
+                      { tag: false, farbe: 'rgba(126,214,175,.42)' }]) {
+    ctx.strokeStyle = lauf.farbe;
+    ctx.beginPath();
+    for (const linie of alle) {
+      if (linie.art !== 'kueste') continue;
+      let vorher = false;
+      for (const v of linie.pts) {
+        const [x, y, vorn, licht] = P(v);
+        const drin = vorn && licht === lauf.tag;
+        if (drin && vorher) ctx.lineTo(x, y);
+        else if (drin) ctx.moveTo(x, y);
+        vorher = drin;
+      }
+    }
+    ctx.stroke();
+  }
+
   /* ── Die Sonne als Körper, nicht als Punkt ────────────────
      Vorher markierte ein gelber Punkt auf der ERDE die Stelle unter der
      Sonne — Florian: „da ist einfach so ein gelber Punkt", und die Neigung
      der Achse wirkte wie ein Wackeln der Erde selbst. Jetzt steht die
      Sonne als Scheibe neben der Kugel, mit parallelen Strahlen darauf zu.
-     Weil die Kamera das ganze Jahr im festen Winkel zur Sonne steht,
-     bleibt sie am Bildschirm an derselben Stelle — und man sieht beim
-     Wischen durchs Jahr, wie sich die ACHSE gegen das Licht neigt. Genau
-     das ist die Schiefe der Ekliptik. */
+     Seit die Kamera fest im Raum steht, WANDERT die Sonne übers Jahr um
+     die Erde — genauso wie unten auf der Bahn. Beim Durchtippen der
+     Monate sieht man beides zugleich: Die Sonne wechselt die Seite, die
+     Achse bleibt stur. Genau das ist die Schiefe der Ekliptik. */
   const sonneP = [Mx + sn[0] * SONNE_WEG, My + sn[1] * SONNE_WEG];
   const quer = [-sn[1], sn[0]];
 
@@ -5116,6 +5150,7 @@ function globusMalen(zeit) {
   // Rand
   ctx.beginPath(); ctx.arc(Mx, My, R, 0, 7);
   ctx.strokeStyle = 'rgba(255,255,255,.22)'; ctx.lineWidth = 1; ctx.stroke();
+
 }
 
 /* ── Die Weltraum-Ansicht: die Erde AUF ihrer Bahn ──────────
@@ -5338,8 +5373,16 @@ function globusText(zeit, L) {
   }
   const uhr = globusFormat.uhr.format(d);
   const datum = globusFormat.datum.format(d);
+  /* Steht die Sonne hinter der Erde, blickt man auf die Nachtseite — genau
+     die Stellung, die unten auf der Bahn zu sehen ist. Ohne ein Wort dazu
+     wirkt der dunkle Globus wie ein Fehler (Florian: „ist das so gewollt?").
+     Auf der Zeichenfläche selbst ging der Satz unter, deshalb steht er hier. */
+  const anteilHell = (1 + vDot(L.S, L.kam)) / 2;
+  const nachtBlick = anteilHell < 0.4
+    ? ` · Erde <b>zwischen dir und der Sonne</b> — du siehst vor allem die Nachtseite`
+    : '';
   el.innerHTML = `<b>${datum} · ${uhr} Uhr</b> · ${
-      hell ? 'bei dir ist es hell' : 'bei dir ist es dunkel'}`
+      hell ? 'bei dir ist es hell' : 'bei dir ist es dunkel'}${nachtBlick}`
     /* Kurz halten: Der lange Bedienhinweis brauchte zwei Zeilen und drückte
        den erklärenden Text unter den Bildschirmrand. */
     + `<br><i>Sonne senkrecht über ${Math.abs(dek).toFixed(1)}° ${dek >= 0 ? 'Nord' : 'Süd'}`
