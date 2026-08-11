@@ -5153,6 +5153,146 @@ function globusMalen(zeit) {
 
 }
 
+/* ── Wie steil trifft die Sonne? ────────────────────────────
+   Das fehlende Glied: Der Globus zeigt, WANN es hell ist, aber nicht,
+   warum schräges Licht schwächer wärmt. Genau daran hängen die
+   Jahreszeiten — nicht am Licht/Dunkel allein.
+
+   Ein Bündel Sonnenlicht fester Breite trifft die Erde. Steht die Sonne
+   senkrecht, landet es auf einem kleinen Fleck; steht sie flach, schmiert
+   es über eine viel größere Fläche. Die Wärme je Quadratmeter ist der
+   Sinus des Sonnenwinkels — bei 30° die Hälfte, bei 90° alles. */
+const STRAHL = { w: 320, h: 96, boden: 74, links: 14, rechts: 306 };
+
+function strahlMalen(zeit) {
+  const wrap = $('#strahlWrap');
+  if (!wrap || !place) return;
+  let cv = wrap.querySelector('canvas');
+  if (!cv) { wrap.innerHTML = '<canvas class="strahl-canvas"></canvas>'; cv = wrap.querySelector('canvas'); }
+  const dpr = Math.min(2, window.devicePixelRatio || 1);
+  if (cv.width !== STRAHL.w * dpr) { cv.width = STRAHL.w * dpr; cv.height = STRAHL.h * dpr; }
+  const ctx = cv.getContext('2d');
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.clearRect(0, 0, STRAHL.w, STRAHL.h);
+
+  const hoehe = sunAltitude(new Date(zeit), place.lat, place.lon);
+  const S = STRAHL, rad = Math.PI / 180;
+
+  // Boden
+  ctx.strokeStyle = 'rgba(255,255,255,.28)'; ctx.lineWidth = 1.2;
+  ctx.beginPath(); ctx.moveTo(S.links, S.boden); ctx.lineTo(S.rechts, S.boden); ctx.stroke();
+
+  const el = $('#strahlText');
+  /* Höchst- und Tiefststand an DIESEM Ort für den Erklärtext unten:
+     Der Sonnenwinkel mittags ist 90° minus dem Abstand zwischen Breite und
+     Deklination — bei uns 65° im Juni, 18° im Dezember. */
+  const maxH = 90 - Math.abs(place.lat - EKLIPTIK);
+  const minH = 90 - Math.abs(place.lat + EKLIPTIK);
+  const jahrEl = $('#strahlJahr');
+  if (jahrEl) {
+    const verh = Math.sin(Math.max(1, maxH) * rad) / Math.sin(Math.max(1, minH) * rad);
+    jahrEl.innerHTML = `Bei dir steht die Sonne mittags höchstens <b>${maxH.toFixed(0)}°</b>`
+      + ` hoch (Juni) und tiefstens <b>${minH.toFixed(0)}°</b> (Dezember) — im Sommer trifft`
+      + ` damit rund <b>${dez(verh)}-mal so viel Wärme</b> auf denselben Fleck Boden.`
+      + ` <b>Das</b> macht den Sommer warm, nicht die Nähe zur Sonne.`;
+  }
+
+  if (hoehe <= 0.5) {
+    ctx.font = '500 11px -apple-system, sans-serif';
+    ctx.fillStyle = 'rgba(232,238,248,.55)';
+    ctx.textAlign = 'center';
+    ctx.fillText('Sonne unter dem Horizont — kein Licht', S.w / 2, S.boden - 26);
+    if (el) el.innerHTML = '<i>Jetzt ist bei dir Nacht. Wisch am Globus in den Tag, '
+      + 'um zu sehen, wie steil die Sonne dann steht.</i>';
+    return;
+  }
+
+  /* Bündel fester Breite quer zur Strahlrichtung. Der Fußabdruck auf dem
+     Boden ist Breite / sin(Höhe) — das ist die ganze Physik dahinter. */
+  const BREITE = 40;
+  const fuss = BREITE / Math.sin(hoehe * rad);
+  const mitte = S.links + 92;
+  const von = mitte - Math.min(fuss, 200) / 2, bis = mitte + Math.min(fuss, 200) / 2;
+
+  // Beleuchteter Fleck
+  const g = ctx.createLinearGradient(von, 0, bis, 0);
+  g.addColorStop(0, 'rgba(255,214,10,0)');
+  g.addColorStop(.5, `rgba(255,214,10,${(0.15 + Math.sin(hoehe * rad) * 0.55).toFixed(2)})`);
+  g.addColorStop(1, 'rgba(255,214,10,0)');
+  ctx.fillStyle = g;
+  ctx.fillRect(von, S.boden - 4, bis - von, 8);
+  ctx.strokeStyle = 'rgba(255,214,10,.75)'; ctx.lineWidth = 2;
+  ctx.beginPath(); ctx.moveTo(von, S.boden); ctx.lineTo(bis, S.boden); ctx.stroke();
+
+  // Strahlen aus der Richtung der Sonne
+  const dx = -Math.cos(hoehe * rad), dy = -Math.sin(hoehe * rad);   // Boden → Sonne
+  ctx.strokeStyle = 'rgba(255,214,10,.55)'; ctx.lineWidth = 1.2;
+  ctx.beginPath();
+  const n = 5;
+  for (let i = 0; i < n; i++) {
+    const t = n === 1 ? 0.5 : i / (n - 1);
+    const bx = von + (bis - von) * t;
+    const laenge = 74;
+    ctx.moveTo(bx + dx * laenge, S.boden + dy * laenge);
+    ctx.lineTo(bx, S.boden);
+  }
+  ctx.stroke();
+  // Pfeilspitzen am Boden
+  ctx.fillStyle = 'rgba(255,214,10,.75)';
+  for (let i = 0; i < n; i++) {
+    const t = n === 1 ? 0.5 : i / (n - 1);
+    const bx = von + (bis - von) * t;
+    ctx.beginPath();
+    ctx.moveTo(bx, S.boden);
+    ctx.lineTo(bx + dx * 8 - dy * 3.2, S.boden + dy * 8 + dx * 3.2);
+    ctx.lineTo(bx + dx * 8 + dy * 3.2, S.boden + dy * 8 - dx * 3.2);
+    ctx.closePath(); ctx.fill();
+  }
+
+  // Winkelbogen am Auftreffpunkt
+  ctx.strokeStyle = 'rgba(255,255,255,.35)'; ctx.lineWidth = .9;
+  ctx.beginPath();
+  ctx.arc(bis, S.boden, 22, -hoehe * rad + Math.PI, Math.PI, true);
+  ctx.stroke();
+  ctx.font = '600 10px -apple-system, sans-serif';
+  ctx.fillStyle = 'rgba(232,238,248,.8)';
+  ctx.textAlign = 'left';
+  ctx.fillText(`${hoehe.toFixed(0)}°`, bis + 5, S.boden - 6);
+
+  /* Mensch als Maßstab — direkt neben den Lichtfleck, nicht an den
+     Bildrand: Getrennt las sich das wie zwei Bilder statt einer Szene.
+     Nach rechts abgefangen, damit er samt Schatten im Bild bleibt. */
+  const px = Math.min(S.rechts - 30, bis + 34);
+  ctx.strokeStyle = 'rgba(232,238,248,.5)'; ctx.lineWidth = 1.3;
+  ctx.beginPath();
+  ctx.arc(px, S.boden - 21, 3.2, 0, 7); ctx.stroke();
+  ctx.beginPath();
+  ctx.moveTo(px, S.boden - 18); ctx.lineTo(px, S.boden - 7);
+  ctx.moveTo(px - 4, S.boden - 14); ctx.lineTo(px + 4, S.boden - 14);
+  ctx.moveTo(px, S.boden - 7); ctx.lineTo(px - 3.5, S.boden);
+  ctx.moveTo(px, S.boden - 7); ctx.lineTo(px + 3.5, S.boden);
+  ctx.stroke();
+  // Schatten des Menschen — gleicher Winkel wie die Strahlen
+  const schatten = Math.min(21 / Math.tan(hoehe * rad), S.rechts - px - 4);
+  ctx.strokeStyle = 'rgba(150,170,200,.7)'; ctx.lineWidth = 3;
+  ctx.lineCap = 'round';
+  ctx.beginPath();
+  ctx.moveTo(px, S.boden);
+  ctx.lineTo(px + schatten, S.boden);          // Licht kommt links → Schatten rechts
+  ctx.stroke();
+  ctx.lineCap = 'butt';
+
+  if (el) {
+    const kraft = Math.sin(hoehe * rad);
+    const flaeche = 1 / kraft;
+    /* Eine Zeile statt zwei Absätzen: Die Karte war mit dem Strahlenbild
+       wieder deutlich länger geworden, und der Jahresvergleich gehört in
+       den Erklärtext unten, nicht über jedes Bild. */
+    el.innerHTML = `<b>${hoehe.toFixed(0)}° hoch</b> — 1 m² Licht auf <b>${dez(flaeche)} m²</b>`
+      + ` Boden, also <b>${Math.round(kraft * 100)} %</b> der Kraft von senkrechtem Licht`;
+  }
+}
+
 /* ── Die Weltraum-Ansicht: die Erde AUF ihrer Bahn ──────────
    Florian: „dass man sieht, wo die Erde gerade im Weltall bei der Sonne
    ist". Sonne in der Mitte, die Bahn als flache Ellipse, die Erde wandert
@@ -5337,6 +5477,7 @@ function globusZeichnen() {
     globusRaf = false;
     const zeit = globusZeit ?? Date.now();
     globusMalen(zeit);
+    strahlMalen(zeit);
     bahnMalen(zeit);
     globusText(zeit, globusLage(zeit));
   });
@@ -5346,6 +5487,7 @@ function renderGlobus() {
   if (!$('#globus') || !place) return;
   const zeit = globusZeit ?? Date.now();
   globusMalen(zeit);
+  strahlMalen(zeit);
   bahnMalen(zeit);
   globusText(zeit, globusLage(zeit));
   globusBinden();
