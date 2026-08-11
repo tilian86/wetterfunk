@@ -4,7 +4,7 @@
 
 // Bei jeder Auslieferung hochzählen — sonst behalten Geräte die alte
 // Programmhülle im Cache und sehen Korrekturen nicht.
-const VERSION = 'wetterfunk-v166';
+const VERSION = 'wetterfunk-v168';
 const SHELL = [
   './',
   './index.html',

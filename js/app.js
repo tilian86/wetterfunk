@@ -4821,19 +4821,22 @@ function globusLage(zeit) {
                 vMul(N, Math.sin(ph)));
   };
 
-  /* Kamera in festem Winkel zur Sonne, damit man immer die Tagseite mit
-     der Grenze sieht — stünde sie fest im Raum, schaute man im Winter auf
-     die Nachtseite. Der Bildschirm-Hoch ist die Bahnebenen-Normale, sonst
-     stünde die Achse immer senkrecht und die Neigung wäre unsichtbar. */
-  /* 55° statt 42°: Bei knapperem Winkel füllte die Tagseite fast die ganze
-     Scheibe, und die Grenze klebte am Rand. So bleibt immer eine sichtbare
-     Nachtsichel — und darum geht es hier. */
-  const dreh = 55 * rad;
-  const C0 = [S[0] * Math.cos(dreh) - S[1] * Math.sin(dreh),
-              S[0] * Math.sin(dreh) + S[1] * Math.cos(dreh), S[2]];
-  const kam = vNorm([C0[0], C0[1], C0[2] + 0.34]);
-  const rechts = vNorm(vKreuz([0, 0, 1], kam));
-  const hoch = vKreuz(kam, rechts);
+  /* Kamera FEST IM RAUM, mit exakt der Blickrichtung der Bahnansicht
+     darunter (Azimut −0,6, Höhe asin(0,36)). Vorher folgte sie der Sonne —
+     dann stand die Sonne oben immer links, während sie unten je nach
+     Monat woanders lag; Florian: „sonst ist die Achse ja verkehrt rum".
+     Jetzt wandert die Sonne in beiden Ansichten synchron um die Erde, und
+     die Achse steht in beiden fest — so, wie es im Weltall auch ist. Der
+     Preis: Je nach Jahreszeit sieht man mehr oder weniger Nachtseite.
+     Das ist kein Fehler, sondern der Blickwinkel. */
+  const blick = -0.6, sinH = 0.36, cosH = Math.sqrt(1 - sinH * sinH);
+  const rechts = [Math.cos(blick), -Math.sin(blick), 0];
+  /* Bild-hoch = die Weltrichtung, die auf dem Schirm nach oben führt. Mit
+     Minuszeichen davor war sie gespiegelt — die Sonne stand dann exakt auf
+     der FALSCHEN Seite (Januar: 114° statt −114°), was genau der Fehler
+     war, den der Umbau beheben sollte. */
+  const hoch = vNorm([Math.sin(blick) * sinH, Math.cos(blick) * sinH, cosH]);
+  const kam = vNorm(vKreuz(rechts, hoch));
 
   return { N, S, punkt, kam, rechts, hoch, e1, e2, theta,
            sichtbar: (p) => vDot(p, kam) > 0,
@@ -5093,8 +5096,12 @@ function globusMalen(zeit) {
     ctx.strokeStyle = '#0b1220'; ctx.lineWidth = 1.5; ctx.stroke();
     ctx.font = '600 10px -apple-system, sans-serif';
     ctx.fillStyle = 'rgba(232,238,248,.85)';
+    /* Steht der Ort nahe der Sonnenscheibe, weicht sein Name nach unten
+       aus — sonst schreibt „Tübingen" mitten in die Sonne. */
+    const nahSonne = (ox - sonneP[0]) ** 2 + (oy - sonneP[1]) ** 2 < 55 ** 2;
     ctx.textAlign = ox > w - 74 ? 'right' : 'left';
-    ctx.fillText(place.name || 'dein Ort', ox + (ox > w - 74 ? -9 : 9), oy - 7);
+    ctx.fillText(place.name || 'dein Ort',
+      ox + (ox > w - 74 ? -9 : 9), oy + (nahSonne ? 16 : -7));
   }
 
   // Erdachse mit Polpunkt
