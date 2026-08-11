@@ -5068,7 +5068,10 @@ function globusBinden() {
    Für die abgelesenen ZAHLEN wird dann doch sunEvents gefragt — aber nur
    für den einen Tag unter dem Finger. */
 const EKLIPTIK = 23.44;
-const JAHR = { w: 360, h: 208, links: 22, rechts: 20, oben: 8, unten: 176 };
+/* Höher als vorher (206 statt 168 Einheiten für 24 Stunden): Bei sieben
+   Pixeln je Stunde lagen Aufgang und Untergang zu dicht beieinander, um
+   den Verlauf abzulesen. */
+const JAHR = { w: 360, h: 246, links: 24, rechts: 20, oben: 8, unten: 214 };
 let jahrDaten = null;          // { schluessel, tage: [...] }
 
 /** Ortszeit-Stunde eines UTC-Zeitpunkts in der Zeitzone des Ortes.
@@ -5174,8 +5177,12 @@ function renderJahrBand() {
 
   let flaechen = `<rect x="${J.links}" y="${J.oben}" width="${J.w - J.links - J.rechts}"
     height="${J.unten - J.oben}" fill="#141d16"/>`;
-  for (const [name, farbe] of [['astro', '#1b3a6b'], ['naut', '#26548f'],
-                               ['blau', '#3f7fd4'], ['gold', '#ffb347'], ['tag', '#ffd60a']]) {
+  /* Vorher lagen hier drei Blautöne übereinander — nebeneinander waren sie
+     nicht mehr auseinanderzuhalten und ergaben nur Matsch. Die nautische
+     Stufe ist raus; übrig bleiben Dämmerung, blaue Stunde, goldene Stunde,
+     Tag. Vier Stufen kann das Auge trennen, sechs nicht. */
+  for (const [name, farbe] of [['astro', '#1e3f74'],
+                               ['blau', '#4a8ede'], ['gold', '#ffb347'], ['tag', '#ffd60a']]) {
     const oben = [], unten = [];
     for (const g of tage) {
       const v = g.z[name];
@@ -5188,19 +5195,40 @@ function renderJahrBand() {
       unten.reverse().join(' L')} Z" fill="${farbe}"/>`;
   }
 
+  /* Alle drei Stunden eine Linie statt alle sechs: Wer wissen will, wann
+     die Sonne im Oktober untergeht, musste vorher zwischen 18 und 24 raten. */
   let gitter = '';
-  for (const h of [0, 6, 12, 18, 24]) {
-    gitter += `<line class="jb-linie" x1="${J.links}" y1="${Y(h)}" x2="${J.w - J.rechts}" y2="${Y(h)}"/>
-      <text class="jb-achse" x="${J.links - 3}" y="${(Y(h) + 2.6).toFixed(1)}" text-anchor="end">${h}</text>`;
+  for (let h = 0; h <= 24; h += 3) {
+    const stark = h % 6 === 0;
+    gitter += `<line class="${stark ? 'jb-linie' : 'jb-linie-fein'}" x1="${J.links}"
+        y1="${Y(h).toFixed(1)}" x2="${J.w - J.rechts}" y2="${Y(h).toFixed(1)}"/>
+      <text class="jb-achse" x="${J.links - 3}" y="${(Y(h) + 2.6).toFixed(1)}"
+        text-anchor="end">${h}</text>`;
   }
-  const kurz = ['J', 'F', 'M', 'A', 'M', 'J', 'J', 'A', 'S', 'O', 'N', 'D'];
-  kurz.forEach((m, i) => {
+  /* Drei Buchstaben statt einem: „J F M A M J J A S O N D" hatte zweimal J
+     und zweimal M — man wusste nicht, wo man ist. Beschriftet wird jeder
+     zweite Monat, die Striche stehen weiter bei jedem. */
+  const namen = ['Jan', 'Feb', 'Mär', 'Apr', 'Mai', 'Jun',
+                 'Jul', 'Aug', 'Sep', 'Okt', 'Nov', 'Dez'];
+  namen.forEach((m, i) => {
     const t0 = Math.round(i / 12 * 365);
-    gitter += `<text class="jb-achse" x="${X(Math.min(364, t0 + 15)).toFixed(1)}"
-      y="${J.unten + 11}" text-anchor="middle">${m}</text>`;
+    if (i % 2 === 0) {
+      gitter += `<text class="jb-achse" x="${X(Math.min(364, t0 + 15)).toFixed(1)}"
+        y="${J.unten + 11}" text-anchor="middle">${m}</text>`;
+    }
     if (i) gitter += `<line class="jb-monat" x1="${X(t0).toFixed(1)}" y1="${J.oben}"
       x2="${X(t0).toFixed(1)}" y2="${J.unten}"/>`;
   });
+
+  /* Die eigentliche Kurve: Aufgang und Untergang als gezogene Linien. Als
+     bloße Kante zwischen zwei Farbflächen war der Verlauf weich und schwer
+     zu verfolgen — genau das war Florians Einwand. */
+  let kurven = '';
+  for (const rand of [0, 1]) {
+    const pts = tage.filter(g => g.z.gold)
+      .map(g => `${X(g.t).toFixed(1)},${Y(g.z.gold[rand]).toFixed(1)}`);
+    if (pts.length > 1) kurven += `<path class="jb-kurve" fill="none" d="M${pts.join(' L')}"/>`;
+  }
 
   const eck = jahrEckpunkte(tage);
   let marken = '';
@@ -5210,9 +5238,10 @@ function renderJahrBand() {
       <text class="jb-markentext" x="${X(i).toFixed(1)}" y="${J.unten + 22}"
         text-anchor="middle">${txt}</text>`;
   };
-  setzeMarke(eck.iMax, 'längster');
+  setzeMarke(eck.iMax, 'längster Tag');
   setzeMarke(eck.iMin, 'kürzester');
-  eck.kreuz.forEach(i => setzeMarke(i, 'gleich'));
+  // „gleich" verstand niemand — hier steht, was gleich ist
+  eck.kreuz.forEach(i => setzeMarke(i, 'Tag = Nacht'));
 
   const jetzt = new Date();
   const heuteT = Math.max(0, Math.min(364,
@@ -5228,8 +5257,8 @@ function renderJahrBand() {
   ziel.innerHTML = `
     <svg viewBox="0 0 ${J.w} ${J.h}" class="jb-svg" role="img"
          aria-label="Helligkeit über das ganze Jahr: waagerecht die Tage, senkrecht die Stunden">
-      ${flaechen}${gitter}${marken}${kreuzJetzt}
-      <g id="jahrGriff" hidden>
+      ${flaechen}${gitter}${kurven}${marken}${kreuzJetzt}
+      <g id="jahrGriff" class="jb-griff" hidden>
         <line class="jb-griff-linie" x1="0" y1="${J.oben}" x2="0" y2="${J.unten}"/>
       </g>
       <rect id="jahrFeld" x="0" y="0" width="${J.w}" height="${J.h}" fill="transparent"/>
@@ -5237,8 +5266,8 @@ function renderJahrBand() {
     <p class="jb-legende">
       <i style="background:#ffd60a"></i>Tag
       <i style="background:#ffb347"></i>golden
-      <i style="background:#3f7fd4"></i>blau
-      <i style="background:#1b3a6b"></i>Dämmerung
+      <i style="background:#4a8ede"></i>blau
+      <i style="background:#1e3f74"></i>Dämmerung
       <i style="background:#141d16;border:1px solid rgba(255,255,255,.18)"></i>Nacht
     </p>
     ${jahrBahnBild()}
