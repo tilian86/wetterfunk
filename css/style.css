@@ -2326,6 +2326,11 @@ body.ar-offen { overflow: hidden; }
 .gl-jetzt[hidden] { display: none; }
 /* Eigene Regel mit höherem Gewicht: `.gl-canvas { aspect-ratio: 1 }` gilt
    für beide Flächen und machte die Bahn quadratisch — sie ist aber flach. */
+.strahl-wrap { width: 100%; max-width: 320px; margin: 0 auto; }
+.strahl-canvas { width: 100%; aspect-ratio: 320 / 96; display: block; }
+/* Eigene, engere Zeile: Sie steht direkt über dem Strahlenbild und darf
+   nicht die volle Höhe der Globus-Leiste beanspruchen. */
+.strahl-text { min-height: 0; margin: 10px 0 2px; font-size: 12px; }
 .bahn-wrap { width: 100%; max-width: 320px; margin: 6px auto 0; touch-action: none; }
 .bahn-wrap .bahn-canvas { aspect-ratio: 320 / 150; border-radius: 12px; }
 .gl-canvas { width: 100%; aspect-ratio: 1; display: block; border-radius: 12px; }
