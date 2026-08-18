@@ -191,10 +191,15 @@ const Radar = (() => {
   }
 
   /** Grau und Reichweitenband entfernen, Rest auf die eigene Skala umfärben. */
+  let dwdRoh = null;   // Arbeitsfläche in Zellauflösung
   function dwdFiltern(bild) {
-    dwdCtx.clearRect(0, 0, DWD_PX, DWD_PX);
-    dwdCtx.drawImage(bild, 0, 0, DWD_PX, DWD_PX);
-    const img = dwdCtx.getImageData(0, 0, DWD_PX, DWD_PX);
+    const bw = bild.naturalWidth || bild.width;
+    const bh = bild.naturalHeight || bild.height;
+    if (!dwdRoh) dwdRoh = document.createElement('canvas');
+    dwdRoh.width = bw; dwdRoh.height = bh;
+    const rohCtx = dwdRoh.getContext('2d', { willReadFrequently: true });
+    rohCtx.drawImage(bild, 0, 0);
+    const img = rohCtx.getImageData(0, 0, bw, bh);
     const px = img.data;
     let farbig = 0;
 
@@ -212,7 +217,15 @@ const Radar = (() => {
       px[i] = nr; px[i + 1] = ng; px[i + 2] = nb; px[i + 3] = na;
       farbig++;
     }
-    dwdCtx.putImageData(img, 0, 0);
+    rohCtx.putImageData(img, 0, 0);
+    /* Erst nach dem Filtern vergrößern: Auf dem kleinen Bild sind die
+       Zellen einzelne Pixel, und das weiche Hochrechnen erzeugt die
+       fließenden Übergänge. Vorher zu vergrößern hieße, harte Kacheln
+       nur unscharf zu machen. */
+    dwdCtx.clearRect(0, 0, DWD_PX, DWD_PX);
+    dwdCtx.imageSmoothingEnabled = true;
+    dwdCtx.imageSmoothingQuality = 'high';
+    dwdCtx.drawImage(dwdRoh, 0, 0, DWD_PX, DWD_PX);
     return farbig;
   }
 
@@ -240,7 +253,16 @@ const Radar = (() => {
     const proxy = (localStorage.getItem('wf.proxy') || '').replace(/^"|"$/g, '')
       || 'https://wetterfunk.florian-s-thiel.workers.dev';
     const zeitTeil = zeitMs ? `&time=${encodeURIComponent(rvStempel(zeitMs))}` : '';
-    const url = `${proxy.replace(/\/+$/, '')}/dwdradar?bbox=${bbox}&px=${DWD_PX}${zeitTeil}`;
+    /* EIN Pixel je Radarzelle (1 km) statt fester 768: Vorher malte der
+       DWD-Server jede Zelle als harte 7-Pixel-Kachel, und beim Vergrößern
+       wurden daraus grobe Quadrate — Florians „zu grob aufgelöst". Holt
+       man das Bild in Zellauflösung und vergrößert SELBST mit Glättung,
+       rechnet der Browser zwischen den Zellen weich über — wie bei den
+       großen Wetter-Apps. Mehr als die 1-km-Daten steckt auch dort nicht
+       drin; der Unterschied ist die Überblendung. */
+    const kmBreite = Math.round((+r(x1) - +r(x0)) / 1000);
+    const anfragePx = Math.max(64, Math.min(DWD_PX, kmBreite));
+    const url = `${proxy.replace(/\/+$/, '')}/dwdradar?bbox=${bbox}&px=${anfragePx}${zeitTeil}`;
     const speicherKey = `${bbox}|${zeitMs ? rvRaster(zeitMs) : 'jetzt'}`;
 
     // Ecken passend zur gerundeten Anfrage, sonst läge das Bild leicht versetzt

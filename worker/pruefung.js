@@ -204,7 +204,7 @@ export function meldungsBilanz(journal) {
     if (!je.has(e.o)) je.set(e.o, []);
     je.get(e.o).push(e);
   }
-  const b = { phasen: 0, gemeldet: 0, verpasst: 0, ankuendigungen: 0,
+  const b = { phasen: 0, gemeldet: 0, verpasst: 0, leise: 0, ankuendigungen: 0,
               treffer: 0, fehlalarm: 0, unbewertet: 0,
               unterdrueckt: 0, unterdruecktFalsch: 0 };
   for (const evs of je.values()) {
@@ -226,7 +226,17 @@ export function meldungsBilanz(journal) {
     for (const ph of phasen) {
       // Ankündigung bis 150 Min vorher oder Meldung während der Phase
       const ok = meld.some(m => m.t >= ph.von - 150 * 60000 && m.t <= ph.bis);
-      ok ? b.gemeldet++ : b.verpasst++;
+      if (ok) { b.gemeldet++; continue; }
+      /* Absichtliche Stille ist kein Versäumnis: Tropfen unter 0,6 mm/h
+         werden bewusst nicht gemeldet. Seit die Beobachtungen die Menge
+         tragen, lässt sich das unterscheiden — Phasen, deren stärkste
+         gemessene Beobachtung Tropfen war, zählen als „leise", nicht als
+         verpasst. Ohne Mengenangabe (ältere Einträge) bleibt es beim
+         strengeren Urteil. */
+      const mengen = obs.filter(x => x.nass && x.t >= ph.von && x.t <= ph.bis
+                                     && typeof x.mm === 'number').map(x => x.mm);
+      if (mengen.length && Math.max(...mengen) < 0.6) b.leise++;
+      else b.verpasst++;
     }
     for (const m of meld.filter(x => x.typ === 'start')) {
       b.ankuendigungen++;
@@ -315,7 +325,8 @@ export async function pruefVerlauf(env, tage = 30) {
       if (!m.length) return null;
       const summe = (f) => m.reduce((a, x) => a + (x[f] || 0), 0);
       return { tage: m.length, phasen: summe('phasen'), gemeldet: summe('gemeldet'),
-               verpasst: summe('verpasst'), ankuendigungen: summe('ankuendigungen'),
+               verpasst: summe('verpasst'), leise: summe('leise'),
+               ankuendigungen: summe('ankuendigungen'),
                treffer: summe('treffer'), fehlalarm: summe('fehlalarm'),
                unbewertet: summe('unbewertet'), unterdrueckt: summe('unterdrueckt'),
                unterdruecktFalsch: summe('unterdruecktFalsch') };
