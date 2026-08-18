@@ -873,6 +873,17 @@ select#bfModel {
 .h-prob { font-size: 10px; color: var(--ink-faint); height: 12px; }
 .h-rain.on .h-prob { color: var(--accent); }
 .h-mm { font-size: 9.5px; color: var(--ink-faint); height: 12px; }
+/* Wind je Stunde: Pfeil (wohin der Wind weht) + km/h. Zurückhaltend grau,
+   damit die Leiste nicht unruhig wird; erst bei Böen ab 45 km/h springt
+   die Farbe an — dann ist der Wind eine Nachricht. */
+.h-wind {
+  display: flex; align-items: center; justify-content: center; gap: 2.5px;
+  font-size: 9.5px; color: var(--ink-faint); height: 13px; margin-top: 1px;
+  font-variant-numeric: tabular-nums;
+}
+.h-wind i { font-style: normal; display: inline-block; font-size: 10px; line-height: 1; }
+.h-wind b { font-weight: 700; }
+.h-wind.on { color: var(--warn); }
 
 .hcol-sun { width: 58px; opacity: .82; }
 .h-sunlabel { font-size: 9.5px; color: var(--ink-faint); }

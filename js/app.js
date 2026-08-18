@@ -365,7 +365,7 @@ function loadForecast(lat, lon) {
     minutely_15: 'precipitation,weather_code,temperature_2m,wind_speed_10m,is_day',
     hourly: [
       'temperature_2m', 'apparent_temperature', 'precipitation_probability', 'precipitation',
-      'weather_code', 'wind_speed_10m', 'wind_gusts_10m', 'uv_index', 'is_day',
+      'weather_code', 'wind_speed_10m', 'wind_direction_10m', 'wind_gusts_10m', 'uv_index', 'is_day',
       'relative_humidity_2m', 'dew_point_2m', 'visibility', 'cloud_cover',
       'sunshine_duration'
     ].join(','),
@@ -1060,6 +1060,20 @@ function renderHourly() {
         <span class="h-prob">${prob >= 15 ? prob + '%' : ''}</span>
       </span>
       ${mm >= 0.1 ? `<span class="h-mm">${dez(mm)}</span>` : '<span class="h-mm"></span>'}
+      ${(() => {
+        /* Wind je Stunde, wie bei den großen Apps — Pfeil zeigt, WOHIN der
+           Wind weht (Richtung + 180°, die Daten nennen die Herkunft).
+           Böig wird farblich markiert, ab 60 km/h Böen steht deren Zahl
+           dabei: Dann ist die Böe die Auskunft, nicht der Mittelwind. */
+        const w = Math.round(h.wind_speed_10m?.[i] ?? 0);
+        const dirRoh = h.wind_direction_10m?.[i];
+        const boe = Math.round(h.wind_gusts_10m?.[i] ?? 0);
+        if (dirRoh == null) return '<span class="h-wind"></span>';
+        const stark = boe >= 45;
+        return `<span class="h-wind${stark ? ' on' : ''}">
+          <i style="transform:rotate(${Math.round(dirRoh + 180)}deg)">↑</i>${
+          boe >= 60 ? `<b>${boe}</b>` : w}</span>`;
+      })()}
     </div>`;
   }).join('');
 

@@ -206,7 +206,10 @@ export default {
        Bildausschnitte kommen fünf Minuten lang aus dem Zwischenspeicher. */
     if (url.pathname === '/dwdradar') {
       const bbox = url.searchParams.get('bbox') || '';
-      const px = Math.min(1024, Math.max(256, +url.searchParams.get('px') || 512));
+      /* Untergrenze 64 statt 256: Die App fragt jetzt EIN Pixel je
+         Radarzelle an (1 km) und glättet selbst beim Vergrößern — bei
+         einem 30-km-Ausschnitt sind das 30 Pixel, nicht 256. */
+      const px = Math.min(1024, Math.max(64, +url.searchParams.get('px') || 512));
       if (!/^-?\d+(\.\d+)?(,-?\d+(\.\d+)?){3}$/.test(bbox)) {
         return json({ error: 'bbox fehlt oder ist ungültig' }, 400, origin);
       }
@@ -673,7 +676,8 @@ async function regenPruefen(env) {
               radarAusgegeben += 2;
               const vp = await radarVorposten(eintrag.lat, eintrag.lon);
               if (vp) {
-                merke(ortKey, 'obs', { nass: vp.nun >= RADAR_NASS });
+                merke(ortKey, 'obs', { nass: vp.nun >= RADAR_NASS,
+                                       mm: Math.round(vp.nun * 100) / 100 });
                 obsErfasst = true;
                 radarNoetig = vp.nun >= RADAR_NASS || (vp.gleich ?? 0) >= RADAR_NAHE;
               }
@@ -750,7 +754,8 @@ async function regenPruefen(env) {
             zeiten.map(t => radarWert(eintrag.lat, eintrag.lon, t)));
           if (werte.every(v => typeof v === 'number')) {
             if (meldung.art !== 'start') {
-              merke(ortKey, 'obs', { nass: werte[0] >= RADAR_NASS });
+              merke(ortKey, 'obs', { nass: werte[0] >= RADAR_NASS,
+                                     mm: Math.round(werte[0] * 100) / 100 });
             }
             if (!werte.some(v => v >= RADAR_NASS)) {
               /* Kein Merker, kein zuletzt-Stempel: Der nächste Durchgang
