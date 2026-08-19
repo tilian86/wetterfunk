@@ -2837,6 +2837,18 @@ function syncMapAt(ziel) {
      das RV-Komposit des DWD: 1 km Auflösung, Fünf-Minuten-Takt, gemessen
      und gerechnet aus einem Guss. Genauer geht es in Deutschland nicht. */
   if (Radar.rvMoeglich?.(zielMs) && Radar.zeigeNowcast?.(zielMs)) {
+    /* Im DWD-Fenster kommt der Regen vom Radar — die übrigen Flächen
+       (Wolken, Böen, Gewitterneigung) aber weiterhin aus der Vorhersage.
+       Vorher wurde die Flächenebene hier KOMPLETT ausgeblendet: Beim
+       Übergang vom Fünf-Minuten-Takt in die Stundenvorhersage sprang die
+       Karte deshalb von hell auf dunkelgrau, weil die Wolken schlagartig
+       wieder da waren. Jetzt bleiben sie durchgehend liegen. */
+    const flaechen = new Set([...activeLayers()]
+      .filter(x => !SYMBOL_EBENEN.has(x) && x !== 'regen'));
+    const hi = flaechen.size ? Forecast.indexFor(zielMs) : -1;
+    if (hi >= 0) Radar.showForecast(hi, flaechen);
+    else Radar.fcVerbergen?.();
+
     const zeitWort = mapZeitWort(ziel);
     setMapMode(zeitWort, vorlauf > 2 ? 'DWD-Radarvorhersage' : 'DWD-Radarmessung', 'radar');
     if (!spielTimer) Radar.updateLabels();

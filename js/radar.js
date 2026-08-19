@@ -1364,8 +1364,11 @@ const Radar = (() => {
   function zeigeNowcast(zeitMs) {
     if (!rvMoeglich(zeitMs)) { rvAktiv = false; return false; }
     rvAktiv = true;
-    // Grobe Ebenen ausblenden — der Nowcast ist genauer als beides
-    if (map?.getLayer('fc-layer')) map.setLayoutProperty('fc-layer', 'visibility', 'none');
+    /* Die RainViewer-Bilder ausblenden — der DWD-Nowcast ist genauer.
+       Die Flächenebene (Wolken, Böen, Gewitter) bleibt dagegen liegen:
+       Über sie entscheidet der Aufrufer, weil dort nur der REGEN vom Radar
+       ersetzt wird. Wurde sie hier pauschal versteckt, sprang die Karte
+       am Rand des Fünf-Minuten-Fensters von hell auf dunkelgrau. */
     if (sichtbaresBild >= 0 && map?.getLayer(layerId(sichtbaresBild))) {
       map.setPaintProperty(layerId(sichtbaresBild), 'raster-opacity', 0);
       sichtbaresBild = -1;
