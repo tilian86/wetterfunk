@@ -59,6 +59,73 @@ const WX = (() => {
       <line class="fg2" x1="13" y1="50" x2="51" y2="50"/>
     </g>`;
 
+  /* ── Runde Familie — nach Florians WetterOnline-Screenshots ──
+     Der erste Versuch („kräftig") scheiterte am Ton: graublaue Wolken.
+     Das Zielbild hat WEISSE, bauschige Wolken aus runden Bäuchen, warmes
+     Gelb für Sonne UND Mond, sattes Blau für Tropfen. Genau das hier. */
+  const sonneR = (cx = 32, cy = 30, r = 11) => `
+    <g>${Array.from({ length: 8 }, (_, i) => {
+      const a = (i * Math.PI) / 4 + Math.PI / 8;
+      const x1 = cx + Math.cos(a) * (r + 3), y1 = cy + Math.sin(a) * (r + 3);
+      const x2 = cx + Math.cos(a) * (r + 8.5), y2 = cy + Math.sin(a) * (r + 8.5);
+      return `<line class="kw-strahl" x1="${x1.toFixed(1)}" y1="${y1.toFixed(1)}" x2="${x2.toFixed(1)}" y2="${y2.toFixed(1)}"/>`;
+    }).join('')}<circle class="kw-sonne" cx="${cx}" cy="${cy}" r="${r}"/></g>`;
+
+  const mondR = (cx = 32, cy = 30, r = 12) => `
+    <path class="kw-mond" d="M${cx + r * 0.35} ${cy - r}
+      a${r} ${r} 0 1 0 ${r * 0.72} ${r * 1.5}
+      a${r * 0.82} ${r * 0.82} 0 1 1 ${-r * 0.72} ${-r * 1.5}z"/>`;
+
+  /** Bauschige Wolke aus runden Bäuchen — nicht die flache Linienwolke. */
+  const wolkeR = (cls = 'kw-wolke', dx = 0, dy = 0, sc = 1) => `
+    <g class="${cls}" transform="translate(${dx} ${dy}) scale(${sc})" style="transform-origin:32px 36px">
+      <circle cx="23" cy="34.5" r="9.5"/>
+      <circle cx="34.5" cy="28.5" r="12"/>
+      <circle cx="44.5" cy="35.5" r="8.5"/>
+      <rect x="13.5" y="34" width="39.5" height="11.5" rx="5.75"/>
+    </g>`;
+
+  const tropfenR = (n = 3) => Array.from({ length: n }, (_, i) =>
+    `<line class="kw-tropfen" x1="${23 + i * 9}" y1="49" x2="${20.5 + i * 9}" y2="57"/>`).join('');
+
+  const flockenR = (n = 3) => Array.from({ length: n }, (_, i) => `
+    <g class="kw-flocke" transform="translate(${23 + i * 9} 53)">
+      <line x1="-3.2" y1="0" x2="3.2" y2="0"/>
+      <line x1="-1.6" y1="-2.8" x2="1.6" y2="2.8"/>
+      <line x1="1.6" y1="-2.8" x2="-1.6" y2="2.8"/>
+    </g>`).join('');
+
+  const blitzR = () => `<path class="kw-blitz" d="M34.5 44l-10 14h6.6l-3.2 12 11-15.8h-6.6l4.6-10.2z"/>`;
+
+  const nebelR = () => `
+    <line class="kw-nebel" x1="15" y1="36" x2="49" y2="36"/>
+    <line class="kw-nebel" x1="18" y1="44" x2="46" y2="44"/>
+    <line class="kw-nebel" x1="14" y1="52" x2="50" y2="52"/>`;
+
+  const shapesR = {
+    clear_day:    () => svg(sonneR(), 'rund i-clear-day'),
+    clear_night:  () => svg(mondR(), 'rund i-clear-night'),
+    few_day:      () => svg(sonneR(23, 23, 9) + wolkeR('kw-wolke', 4, 5, .9), 'rund i-few-day'),
+    few_night:    () => svg(mondR(24, 23, 9.5) + wolkeR('kw-wolke', 4, 5, .9), 'rund i-few-night'),
+    part_day:     () => svg(sonneR(20, 21, 8.5) + wolkeR('kw-wolke', 4, 4, .96), 'rund i-part-day'),
+    part_night:   () => svg(mondR(21, 21, 9) + wolkeR('kw-wolke', 4, 4, .96), 'rund i-part-night'),
+    overcast:     () => svg(wolkeR('kw-wolke-hinten', -6, -6, .82) + wolkeR('kw-wolke', 2, 1, 1), 'rund i-overcast'),
+    fog:          () => svg(wolkeR('kw-wolke', 0, -7, .9) + nebelR(), 'rund i-fog'),
+    drizzle:      () => svg(wolkeR('kw-wolke', 0, -4, .98) + tropfenR(2), 'rund i-drizzle'),
+    rain:         () => svg(wolkeR('kw-wolke', 0, -4, .98) + tropfenR(3), 'rund i-rain'),
+    showers:      () => svg(sonneR(19, 19, 7.5) + wolkeR('kw-wolke', 4, 0, .94) + tropfenR(3), 'rund i-showers'),
+    freezing:     () => svg(wolkeR('kw-wolke', 0, -4, .98) + tropfenR(2) + flockenR(1), 'rund i-freezing'),
+    snow:         () => svg(wolkeR('kw-wolke', 0, -4, .98) + flockenR(3), 'rund i-snow'),
+    thunder:      () => svg(wolkeR('kw-gewitterwolke', 0, -6, 1) + blitzR(), 'rund i-thunder'),
+    thunder_hail: () => svg(wolkeR('kw-gewitterwolke', 0, -6, 1) + blitzR() + flockenR(1), 'rund i-thunder-hail')
+  };
+
+  /** Gewählter Stil — roh aus dem Speicher, icons.js lädt vor app.js. */
+  function stil() {
+    try { return JSON.parse(localStorage.getItem('wf.symbole')) === 'rund' ? 'rund' : 'fein'; }
+    catch { return 'fein'; }
+  }
+
   // ── Symbol-Zusammenbau ─────────────────────────────────────
   const shapes = {
     clear_day:    () => svg(sun(), 'i-clear-day'),
@@ -118,7 +185,8 @@ const WX = (() => {
     const key = ['clear', 'few', 'part', 'showers'].includes(base)
       ? (base === 'showers' ? 'showers' : base + (isDay ? '_day' : '_night'))
       : base;
-    return (shapes[key] || shapes.overcast)();
+    const familie = stil() === 'rund' ? shapesR : shapes;
+    return (familie[key] || familie.overcast)();
   }
 
   /** Kurztext für einen WMO-Code. */
@@ -145,5 +213,5 @@ const WX = (() => {
     return 'Regen';
   }
 
-  return { icon, text, mood, precipWord, info };
+  return { icon, text, mood, precipWord, info, stil };
 })();
