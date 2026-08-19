@@ -8716,18 +8716,6 @@ function wire() {
   });
   $('#pushToggle')?.addEventListener('click', pushUmschalten);
 
-  /* Symbolfamilie umschalten: fein (Linien, wie bisher) oder kräftig
-     (gefüllt, WetterOnline-Art). Wirkt sofort auf alle sichtbaren
-     Symbole — der Rest zieht beim nächsten Zeichnen nach. */
-  const stilKnoepfe = $$('.stil-wahl button');
-  const stilZeigen = () => stilKnoepfe.forEach(b =>
-    b.classList.toggle('an', b.dataset.stil === (WX.stil?.() || 'fein')));
-  stilKnoepfe.forEach(b => b.addEventListener('click', () => {
-    store.set('wf.symbole', b.dataset.stil);
-    stilZeigen();
-    try { renderHero(); renderHourly(); renderDaily(); } catch {}
-  }));
-  stilZeigen();
 
   // Häkchen wirken sofort — auch bei bereits laufendem Abo
   PUSH_ARTEN.forEach(([, key, sel]) => {
