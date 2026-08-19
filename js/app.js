@@ -2618,6 +2618,33 @@ function schrittKnoepfe(punkte, k) {
   if (nun) nun.disabled = k === jetztIndex(punkte);
 }
 
+/* Den ganzen Verlauf am Stück holen und dann abspielen. Der DWD braucht
+   je nach Auslastung Sekunden bis eine Minute dafür — deshalb steht der
+   Fortschritt im Knopf, statt dass man ins Leere wartet. */
+let verlaufLaeuft = false;
+async function verlaufLaden() {
+  if (verlaufLaeuft || !Radar.verlaufLaden) return;
+  const knopf = $('#loadLoop');
+  const alt = knopf.textContent;
+  verlaufLaeuft = true;
+  knopf.classList.add('laeuft');
+  knopf.disabled = true;
+  try {
+    await Radar.verlaufLaden((fertig, gesamt) => {
+      knopf.textContent = gesamt ? `${Math.round(fertig / gesamt * 100)} %` : 'lädt…';
+    });
+    knopf.textContent = 'bereit';
+    zurueckAufJetzt();
+    if (!spielTimer) toggleZeitraffer();
+  } catch { knopf.textContent = 'fehlgeschlagen'; }
+  finally {
+    verlaufLaeuft = false;
+    knopf.classList.remove('laeuft');
+    knopf.disabled = false;
+    setTimeout(() => { knopf.textContent = alt; }, 2500);
+  }
+}
+
 /** Zurück auf jetzt — nach dem Vorspulen der schnellste Weg zurück. */
 function zurueckAufJetzt() {
   const sl = $('#scrubSlider');
@@ -8744,6 +8771,7 @@ function wire() {
   $('#stepBack')?.addEventListener('click', () => schrittGehen(-1));
   $('#stepFwd')?.addEventListener('click', () => schrittGehen(1));
   $('#toNow')?.addEventListener('click', zurueckAufJetzt);
+  $('#loadLoop')?.addEventListener('click', verlaufLaden);
   /* Pfeiltasten tun dasselbe — am Rechner ist das der schnellste Weg,
      Schritt für Schritt durch die Zugbahn zu gehen. */
   document.addEventListener('keydown', (e) => {
@@ -9000,6 +9028,13 @@ async function boot() {
       aktiveEbenen: activeLayers,
       onPointTap: showPointDetail,
       sharp: $('#mapSharp'),
+      /* Rückmeldung beim Laden: Solange Kacheln unterwegs sind, pulst die
+         Schrittweite. Ohne das wirkte ein Klick auf „weiter" wie „nichts
+         passiert", obwohl der DWD noch antwortet. */
+      onLaden: (offen) => {
+        const t = $('#stepTxt');
+        if (t) t.classList.toggle('laedt', offen > 0);
+      },
       mode: $('#mapMode'),
       onLocate: () => Radar.setCenter(place.lat, place.lon)
     });

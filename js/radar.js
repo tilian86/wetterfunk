@@ -330,6 +330,14 @@ const Radar = (() => {
   const KACHEL_RAND = 4;                 // Zellen Überlappung (Kernradius ist 3)
   const KACHEL_MIN_Z = 5, KACHEL_MAX_Z = 9;
   let protoDa = false;
+  /* Wie viele Kacheln gerade unterwegs sind. Ohne diese Zahl sah man beim
+     Weiterklicken nichts passieren — die Wolken standen still, und man
+     konnte nicht unterscheiden, ob nichts kommt oder noch geladen wird. */
+  let offeneKacheln = 0;
+  function ladeStand(d) {
+    offeneKacheln = Math.max(0, offeneKacheln + d);
+    els.onLaden?.(offeneKacheln);
+  }
 
   /** Felder der zuletzt gezeichneten Jetzt-Kacheln — daraus liest
       ortsWerte() die mm/h an den Ortsnamen. */
@@ -448,9 +456,12 @@ const Radar = (() => {
       const m = /^wfradar:\/\/(\d+)\/(\d+)\/(\d+)\/(.+)$/.exec(params.url);
       if (!m) throw new Error('Kacheladresse unlesbar');
       const [, z, x, y, stempel] = m;
-      const bild = await kachelBauen(+z, +x, +y, decodeURIComponent(stempel),
-        abbruch?.signal);
-      return { data: bild };
+      ladeStand(1);
+      try {
+        const bild = await kachelBauen(+z, +x, +y, decodeURIComponent(stempel),
+          abbruch?.signal);
+        return { data: bild };
+      } finally { ladeStand(-1); }
     });
   }
 
@@ -493,6 +504,56 @@ const Radar = (() => {
     }
     updateSharp();
     planeOrtswerte();
+    nachbarnVorladen(zeitMs);
+  }
+
+  /* Die nächsten zwei Schritte im Hintergrund holen. Wer einmal auf „weiter"
+     klickt, klickt meist gleich nochmal — dann liegt das Bild schon bereit
+     und die Wolken springen sofort weiter. */
+  let vorladeTimer = null;
+  function nachbarnVorladen(zeitMs) {
+    clearTimeout(vorladeTimer);
+    vorladeTimer = setTimeout(() => {
+      const basis = zeitMs ?? Date.now();
+      const kacheln = sichtbareKacheln().slice(0, 4);
+      const ziele = [];
+      for (const d of [1, 2]) {
+        const t = basis + d * RV_SCHRITT;
+        if (!rvMoeglich(t)) continue;
+        for (const k of kacheln) ziele.push([k, dwdStempel(t)]);
+      }
+      let i = 0;
+      const weiter = () => {
+        if (i >= ziele.length) return;
+        const [k, st] = ziele[i++];
+        warmMachen(k, st).finally(() => setTimeout(weiter, 250));
+      };
+      weiter();
+    }, 900);
+  }
+
+  /* Den ganzen Vorhersageverlauf am Stück holen, damit das Abspielen
+     flüssig läuft. Vier gleichzeitig — mehr verträgt der DWD nicht gut,
+     weniger dauert unnötig lang. Meldet Fortschritt, weil das je nach
+     Auslastung des DWD zwischen wenigen Sekunden und einer Minute dauert. */
+  async function verlaufLaden(melden) {
+    if (!ready || !map) return { fertig: 0, gesamt: 0 };
+    const kacheln = sichtbareKacheln().slice(0, 6);
+    const zeiten = rvZeiten().filter(t => t >= Date.now() - RV_SCHRITT);
+    const auftrag = [];
+    for (const t of zeiten) for (const k of kacheln) auftrag.push([k, dwdStempel(t)]);
+    let fertig = 0;
+    melden?.(0, auftrag.length);
+    let i = 0;
+    const arbeiter = async () => {
+      while (i < auftrag.length) {
+        const [k, st] = auftrag[i++];
+        await warmMachen(k, st);
+        melden?.(++fertig, auftrag.length);
+      }
+    };
+    await Promise.all([arbeiter(), arbeiter(), arbeiter(), arbeiter()]);
+    return { fertig, gesamt: auftrag.length };
   }
 
   /* Der alte Name bleibt, damit die Aufrufer unverändert bleiben. */
@@ -1398,6 +1459,8 @@ const Radar = (() => {
               benachbarte Kacheln am Stoß denselben Wert ergeben — die
               Kartenvorschau pausiert ihre Zeichenschleife und kann das
               nicht zeigen. */
+           verlaufLaden,
+           get kachelnOffen() { return offeneKacheln; },
            kachelPruefen: (z, x, y, stempel = null) => kachelBauen(z, x, y, dwdStempel(stempel)),
            kachelFeld: (z, x, y) => kachelFelder.get(`${z}/${x}/${y}`),
            get nowcastAktiv() { return rvAktiv; },
