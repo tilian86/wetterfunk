@@ -249,13 +249,19 @@ const Radar = (() => {
         }
       }
     };
-    durchgang(); durchgang();       // ≈ Gauß mit gut anderthalb Zellen Radius
+    /* EIN Durchgang, nicht zwei: Zwei wuschen das Feld zu blassen
+       Pastellwolken aus — Florian: „immer noch nicht gut". Ein Durchgang
+       glättet die Kanten, lässt aber Kerne und Struktur stehen. Dazu wird
+       die Deckkraft nach dem Verwischen angehoben (×1,35): Das Verwischen
+       dünnt schmale Bänder aus, der Hub gibt dem Feld seinen Körper
+       zurück — weicher Rand bleibt, das Innere steht satt. */
+    durchgang();
     for (let i = 0; i < w * h; i++) {
       const a = a4[i * 4 + 3];
       px[i * 4]     = a > 0.003 ? Math.min(255, Math.round(a4[i * 4]     / a)) : 0;
       px[i * 4 + 1] = a > 0.003 ? Math.min(255, Math.round(a4[i * 4 + 1] / a)) : 0;
       px[i * 4 + 2] = a > 0.003 ? Math.min(255, Math.round(a4[i * 4 + 2] / a)) : 0;
-      px[i * 4 + 3] = Math.round(a * 255);
+      px[i * 4 + 3] = Math.round(Math.min(1, a * 1.35) * 255);
     }
   }
 
