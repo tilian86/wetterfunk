@@ -2509,6 +2509,7 @@ function renderScrub() {
       : `${tag}, ${hhmm(t)} Uhr${p.fein ? ` <em>in ${minuten} Min.</em>` : ''}`;
 
     sl.parentElement?.classList.toggle('is-past', k < nullpunkt);
+    schrittKnoepfe(punkte, k);
 
     // Feinbereich: echte Viertelstundenwerte, sonst Stundenwerte.
     // Was es nur stündlich gibt, kommt aus der nächstgelegenen Stunde.
@@ -2591,6 +2592,40 @@ function spielEnde(punkte) {
   const grenze = Date.now() + 3 * 3600e3;
   const k = punkte.findIndex(p => p.t.getTime() > grenze);
   return k > 0 ? k : punkte.length - 1;
+}
+
+/* ── Schrittknöpfe ────────────────────────────────────────
+   Ein Klick rückt genau einen Punkt der Zeitleiste weiter. Im DWD-Fenster
+   sind das fünf Minuten — damit lässt sich Schritt für Schritt ablesen,
+   wann ein Regengebiet den eigenen Ort erreicht. Weiter draußen wird die
+   Leiste gröber; die Beschriftung zeigt deshalb die tatsächliche
+   Schrittweite und wird bei jeder Bewegung nachgeführt. */
+function schrittKnoepfe(punkte, k) {
+  const zurueck = $('#stepBack'), vor = $('#stepFwd'), txt = $('#stepTxt');
+  if (!zurueck || !vor || !txt) return;
+  zurueck.disabled = k <= 0;
+  vor.disabled = k >= punkte.length - 1;
+  /* Schrittweite aus dem NÄCHSTEN Punkt in Fahrtrichtung, sonst stünde am
+     Rand des Feinbereichs eine Weite, die der nächste Klick gar nicht macht. */
+  const nachbar = punkte[k + 1] ?? punkte[k - 1];
+  const hier = punkte[k];
+  if (!nachbar || !hier) { txt.textContent = ''; return; }
+  const min = Math.round(Math.abs(nachbar.t - hier.t) / 60000);
+  txt.textContent = min >= 1440 ? `${Math.round(min / 1440)} Tag`
+    : min >= 60 ? `${Math.round(min / 60)} Std.`
+    : `${min} Min.`;
+}
+
+function schrittGehen(d) {
+  const sl = $('#scrubSlider');
+  if (!sl) return;
+  // Läuft die Animation, hat ein Schritt Vorrang — sonst springt es zurück
+  if (spielTimer) toggleZeitraffer();
+  const punkte = buildScrubPoints();
+  const neu = Math.max(0, Math.min(punkte.length - 1, (+sl.value || 0) + d));
+  if (neu === +sl.value) return;
+  sl.value = String(neu);
+  sl.dispatchEvent(new Event('input'));
 }
 
 function toggleZeitraffer() {
@@ -8694,6 +8729,16 @@ function wire() {
   });
   wireSheetGesten();
   $('#playBtn')?.addEventListener('click', toggleZeitraffer);
+  $('#stepBack')?.addEventListener('click', () => schrittGehen(-1));
+  $('#stepFwd')?.addEventListener('click', () => schrittGehen(1));
+  /* Pfeiltasten tun dasselbe — am Rechner ist das der schnellste Weg,
+     Schritt für Schritt durch die Zugbahn zu gehen. */
+  document.addEventListener('keydown', (e) => {
+    if (e.target.matches('input, textarea, select')) return;
+    if (!document.querySelector('.card-radar')) return;
+    if (e.key === 'ArrowLeft') { schrittGehen(-1); e.preventDefault(); }
+    if (e.key === 'ArrowRight') { schrittGehen(1); e.preventDefault(); }
+  });
   [$('#footClock')].forEach(el => {
     if (!el) return;
     el.setAttribute('role', 'button');
