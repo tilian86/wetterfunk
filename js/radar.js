@@ -1297,6 +1297,15 @@ const Radar = (() => {
     map.setLayoutProperty('fc-layer', 'visibility', 'visible');
   }
 
+  /** Die Flächenvorhersage verbergen, solange ihr Bild den Ausschnitt nicht
+      mehr abdeckt. Ein halb gefülltes Raster endet sonst als harte
+      waagerechte Kante mitten im Bild — das sieht aus wie ein Defekt, nicht
+      wie „lädt noch". */
+  function fcVerbergen() {
+    if (map?.getLayer('fc-layer')) map.setLayoutProperty('fc-layer', 'visibility', 'none');
+    fcVisible = false;
+  }
+
   function showForecast(hourIndex, ebenen) {
     if (!ready || !map || !Forecast.ready()) return false;
 
@@ -1383,7 +1392,7 @@ const Radar = (() => {
     setTimeout(weiter, 2500);
   }
 
-  return { init, load, setCenter, play, pause, toggle, show, isPlaying,
+  return { init, load, setCenter, play, pause, toggle, show, isPlaying, fcVerbergen,
            showForecast, showRadar, updateLabels, frameTimes, showAt, lastMeasured,
            leereBildSpeicher, vorwaermen,
            zeigeNowcast, nowcastVorwaermen, rvZeiten, rvMoeglich, leereNowcastSpeicher,
