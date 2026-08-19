@@ -204,6 +204,44 @@ export default {
        Der Kartendienst des DWD ist zeitweise sehr langsam oder antwortet mit
        500. Über den Worker gepuffert wird daraus ein stabiler Abruf: gleiche
        Bildausschnitte kommen fünf Minuten lang aus dem Zwischenspeicher. */
+    /* ── EIN Deutschland-Bild je Fünf-Minuten-Schritt ─────────
+       Kacheln einzeln beim DWD zu holen hieß: jede Ansicht, jeder Nutzer,
+       jeder Zoom eine eigene teure Anfrage (kalt 3-14 s). Hier ist der
+       Schlüssel für ALLE gleich — nur der Zeitstempel. Vergangene Schritte
+       ändern sich nie und liegen dauerhaft in R2; damit zahlt weltweit
+       genau EINER pro Schritt den kalten DWD-Abruf, alle danach bekommen
+       das Bild in Millisekunden. Die App schneidet ihre Kacheln selbst. */
+    if (url.pathname === '/dwdbild') {
+      const zeit = url.searchParams.get('time') || '';
+      if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:00(\.000)?Z$/.test(zeit)) {
+        return json({ error: 'time fehlt oder ist ungültig' }, 400, origin);
+      }
+      const ms = Date.parse(zeit);
+      // RV reicht 2 h zurück ohne Grenze (R2 hält 3 Tage) und 2 h voraus
+      if (!isFinite(ms) || ms > Date.now() + 2 * 3600e3) {
+        return json({ error: 'Zeitpunkt außerhalb des Fensters' }, 400, origin);
+      }
+      const vergangen = ms <= Date.now() - 5 * 60000;
+      const kopf = (maxAge, dauerhaft) => ({
+        ...cors(origin),
+        'content-type': 'image/png',
+        'cache-control': `public, max-age=${maxAge}${dauerhaft ? ', immutable' : ''}`
+      });
+
+      const schluessel = `bild/${zeit}`;
+      if (vergangen) {
+        const da = await env.RADAR_BILDER.get(schluessel);
+        if (da) return new Response(da.body, { headers: kopf(86400, true) });
+      }
+
+      const daten = await deutschlandBild(zeit);
+      if (!daten) return json({ error: 'DWD liefert dieses Bild nicht' }, 502, origin);
+      if (vergangen) {
+        ctx.waitUntil(env.RADAR_BILDER.put(schluessel, daten.slice(0)));
+      }
+      return new Response(daten, { headers: kopf(vergangen ? 86400 : 120, vergangen) });
+    }
+
     if (url.pathname === '/dwdradar') {
       const bbox = url.searchParams.get('bbox') || '';
       /* Untergrenze 64 statt 256: Die App fragt jetzt EIN Pixel je
@@ -605,9 +643,11 @@ export default {
        Vortag steht und niemand die App benutzt. */
     if (event.cron === '20 3 * * *') {
       ctx.waitUntil(taeglichePruefung(env));
+      ctx.waitUntil(radarBilderPutzen(env));
       return;
     }
     ctx.waitUntil(regenPruefen(env));
+    ctx.waitUntil(radarBildVorwaermen(env).catch(() => {}));
   }
 };
 
@@ -1505,4 +1545,55 @@ function withTimeout(promise, ms) {
     promise,
     new Promise((_, rej) => setTimeout(() => rej(new Error('timeout')), ms))
   ]);
+}
+
+
+/* Das Deutschland-Bild beim DWD holen: fester Kasten, 1024 x 1396 (eine
+   Zelle je Kilometer), mit derselben Rückfalllogik wie die Kachelabrufe.
+   Gemessen: 141 KB, kalt 7-9 s — aber eben nur EINMAL je Zeitschritt. */
+const DE_BBOX = '612257,5942074,1725452,7459517';
+
+async function deutschlandBild(zeit) {
+  const u = 'https://maps.dwd.de/geoserver/dwd/wms?service=WMS&version=1.1.1' +
+    '&request=GetMap&layers=dwd%3ARadar_rv_product_1x1km_ger&srs=EPSG%3A3857' +
+    '&format=image%2Fpng&transparent=true&styles=' +
+    `&bbox=${DE_BBOX}&width=1024&height=1396&time=${encodeURIComponent(zeit)}`;
+  for (let versuch = 0; versuch < 2; versuch++) {
+    try {
+      const r = await withTimeout(fetch(u, { cf: { cacheTtl: 300, cacheEverything: true } }), 20000);
+      if (r.ok && /image\/png/i.test(r.headers.get('content-type') || '')) {
+        return await r.arrayBuffer();
+      }
+    } catch { /* zweiter Versuch */ }
+    await new Promise((x) => setTimeout(x, 1200));
+  }
+  return null;
+}
+
+/* Beim Fünf-Minuten-Lauf den frischen Analyse-Schritt nach R2 legen: Dann
+   trifft schon der ERSTE Nutzer eines Schritts auf das fertige Bild und
+   niemand wartet je auf den kalten DWD-Abruf der Vergangenheit. */
+async function radarBildVorwaermen(env) {
+  const takt = Math.floor(Date.now() / 300000) * 300000 - 300000;   // letzter fertiger Schritt
+  const zeit = new Date(takt).toISOString().replace(/\.\d{3}Z$/, '.000Z');
+  const schluessel = `bild/${zeit}`;
+  if (await env.RADAR_BILDER.head(schluessel)) return;
+  const daten = await deutschlandBild(zeit);
+  if (daten) await env.RADAR_BILDER.put(schluessel, daten);
+}
+
+/* Aufräumen: R2 hält 10 GB frei; ein Tag sind rund 40 MB Bilder. Drei Tage
+   reichen der App (die Leiste zeigt 2 h) — Älteres fliegt im Nachtlauf. */
+async function radarBilderPutzen(env) {
+  const grenze = Date.now() - 3 * 86400e3;
+  let cursor;
+  do {
+    const seite = await env.RADAR_BILDER.list({ prefix: 'bild/', cursor });
+    const alt = seite.objects.filter((o) => {
+      const t = Date.parse(o.key.slice(5));
+      return isFinite(t) && t < grenze;
+    });
+    if (alt.length) await env.RADAR_BILDER.delete(alt.map((o) => o.key));
+    cursor = seite.truncated ? seite.cursor : null;
+  } while (cursor);
 }
