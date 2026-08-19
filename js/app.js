@@ -2906,8 +2906,14 @@ function ladeRaster(lat, lon, zoom, ebenen, sicht) {
      ließ die App unruhig wirken. Das neue Bild löst das alte still ab,
      sobald es da ist. */
   offeneRaster++;
-  const schonDa = Forecast.ready();
-  if (!schonDa) {
+  /* Deckt das vorhandene Bild den Ausschnitt noch ab, bleibt es stehen und
+     wird still ersetzt. Deckt es ihn NICHT ab, endet es als harte Kante
+     mitten im Bild — dann lieber wegblenden und sagen, dass geladen wird.
+     Genau diese Kante war auf Florians iPhone zu sehen. */
+  const deckt = Forecast.ready()
+    && Forecast.covers(lat, lon, zoom, ebenen, sicht);
+  if (!deckt) {
+    Radar.fcVerbergen?.();
     setMapMode(zeit(), 'Vorhersage wird geladen…', 'laden');
     if (laden) laden.hidden = false;
   }
