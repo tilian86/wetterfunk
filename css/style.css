@@ -3024,3 +3024,14 @@ body.ar-offen { overflow: hidden; }
   text-align: center;
   font-variant-numeric: tabular-nums;
 }
+
+/* Läuft gerade ein Kachelabruf, zeigt die Schrittweite einen Puls — sonst
+   sieht man beim Weiterklicken nur stehende Wolken und weiß nicht, ob
+   noch etwas kommt oder ob es das schon war. */
+.schritt-txt.laedt { color: #7fc4ff; animation: wf-puls 1s ease-in-out infinite; }
+@keyframes wf-puls { 0%, 100% { opacity: .45 } 50% { opacity: 1 } }
+.lade-btn { font-weight: 600; }
+.lade-btn.laeuft { color: #7fc4ff; border-color: rgba(127, 196, 255, .45); }
+@media (prefers-reduced-motion: reduce) {
+  .schritt-txt.laedt { animation: none; opacity: .8 }
+}
