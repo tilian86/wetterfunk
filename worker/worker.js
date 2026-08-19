@@ -248,8 +248,21 @@ export default {
         if (da) return new Response(da.body, { headers: kopf(86400, true) });
       } else {
         const fc = await env.RADAR_BILDER.get(`fc/${zeit}`);
-        // Nur wenn frisch: Jeder Fünf-Minuten-Lauf rechnet die Vorhersage neu
-        if (fc && Date.now() - fc.uploaded.getTime() < 6 * 60000) {
+        /* Vorhandenes SOFORT ausliefern und bei Bedarf im Hintergrund
+           erneuern. Eine harte Frischegrenze war hier falsch: Sie war
+           enger als die Laufzeit des Crons, und ein knapp herausgefallener
+           Schritt kostete den Nutzer wieder 8 bis 23 Sekunden — genau das,
+           was das Vorwärmen verhindern soll. Jetzt wartet niemand mehr auf
+           den DWD; das Bild ist höchstens einen Rechenlauf alt, und der
+           nächste Abruf bekommt die frische Fassung. */
+        const alterMin = fc ? (Date.now() - fc.uploaded.getTime()) / 60000 : Infinity;
+        if (fc && alterMin < 20) {
+          if (alterMin > 5) {
+            ctx.waitUntil((async () => {
+              const neu = await deutschlandBild(zeit);
+              if (neu) await env.RADAR_BILDER.put(`fc/${zeit}`, neu);
+            })().catch(() => {}));
+          }
           return new Response(fc.body, { headers: kopf(120, false) });
         }
       }
