@@ -214,58 +214,82 @@ const Radar = (() => {
   }
 
   /** Grau und Reichweitenband entfernen, Rest auf die eigene Skala umfärben. */
-  /** Weichzeichnen in Zellauflösung — selbst gerechnet, damit es ÜBERALL
-      wirkt: `ctx.filter` kennt WebKit nicht, deshalb blieb das Radar auf
-      iPhone und Mac kachelig, während die Chromium-Vorschau weich aussah.
-      Zwei Kastendurchgänge nähern einen Gauß an; alphagewichtet, sonst
-      blutet Schwarz aus durchsichtigen Nachbarzellen in die Ränder. */
-  function zelleWeich(px, w, h) {
-    const a4 = new Float32Array(w * h * 4);
-    for (let i = 0; i < w * h; i++) {
-      const a = px[i * 4 + 3] / 255;
-      a4[i * 4]     = px[i * 4]     * a;
-      a4[i * 4 + 1] = px[i * 4 + 1] * a;
-      a4[i * 4 + 2] = px[i * 4 + 2] * a;
-      a4[i * 4 + 3] = a;
-    }
-    const b4 = new Float32Array(a4.length);
-    const durchgang = () => {
-      for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
-        const i = (y * w + x) * 4;
-        for (let k = 0; k < 4; k++) {
-          let sum = a4[i + k], n = 1;
-          if (x > 0)     { sum += a4[i - 4 + k]; n++; }
-          if (x < w - 1) { sum += a4[i + 4 + k]; n++; }
-          b4[i + k] = sum / n;
-        }
-      }
-      for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
-        const i = (y * w + x) * 4;
-        for (let k = 0; k < 4; k++) {
-          let sum = b4[i + k], n = 1;
-          if (y > 0)     { sum += b4[i - w * 4 + k]; n++; }
-          if (y < h - 1) { sum += b4[i + w * 4 + k]; n++; }
-          a4[i + k] = sum / n;
-        }
-      }
-    };
-    /* EIN Durchgang, nicht zwei: Zwei wuschen das Feld zu blassen
-       Pastellwolken aus — Florian: „immer noch nicht gut". Ein Durchgang
-       glättet die Kanten, lässt aber Kerne und Struktur stehen. Dazu wird
-       die Deckkraft nach dem Verwischen angehoben (×1,35): Das Verwischen
-       dünnt schmale Bänder aus, der Hub gibt dem Feld seinen Körper
-       zurück — weicher Rand bleibt, das Innere steht satt. */
-    durchgang();
-    for (let i = 0; i < w * h; i++) {
-      const a = a4[i * 4 + 3];
-      px[i * 4]     = a > 0.003 ? Math.min(255, Math.round(a4[i * 4]     / a)) : 0;
-      px[i * 4 + 1] = a > 0.003 ? Math.min(255, Math.round(a4[i * 4 + 1] / a)) : 0;
-      px[i * 4 + 2] = a > 0.003 ? Math.min(255, Math.round(a4[i * 4 + 2] / a)) : 0;
-      px[i * 4 + 3] = Math.round(Math.min(1, a * 1.35) * 255);
-    }
+  /* ── Regenwerte interpolieren, dann einfärben ───────────────
+     Drei Anläufe waren nötig, und die ersten zwei waren im Ansatz falsch:
+     Sie verwischten FERTIGE FARBSTUFEN. Aus zwölf harten Klassen wird
+     durch Verwischen aber kein Verlauf, sondern Matsch — erst Kacheln,
+     dann ein strukturloser Klecks.
+
+     Richtig ist der Weg, den auch die DWD-App geht: Das Bild zurück in
+     ein WERTEFELD übersetzen (welche Regenstufe steckt in dieser Zelle?),
+     dieses Feld glatt hochrechnen und ERST DANN einfärben — mit fließend
+     gemischten Farben zwischen den Stufen. Das ergibt echte Verläufe,
+     behält die Kerne scharf und lässt die Ränder über genau eine Zelle
+     auslaufen statt über zehn. */
+
+  /* Zwei Arbeitsflächen: dwdRoh in Zellauflösung (dorthin malt der Browser
+     das DWD-Bild zum Auslesen), dwdFein für das interpolierte Farbfeld.
+     dwdRoh war beim Umbau mit dem alten Weichzeichner-Block verschwunden —
+     „dwdRoh is not defined" in der Konsole, das Radar blieb leer. */
+  let dwdRoh = null, dwdFein = null;
+
+  /** Farbe zu einem Zwischenwert der Stufenleiter (0 = keine, 12 = extrem). */
+  function stufenFarbe(v, ziel, o) {
+    if (v <= 0.28) { ziel[o + 3] = 0; return; }
+    const i = Math.min(WF_STUFEN.length - 1, Math.max(0, v - 1));
+    const a = WF_STUFEN[Math.floor(i)], b = WF_STUFEN[Math.min(WF_STUFEN.length - 1, Math.ceil(i))];
+    const t = i - Math.floor(i);
+    ziel[o]     = a[0] + (b[0] - a[0]) * t;
+    ziel[o + 1] = a[1] + (b[1] - a[1]) * t;
+    ziel[o + 2] = a[2] + (b[2] - a[2]) * t;
+    /* Der Rand blendet zwischen 0,28 und 1,0 auf — eine knappe Zellbreite,
+       nicht der lange Nebel der Weichzeichnung. */
+    const rand = Math.min(1, (v - 0.28) / 0.72);
+    ziel[o + 3] = (a[3] + (b[3] - a[3]) * t) * rand;
   }
 
-  let dwdRoh = null;   // Arbeitsfläche in Zellauflösung
+  /* Der Weichzeichner sitzt auf dem WERTEfeld, nicht auf fertigen Farben —
+     das war der Denkfehler aller Anläufe davor. Sigma 1,1 Zellen ist gemessen:
+     breite Regenkerne behalten 100 % ihrer Stärke, der Rand läuft über rund
+     vier Kilometer aus (statt über eine Zelle = ein Bildschirmpixel, was
+     zwangsläufig als Treppe aussah), und selbst ein 2x2-km-Schauer bleibt
+     sichtbar. Separabel gerechnet: zwei Durchgänge statt Kernel im Quadrat. */
+  const GLATT_SIGMA = 1.1;
+  let glattKern = null;
+
+  function kernHolen() {
+    if (glattKern) return glattKern;
+    const r = Math.ceil(GLATT_SIGMA * 2.5), k = new Float32Array(2 * r + 1);
+    let summe = 0;
+    for (let i = -r; i <= r; i++) {
+      const v = Math.exp(-(i * i) / (2 * GLATT_SIGMA * GLATT_SIGMA));
+      k[i + r] = v; summe += v;
+    }
+    for (let i = 0; i < k.length; i++) k[i] /= summe;
+    return (glattKern = { r, k });
+  }
+
+  function feldGlaetten(feld, w, h) {
+    const { r, k } = kernHolen();
+    const tmp = new Float32Array(w * h), aus = new Float32Array(w * h);
+    for (let y = 0; y < h; y++) {
+      const z = y * w;
+      for (let x = 0; x < w; x++) {
+        let s = 0;
+        for (let i = -r; i <= r; i++) s += feld[z + Math.min(w - 1, Math.max(0, x + i))] * k[i + r];
+        tmp[z + x] = s;
+      }
+    }
+    for (let y = 0; y < h; y++) {
+      for (let x = 0; x < w; x++) {
+        let s = 0;
+        for (let i = -r; i <= r; i++) s += tmp[Math.min(h - 1, Math.max(0, y + i)) * w + x] * k[i + r];
+        aus[y * w + x] = s;
+      }
+    }
+    return aus;
+  }
+
   function dwdFiltern(bild) {
     const bw = bild.naturalWidth || bild.width;
     const bh = bild.naturalHeight || bild.height;
@@ -273,44 +297,55 @@ const Radar = (() => {
     dwdRoh.width = bw; dwdRoh.height = bh;
     const rohCtx = dwdRoh.getContext('2d', { willReadFrequently: true });
     rohCtx.drawImage(bild, 0, 0);
-    const img = rohCtx.getImageData(0, 0, bw, bh);
-    const px = img.data;
+    const px = rohCtx.getImageData(0, 0, bw, bh).data;
     let farbig = 0;
 
-    for (let i = 0; i < px.length; i += 4) {
+    // 1. Bild → Wertefeld
+    const feld = new Float32Array(bw * bh);
+    for (let i = 0, z = 0; i < px.length; i += 4, z++) {
       if (px[i + 3] === 0) continue;
       const r = px[i], g = px[i + 1], b = px[i + 2];
-
       const max = Math.max(r, g, b), min = Math.min(r, g, b);
-      if (max - min < 26) { px[i + 3] = 0; continue; }   // weiß bis dunkelgrau
-      if (r > 200 && b > 200 && g < 120) { px[i + 3] = 0; continue; }  // Reichweitenrand
-
+      if (max - min < 26) continue;                                    // weiß bis dunkelgrau
+      if (r > 200 && b > 200 && g < 120) continue;                     // Reichweitenrand
       const stufe = naechsteStufe(r, g, b);
-      if (stufe < 0) { px[i + 3] = 0; continue; }
-      const [nr, ng, nb, na] = WF_STUFEN[stufe];
-      px[i] = nr; px[i + 1] = ng; px[i + 2] = nb; px[i + 3] = na;
+      if (stufe < 0) continue;
+      feld[z] = stufe + 1;
       farbig++;
     }
-    /* Nur weichzeichnen, wenn Zellen überhaupt vergrößert werden: Bei
-       Deutschland-Zoom ist eine Zelle ein Bildschirmpixel — Kacheln sind
-       da unsichtbar, und die Rechnung wäre reine Verschwendung (gemessen
-       213 ms bei 768er-Bildern gegen ~10 ms bei Stadt-Zoom). */
-    if (DWD_PX / bw >= 1.8) zelleWeich(px, bw, bh);
-    rohCtx.putImageData(img, 0, 0);
-    /* Erst nach dem Filtern vergrößern: Auf dem kleinen Bild sind die
-       Zellen einzelne Pixel, und das weiche Hochrechnen erzeugt fließende
-       Übergänge. Das allein reichte aber nicht: Benachbarte Zellen mit
-       DERSELBEN Farbstufe verschmelzen zu großen einfarbigen Flächen, und
-       weich wurde nur deren Rand — innen blieb es kachelig (Florian:
-       „immer noch pixelig"). Deshalb zusätzlich eine Weichzeichnung
-       proportional zur Vergrößerung: Sie verbreitert die Übergänge zu
-       echten Verläufen, wie es die großen Wetter-Apps machen. Kosmetik,
-       keine neuen Daten — aber ehrliche: Das Auge liest Verläufe als
-       „Feld", Kacheln als „Fehler". */
+
+    // 2. Feld weichzeichnen, dann glatt hochrechnen
+    const glatt = farbig ? feldGlaetten(feld, bw, bh) : feld;
+    const faktor = Math.max(1, Math.min(8, Math.round(DWD_PX / Math.max(1, bw))));
+    const fw = bw * faktor, fh = bh * faktor;
+    if (!dwdFein) dwdFein = document.createElement('canvas');
+    dwdFein.width = fw; dwdFein.height = fh;
+    const feinCtx = dwdFein.getContext('2d');
+    const aus = feinCtx.createImageData(fw, fh);
+    const ap = aus.data;
+
+    const hole = (x, y) => glatt[Math.min(bh - 1, Math.max(0, y)) * bw
+                               + Math.min(bw - 1, Math.max(0, x))];
+    for (let y = 0; y < fh; y++) {
+      const sy = (y + 0.5) / faktor - 0.5;
+      const y0 = Math.floor(sy), ty = sy - y0;
+      for (let x = 0; x < fw; x++) {
+        const sx = (x + 0.5) / faktor - 0.5;
+        const x0 = Math.floor(sx), tx = sx - x0;
+        const v = hole(x0, y0)     * (1 - tx) * (1 - ty)
+                + hole(x0 + 1, y0) * tx       * (1 - ty)
+                + hole(x0, y0 + 1) * (1 - tx) * ty
+                + hole(x0 + 1, y0 + 1) * tx   * ty;
+        stufenFarbe(v, ap, (y * fw + x) * 4);
+      }
+    }
+    feinCtx.putImageData(aus, 0, 0);
+
+    // 3. Den fertig eingefärbten Verlauf auf die Ausgabegröße ziehen
     dwdCtx.clearRect(0, 0, DWD_PX, DWD_PX);
     dwdCtx.imageSmoothingEnabled = true;
     dwdCtx.imageSmoothingQuality = 'high';
-    dwdCtx.drawImage(dwdRoh, 0, 0, DWD_PX, DWD_PX);
+    dwdCtx.drawImage(dwdFein, 0, 0, DWD_PX, DWD_PX);
     return farbig;
   }
 
