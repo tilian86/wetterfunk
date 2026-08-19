@@ -228,17 +228,36 @@ export default {
         'cache-control': `public, max-age=${maxAge}${dauerhaft ? ', immutable' : ''}`
       });
 
-      const schluessel = `bild/${zeit}`;
+      /* Nutzungsmarke für den Cron: Solange die App in den letzten zwei
+         Stunden Radarbilder wollte, wärmt er auch die Vorhersageschritte
+         vor. Geschrieben wird höchstens alle 20 Minuten — das KV-Kontingent
+         (1000 Schreibvorgänge/Tag frei) bleibt praktisch unberührt. */
+      ctx.waitUntil((async () => {
+        const marke = +(await env.WF_PUSH.get('radar:aktiv') || 0);
+        if (Date.now() - marke > 20 * 60000) {
+          await env.WF_PUSH.put('radar:aktiv', String(Date.now()));
+        }
+      })().catch(() => {}));
+
+      /* Getrennte Ablagen: bild/ hält die endgültige Analyse (für immer
+         gültig), fc/ die Vorhersage des jüngsten Rechenlaufs. Läge beides
+         unter einem Schlüssel, bekäme man für einen vergangenen Zeitpunkt
+         womöglich die alte VORHERSAGE statt der Messung. */
       if (vergangen) {
-        const da = await env.RADAR_BILDER.get(schluessel);
+        const da = await env.RADAR_BILDER.get(`bild/${zeit}`);
         if (da) return new Response(da.body, { headers: kopf(86400, true) });
+      } else {
+        const fc = await env.RADAR_BILDER.get(`fc/${zeit}`);
+        // Nur wenn frisch: Jeder Fünf-Minuten-Lauf rechnet die Vorhersage neu
+        if (fc && Date.now() - fc.uploaded.getTime() < 6 * 60000) {
+          return new Response(fc.body, { headers: kopf(120, false) });
+        }
       }
 
       const daten = await deutschlandBild(zeit);
       if (!daten) return json({ error: 'DWD liefert dieses Bild nicht' }, 502, origin);
-      if (vergangen) {
-        ctx.waitUntil(env.RADAR_BILDER.put(schluessel, daten.slice(0)));
-      }
+      ctx.waitUntil(env.RADAR_BILDER.put(
+        vergangen ? `bild/${zeit}` : `fc/${zeit}`, daten.slice(0)));
       return new Response(daten, { headers: kopf(vergangen ? 86400 : 120, vergangen) });
     }
 
@@ -1575,25 +1594,48 @@ async function deutschlandBild(zeit) {
    niemand wartet je auf den kalten DWD-Abruf der Vergangenheit. */
 async function radarBildVorwaermen(env) {
   const takt = Math.floor(Date.now() / 300000) * 300000 - 300000;   // letzter fertiger Schritt
-  const zeit = new Date(takt).toISOString().replace(/\.\d{3}Z$/, '.000Z');
-  const schluessel = `bild/${zeit}`;
-  if (await env.RADAR_BILDER.head(schluessel)) return;
-  const daten = await deutschlandBild(zeit);
-  if (daten) await env.RADAR_BILDER.put(schluessel, daten);
+  const zeit = (ms) => new Date(ms).toISOString().replace(/\.\d{3}Z$/, '.000Z');
+
+  // Die Analyse immer — sie ist danach für immer gültig
+  if (!(await env.RADAR_BILDER.head(`bild/${zeit(takt)}`))) {
+    const daten = await deutschlandBild(zeit(takt));
+    if (daten) await env.RADAR_BILDER.put(`bild/${zeit(takt)}`, daten);
+  }
+
+  /* Die Vorhersageschritte nur, wenn die App in den letzten zwei Stunden
+     benutzt wurde — sonst fragte der Cron den DWD rund um die Uhr für
+     niemanden. Mit Vorwärmen ist JEDER Schritt der Zeitleiste beim
+     Antippen sofort da, wie in der DWD-App. */
+  const marke = +(await env.WF_PUSH.get('radar:aktiv') || 0);
+  if (Date.now() - marke > 2 * 3600e3) return;
+
+  const schritte = [];
+  for (let m = 5; m <= 90; m += 5) schritte.push(takt + m * 60000);
+  let i = 0;
+  const kette = async () => {
+    while (i < schritte.length) {
+      const t = schritte[i++];
+      const daten = await deutschlandBild(zeit(t));
+      if (daten) await env.RADAR_BILDER.put(`fc/${zeit(t)}`, daten);
+    }
+  };
+  await Promise.all([kette(), kette(), kette(), kette()]);
 }
 
 /* Aufräumen: R2 hält 10 GB frei; ein Tag sind rund 40 MB Bilder. Drei Tage
    reichen der App (die Leiste zeigt 2 h) — Älteres fliegt im Nachtlauf. */
 async function radarBilderPutzen(env) {
   const grenze = Date.now() - 3 * 86400e3;
-  let cursor;
-  do {
-    const seite = await env.RADAR_BILDER.list({ prefix: 'bild/', cursor });
-    const alt = seite.objects.filter((o) => {
-      const t = Date.parse(o.key.slice(5));
-      return isFinite(t) && t < grenze;
-    });
-    if (alt.length) await env.RADAR_BILDER.delete(alt.map((o) => o.key));
-    cursor = seite.truncated ? seite.cursor : null;
-  } while (cursor);
+  for (const vorspann of ['bild/', 'fc/']) {
+    let cursor;
+    do {
+      const seite = await env.RADAR_BILDER.list({ prefix: vorspann, cursor });
+      const alt = seite.objects.filter((o) => {
+        const t = Date.parse(o.key.slice(vorspann.length));
+        return isFinite(t) && t < grenze;
+      });
+      if (alt.length) await env.RADAR_BILDER.delete(alt.map((o) => o.key));
+      cursor = seite.truncated ? seite.cursor : null;
+    } while (cursor);
+  }
 }
