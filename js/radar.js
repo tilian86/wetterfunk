@@ -233,61 +233,34 @@ const Radar = (() => {
      „dwdRoh is not defined" in der Konsole, das Radar blieb leer. */
   let dwdRoh = null, dwdFein = null;
 
-  /** Farbe zu einem Zwischenwert der Stufenleiter (0 = keine, 12 = extrem). */
+  /** Farbe zu einem Zwischenwert der Stufenleiter (0 = keine, 12 = extrem).
+
+      Wie beim DWD: die FORM ist weich, die FARBEN bleiben in Klassen. Ein
+      stufenloser Farbverlauf sieht zwar glatt aus, macht aber alles zu einem
+      Schleier — man liest die Regenstärke nicht mehr ab. Darum wird der
+      geglättete Wert auf seine Klasse gerundet; nur ein schmaler Saum von
+      +/-0,12 Stufen mischt zum Nachbarn, damit die Konturlinie nicht
+      ausfranst. */
+  const SAUM = 0.12;
+
   function stufenFarbe(v, ziel, o) {
-    if (v <= 0.28) { ziel[o + 3] = 0; return; }
-    const i = Math.min(WF_STUFEN.length - 1, Math.max(0, v - 1));
-    const a = WF_STUFEN[Math.floor(i)], b = WF_STUFEN[Math.min(WF_STUFEN.length - 1, Math.ceil(i))];
-    const t = i - Math.floor(i);
-    ziel[o]     = a[0] + (b[0] - a[0]) * t;
-    ziel[o + 1] = a[1] + (b[1] - a[1]) * t;
-    ziel[o + 2] = a[2] + (b[2] - a[2]) * t;
-    /* Der Rand blendet zwischen 0,28 und 1,0 auf — eine knappe Zellbreite,
-       nicht der lange Nebel der Weichzeichnung. */
-    const rand = Math.min(1, (v - 0.28) / 0.72);
-    ziel[o + 3] = (a[3] + (b[3] - a[3]) * t) * rand;
-  }
-
-  /* Der Weichzeichner sitzt auf dem WERTEfeld, nicht auf fertigen Farben —
-     das war der Denkfehler aller Anläufe davor. Sigma 1,1 Zellen ist gemessen:
-     breite Regenkerne behalten 100 % ihrer Stärke, der Rand läuft über rund
-     vier Kilometer aus (statt über eine Zelle = ein Bildschirmpixel, was
-     zwangsläufig als Treppe aussah), und selbst ein 2x2-km-Schauer bleibt
-     sichtbar. Separabel gerechnet: zwei Durchgänge statt Kernel im Quadrat. */
-  const GLATT_SIGMA = 1.1;
-  let glattKern = null;
-
-  function kernHolen() {
-    if (glattKern) return glattKern;
-    const r = Math.ceil(GLATT_SIGMA * 2.5), k = new Float32Array(2 * r + 1);
-    let summe = 0;
-    for (let i = -r; i <= r; i++) {
-      const v = Math.exp(-(i * i) / (2 * GLATT_SIGMA * GLATT_SIGMA));
-      k[i + r] = v; summe += v;
-    }
-    for (let i = 0; i < k.length; i++) k[i] /= summe;
-    return (glattKern = { r, k });
-  }
-
-  function feldGlaetten(feld, w, h) {
-    const { r, k } = kernHolen();
-    const tmp = new Float32Array(w * h), aus = new Float32Array(w * h);
-    for (let y = 0; y < h; y++) {
-      const z = y * w;
-      for (let x = 0; x < w; x++) {
-        let s = 0;
-        for (let i = -r; i <= r; i++) s += feld[z + Math.min(w - 1, Math.max(0, x + i))] * k[i + r];
-        tmp[z + x] = s;
-      }
-    }
-    for (let y = 0; y < h; y++) {
-      for (let x = 0; x < w; x++) {
-        let s = 0;
-        for (let i = -r; i <= r; i++) s += tmp[Math.min(h - 1, Math.max(0, y + i)) * w + x] * k[i + r];
-        aus[y * w + x] = s;
-      }
-    }
-    return aus;
+    /* Schwelle 0,3 statt 0,5: ein 2x2-km-Nieselschauer erreicht nach der
+       Glättung nur den Wert 0,36 und wäre sonst unsichtbar geworden. */
+    if (v <= 0.3) { ziel[o + 3] = 0; return; }
+    const letzte = WF_STUFEN.length - 1;
+    const stufe = Math.round(v);
+    const t = v - stufe;                                   // -0,5 .. +0,5
+    let nachbar = stufe, mix = 0;
+    if (t > 0.5 - SAUM)        { nachbar = stufe + 1; mix = (t - (0.5 - SAUM)) / (2 * SAUM); }
+    else if (t < -(0.5 - SAUM)) { nachbar = stufe - 1; mix = (-t - (0.5 - SAUM)) / (2 * SAUM); }
+    const a = WF_STUFEN[Math.min(letzte, Math.max(0, stufe - 1))];
+    const b = WF_STUFEN[Math.min(letzte, Math.max(0, nachbar - 1))];
+    ziel[o]     = a[0] + (b[0] - a[0]) * mix;
+    ziel[o + 1] = a[1] + (b[1] - a[1]) * mix;
+    ziel[o + 2] = a[2] + (b[2] - a[2]) * mix;
+    /* Aussenkante: kurzer Saum von 0,3 auf 0,6 — glatte Kontur, kein Nebel. */
+    const rand = Math.min(1, (v - 0.3) / 0.3);
+    ziel[o + 3] = (a[3] + (b[3] - a[3]) * mix) * rand;
   }
 
   function dwdFiltern(bild) {
