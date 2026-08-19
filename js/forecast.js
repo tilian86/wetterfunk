@@ -75,7 +75,12 @@ async function load(lat, lon, zoom = 7, ebenen = null, sicht = null) {
   const stufeAuf = (v, schritt) => Math.ceil(v / schritt) * schritt;
   SPAN_LAT = stufeAuf(SPAN_LAT, stufe.lat / 2);
   SPAN_LON = stufeAuf(SPAN_LON, stufe.lon / 2);
-  const gitterLat = SPAN_LAT / 8, gitterLon = SPAN_LON / 8;
+  /* Wieder /4 statt /8. Das Verfeinern auf /8 sollte die Abdeckung retten,
+     hat aber die Zahl verschiedener Kästen vervierfacht — und damit die
+     Treffer im Zwischenspeicher geviertelt, also VIERMAL so viele
+     2,6-MB-Abrufe. Die Abdeckung trägt auch mit /4: nötig ist Spanne >=
+     1,333 x Bildhöhe, wir laden 1,6 x. */
+  const gitterLat = SPAN_LAT / 4, gitterLon = SPAN_LON / 4;
   const mitteLat = Math.round(lat / gitterLat) * gitterLat;
   const mitteLon = Math.round(lon / gitterLon) * gitterLon;
 
@@ -107,23 +112,33 @@ async function load(lat, lon, zoom = 7, ebenen = null, sicht = null) {
   // vorhalten, sonst läuft man beim Herumschieben ins Abruflimit.
   const url = `${API}?${p}`;
   const key = `wf.fc:${url}`;
-  let data = null;
-  try {
-    const alt = JSON.parse(sessionStorage.getItem(key) || 'null');
-    if (alt && Date.now() - alt.t < 15 * 60000) data = alt.d;
-  } catch {}
+  let data = ausSpeicher(key);
+  if (!data) {
+    try {
+      const alt = JSON.parse(sessionStorage.getItem(key) || 'null');
+      if (alt && Date.now() - alt.t < 15 * 60000) { data = alt.d; inSpeicher(key, data); }
+    } catch {}
+  }
 
   if (!data) {
-    let res = await fetch(url);
+    laufenderAbruf?.abort();
+    const abbruch = new AbortController();
+    laufenderAbruf = abbruch;
+    let res = await fetch(url, { signal: abbruch.signal });
     // Steckt der eigene Anschluss im Abruflimit, über den Worker gehen
     if (res.status === 429) {
       const proxy = (localStorage.getItem('wf.proxy') || '').replace(/^"|"$/g, '')
         || 'https://wetterfunk.florian-s-thiel.workers.dev';
-      res = await fetch(`${proxy.replace(/\/+$/, '')}/wetter?url=${encodeURIComponent(url)}`);
+      res = await fetch(`${proxy.replace(/\/+$/, '')}/wetter?url=${encodeURIComponent(url)}`,
+        { signal: abbruch.signal });
     }
     if (!res.ok) throw new Error(`Raster ${res.status}`);
     data = await res.json();
-    try { sessionStorage.setItem(key, JSON.stringify({ t: Date.now(), d: data })); } catch {}
+    if (laufenderAbruf === abbruch) laufenderAbruf = null;
+    inSpeicher(key, data);
+    beiRuhe(() => {
+      try { sessionStorage.setItem(key, JSON.stringify({ t: Date.now(), d: data })); } catch {}
+    });
   }
   if (!Array.isArray(data) || !data.length) throw new Error('Kein Raster erhalten');
 
@@ -168,6 +183,39 @@ function corners() {
 }
 
 const ready = () => !!grid;
+
+/* Beim Zoomen feuert jede Stufe einen neuen Rasterabruf. Ohne Abbruch
+   liefen mehrere 2,6-MB-Downloads gleichzeitig — sie nahmen den
+   Kartenkacheln die Leitung weg, weshalb die Grundkarte weiß blieb.
+   Jetzt bricht ein neuer Abruf den vorherigen ab. */
+let laufenderAbruf = null;
+
+/* Zwischenspeicher im Arbeitsspeicher, VOR dem sessionStorage.
+   Der sessionStorage kostet bei jedem Zugriff das Zerlegen bzw.
+   Zusammensetzen von rund 2,6 MB JSON — synchron auf dem Hauptthread, also
+   genau dort, wo die Karte gezeichnet wird. Auf dem Handy sind das
+   Hunderte Millisekunden Stillstand pro Rasterwechsel. Im Arbeitsspeicher
+   liegt das fertige Objekt einfach da: kein Zerlegen, kein Warten.
+   Vier Einträge reichen für Hin- und Herzoomen und bleiben bezahlbar. */
+const speicher = new Map();
+const SPEICHER_MAX = 4;
+
+function ausSpeicher(key) {
+  const e = speicher.get(key);
+  if (!e) return null;
+  if (Date.now() - e.t > 15 * 60000) { speicher.delete(key); return null; }
+  speicher.delete(key); speicher.set(key, e);      // zuletzt benutzt nach hinten
+  return e.d;
+}
+
+function inSpeicher(key, d) {
+  speicher.set(key, { t: Date.now(), d });
+  while (speicher.size > SPEICHER_MAX) speicher.delete(speicher.keys().next().value);
+}
+
+/** Das Schreiben in den sessionStorage in eine ruhige Minute schieben —
+    es hält nur über einen Neustart der Seite, ist also nie dringend. */
+const beiRuhe = (fn) => (window.requestIdleCallback || ((f) => setTimeout(f, 500)))(fn);
 const hours = () => (grid ? grid.times.length : 0);
 
 /** Wert an Rasterposition (Zeile i, Spalte j) für die Stunde h. */
