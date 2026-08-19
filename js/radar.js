@@ -82,6 +82,7 @@ const Radar = (() => {
       ready = true;
       if (frames.length) mountLayers();
       ladeDwdBild();
+      nutzungMelden();
     });
 
     map.addControl(new maplibregl.NavigationControl({ showCompass: false }), 'top-right');
@@ -519,6 +520,15 @@ const Radar = (() => {
         if (rvMoeglich(t)) feldHolen(dwdStempel(t)).catch(() => {});
       }
     }, 900);
+  }
+
+  /* Beim Öffnen des Radars einmal die aktuelle Analyse anfordern — das
+     setzt zugleich die Nutzungsmarke im Worker, damit dessen Cron die
+     Vorhersageschritte vorwärmt. Ohne diesen Anstoß würde das Vorwärmen
+     einschlafen, sobald man eine Weile nicht spult, und der nächste
+     Zeitschritt wäre wieder kalt. */
+  function nutzungMelden() {
+    feldHolen(dwdStempel(null)).catch(() => {});
   }
 
   /* Den ganzen Vorhersageverlauf am Stück holen, damit das Abspielen
