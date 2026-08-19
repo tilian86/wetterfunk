@@ -224,17 +224,39 @@ export default {
       const zeitOk = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:00(\.000)?Z$/.test(zeit);
       if (zeit && !zeitOk) return json({ error: 'time ungültig' }, 400, origin);
 
-      const ebene = zeitOk ? 'dwd%3ARadar_rv_product_1x1km_ger' : 'dwd%3ANiederschlagsradar';
-      const ziel = 'https://maps.dwd.de/geoserver/dwd/wms?service=WMS&version=1.1.1' +
+      const wms = (ebene, zeitStr) => 'https://maps.dwd.de/geoserver/dwd/wms?service=WMS&version=1.1.1' +
         `&request=GetMap&layers=${ebene}&srs=EPSG%3A3857` +
         `&format=image%2Fpng&transparent=true&styles=&bbox=${bbox}&width=${px}&height=${px}` +
-        (zeitOk ? `&time=${encodeURIComponent(zeit)}` : '');
+        (zeitStr ? `&time=${encodeURIComponent(zeitStr)}` : '');
+
+      /* Notnagel: Das Messbild („Niederschlagsradar") fiel am 19.08. stunden-
+         lang mit 500ern aus — größenunabhängig, ein DWD-Problem. Das RV-
+         Produkt lief dabei ungestört weiter, und sein Analyse-Schritt trägt
+         dieselben Daten. Deshalb: Scheitert das Messbild, die letzten drei
+         Fünf-Minuten-Schritte des RV-Produkts durchprobieren, statt dem
+         Nutzer ein leeres Jetzt-Bild zu zeigen. */
+      const kandidaten = zeitOk
+        ? [wms('dwd%3ARadar_rv_product_1x1km_ger', zeit)]
+        : (() => {
+            const takt = Math.floor(Date.now() / 300000) * 300000;
+            const rv = (ms) => wms('dwd%3ARadar_rv_product_1x1km_ger',
+              new Date(ms).toISOString().replace(/\.\d{3}Z$/, '.000Z'));
+            return [wms('dwd%3ANiederschlagsradar', ''),
+                    rv(takt), rv(takt - 300000), rv(takt - 600000)];
+          })();
 
       try {
-        const res = await withTimeout(
-          fetch(ziel, { cf: { cacheTtl: 300, cacheEverything: true } }), 12000);
-        if (!res.ok || !/image\/png/i.test(res.headers.get('content-type') || '')) {
-          return json({ error: `DWD antwortet ${res.status}` }, 502, origin);
+        let res = null;
+        for (const ziel of kandidaten) {
+          try {
+            res = await withTimeout(
+              fetch(ziel, { cf: { cacheTtl: 300, cacheEverything: true } }), 12000);
+            if (res.ok && /image\/png/i.test(res.headers.get('content-type') || '')) break;
+          } catch { res = null; }
+          res = res && null;
+        }
+        if (!res) {
+          return json({ error: 'DWD liefert derzeit kein Radarbild' }, 502, origin);
         }
         return new Response(res.body, {
           headers: {
@@ -744,7 +766,14 @@ async function regenPruefen(env) {
         if (meldung.art !== 'start') {
           zeiten = [Math.floor(Date.now() / 300000) * 300000];
         } else if (regenlage.naechste
-                   && regenlage.naechste.start - Date.now() <= 45 * 60000) {
+                   && regenlage.naechste.start - Date.now() <= 90 * 60000) {
+          /* 90 statt 45 Minuten: So weit sieht das RV-Radar voraus, und die
+             beiden einzigen Fehlalarme seit Journalstart (16.08.) waren
+             Ankündigungen. Der Handel ist bewusst: Widerspricht das Radar
+             einer frühen Ankündigung zu Unrecht, kommt die Meldung beim
+             nächsten Durchgang mit kürzerem Vorlauf trotzdem — später, aber
+             richtig, statt früh und falsch. Ob Unterdrückungen zu Unrecht
+             geschahen, zählt die Bilanz ohnehin mit (unterdruecktFalsch). */
           const start = Math.floor(regenlage.naechste.start / 300000) * 300000;
           zeiten = [start, start + 6e5];
         }
