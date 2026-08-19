@@ -30,8 +30,31 @@ const Radar = (() => {
   const layerId = (i) => `rv-layer-${i}`;
   const sourceId = (i) => `rv-src-${i}`;
 
+  /** Die schwere Bibliothek erst holen, wenn die Karte wirklich entsteht.
+      Ein Fehlschlag wirft — den fängt der Aufrufer und zeigt die
+      „nicht erreichbar"-Tafel, wie bei jedem anderen Radar-Ausfall. */
+  function ladeBibliothek() {
+    if (window.maplibregl) return Promise.resolve();
+    if (!ladeBibliothek.laeuft) {
+      /* Versionsmarke vom Stylesheet-Link abschreiben: release.sh zählt
+         sie dort hoch; eine hier fest verdrahtete Nummer veraltete still
+         und lieferte nach Updates die alte Bibliothek aus dem Cache. */
+      const css = document.querySelector('link[href*="maplibre-gl.css"]');
+      const marke = (css?.getAttribute('href').match(/\?v=\d+/) || [''])[0];
+      ladeBibliothek.laeuft = new Promise((ok, nein) => {
+        const el = document.createElement('script');
+        el.src = 'vendor/maplibre-gl.js' + marke;
+        el.onload = ok;
+        el.onerror = () => { ladeBibliothek.laeuft = null; nein(new Error('Kartenbibliothek lädt nicht')); };
+        document.head.appendChild(el);
+      });
+    }
+    return ladeBibliothek.laeuft;
+  }
+
   // ── Karte aufbauen ───────────────────────────────────────
-  function init(lat, lon, refs, frameCb) {
+  async function init(lat, lon, refs, frameCb) {
+    await ladeBibliothek();
     els = refs;
     onFrame = frameCb || onFrame;
     here = [lon, lat];

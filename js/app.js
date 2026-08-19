@@ -8892,11 +8892,19 @@ async function boot() {
 
   await refresh();
 
-  // Radar erst nach den Wetterdaten – es ist das schwerste Modul
+  /* Radar erst, wenn man es BRAUCHT: kurz bevor die Karte ins Bild
+     scrollt, oder beim Sprung über die Leiste. Vorher lud die App die
+     Kartenbibliothek (936 KB — mehr als der ganze Rest) bei jedem Start,
+     auch wenn nie jemand bis zum Radar scrollte. Der Vorrat des
+     Dienstarbeiters behält die Datei weiter, offline ändert sich nichts. */
+  let radarGestartet = false;
+  async function radarStarten() {
+    if (radarGestartet || !place) return;
+    radarGestartet = true;
   try {
     // Regler, Abspielknopf und Zeitanzeige steuert jetzt der gemeinsame
     // Zeitstrahl in app.js — das Radarmodul bekommt sie nicht mehr.
-    Radar.init(place.lat, place.lon, {
+    await Radar.init(place.lat, place.lon, {
       legend: $('#radarLegend'), locate: $('#radarLocate'), empty: $('#radarEmpty'),
       globe: $('#radarGlobe'), onMoveEnd: onMapMoved,
       currentTime: currentScrubTime,
@@ -8925,6 +8933,21 @@ async function boot() {
     $('#radarStamp').textContent = 'nicht verfügbar';
     $('#map').innerHTML = '<p class="empty">Radardaten gerade nicht erreichbar.</p>';
   }
+  }
+
+  const radarKarte = document.querySelector('.card-radar');
+  if ('IntersectionObserver' in window && radarKarte) {
+    /* 600 px Vorlauf: Die Bibliothek ist längst da, bevor die Karte im
+       Bild steht — beim normalen Scrollen merkt man nichts. */
+    const wache = new IntersectionObserver((eintraege) => {
+      if (eintraege.some(x => x.isIntersecting)) { wache.disconnect(); radarStarten(); }
+    }, { rootMargin: '600px 0px' });
+    wache.observe(radarKarte);
+  } else {
+    radarStarten();               // uralte Browser: wie bisher sofort
+  }
+  document.querySelector('.nav-chip[data-ziel=".card-radar"]')
+    ?.addEventListener('click', radarStarten);
 
   startClock();
   registerWorker();
