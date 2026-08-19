@@ -130,7 +130,11 @@ const Radar = (() => {
      sind klein (2–20 kB) und liegen zusätzlich im Worker-Puffer. */
   const RV_SCHRITT = 5 * 60000;                 // Fünf-Minuten-Raster
   const RV_VORAUS = 90;                         // so weit reicht die Vorhersage
-  const RV_ZURUECK = 60;                        // so weit zurück wird angeboten
+  /* 120 statt 60: Der WMS-Dienst hält die Analyse-Schritte mehrere Stunden
+     vor (geprüft bis -240 Minuten). Damit läuft die GANZE Zeitleiste in
+     Deutschland durch dieselbe DWD-Aufbereitung — vorher sprang der Look
+     beim Zurückspulen von weich-DWD auf grob-RainViewer. */
+  const RV_ZURUECK = 120;
   const rvBilder = new Map();                   // "bbox|zeit" → Daten-URL
   let rvLauf = 0, rvAktiv = false;
 
@@ -183,7 +187,18 @@ const Radar = (() => {
   const DWD_STUFEN = [
     [ 51, 255, 255], [ 26, 204, 154], [  1, 153,  52], [ 77, 179,  27],
     [153, 204,   1], [204, 230,   1], [255, 255,   1], [255, 196,   1],
-    [255, 137,   1], [255,  69,   1], [254,   0,   0], [229,   0,  76]
+    [255, 137,   1], [255,  69,   1], [254,   0,   0], [229,   0,  76],
+    [204,   0, 152], [102,   0, 203], [  0,   0, 254]
+  ];
+  /* mm/h-Grenzen je Stufe — direkt aus der WMS-Legende des RV-Produkts
+     (GetLegendGraphic als JSON), nicht geschätzt. Die letzten drei Klassen
+     (ab 75 mm/h) fehlten vorher ganz: Extremregen wäre in der Karte
+     unsichtbar geblieben, weil seine Farben an der Toleranzprüfung
+     scheiterten. */
+  const DWD_MMH = [
+    [0.1, 0.2], [0.2, 0.4], [0.4, 1], [1, 2], [2, 3], [3, 5], [5, 7.5],
+    [7.5, 10], [10, 15], [15, 30], [30, 45], [45, 75], [75, 100],
+    [100, 150], [150, 150]
   ];
   /* Eigene Skala: von zartem Blau über Grün und Gelb nach Rot und Violett.
      Der vierte Wert ist die Deckkraft — leichter Regen bleibt zurückhaltend,
@@ -192,7 +207,8 @@ const Radar = (() => {
     [ 96, 200, 242, 200], [ 56, 174, 240, 218], [ 30, 140, 232, 232],
     [ 26, 186, 196, 240], [ 40, 200, 110, 246], [118, 216,  56, 250],
     [200, 224,  36, 252], [250, 206,  32, 253], [250, 158,  28, 254],
-    [244, 104,  34, 255], [232,  44,  40, 255], [186,  32, 128, 255]
+    [244, 104,  34, 255], [232,  44,  40, 255], [186,  32, 128, 255],
+    [150,  26, 168, 255], [104,  22, 200, 255], [ 66,  32, 235, 255]
   ];
 
   /** Nachschlagtabelle, damit nicht je Bildpunkt zwölfmal gerechnet wird. */
@@ -232,6 +248,10 @@ const Radar = (() => {
      dwdRoh war beim Umbau mit dem alten Weichzeichner-Block verschwunden —
      „dwdRoh is not defined" in der Konsole, das Radar blieb leer. */
   let dwdRoh = null, dwdFein = null;
+  /** Geglättetes Wertefeld des Jetzt-Bilds samt Kasten, für die Ortswerte. */
+  let feldInfo = null;
+  let ortMarker = [];
+  let ortTimer = null;
 
   /** Farbe zu einem Zwischenwert der Stufenleiter (0 = keine, 12 = extrem).
 
@@ -263,7 +283,50 @@ const Radar = (() => {
     ziel[o + 3] = (a[3] + (b[3] - a[3]) * mix) * rand;
   }
 
-  function dwdFiltern(bild) {
+  /* Der Weichzeichner sitzt auf dem WERTEfeld, nicht auf fertigen Farben.
+     Sigma 1,1 Zellen ist gemessen: breite Regenkerne behalten 100 % ihrer
+     Stärke, der Rand läuft über rund vier Kilometer aus, und selbst ein
+     2x2-km-Schauer bleibt sichtbar. Separabel gerechnet: zwei Durchgänge
+     statt Kernel im Quadrat. (Beim Umbau auf Farbklassen war dieser Block
+     versehentlich mit ersetzt worden — „feldGlaetten is not defined",
+     das Radar fiel komplett auf RainViewer zurück.) */
+  const GLATT_SIGMA = 1.1;
+  let glattKern = null;
+
+  function kernHolen() {
+    if (glattKern) return glattKern;
+    const r = Math.ceil(GLATT_SIGMA * 2.5), k = new Float32Array(2 * r + 1);
+    let summe = 0;
+    for (let i = -r; i <= r; i++) {
+      const v = Math.exp(-(i * i) / (2 * GLATT_SIGMA * GLATT_SIGMA));
+      k[i + r] = v; summe += v;
+    }
+    for (let i = 0; i < k.length; i++) k[i] /= summe;
+    return (glattKern = { r, k });
+  }
+
+  function feldGlaetten(feld, w, h) {
+    const { r, k } = kernHolen();
+    const tmp = new Float32Array(w * h), aus = new Float32Array(w * h);
+    for (let y = 0; y < h; y++) {
+      const z = y * w;
+      for (let x = 0; x < w; x++) {
+        let s = 0;
+        for (let i = -r; i <= r; i++) s += feld[z + Math.min(w - 1, Math.max(0, x + i))] * k[i + r];
+        tmp[z + x] = s;
+      }
+    }
+    for (let y = 0; y < h; y++) {
+      for (let x = 0; x < w; x++) {
+        let s = 0;
+        for (let i = -r; i <= r; i++) s += tmp[Math.min(h - 1, Math.max(0, y + i)) * w + x] * k[i + r];
+        aus[y * w + x] = s;
+      }
+    }
+    return aus;
+  }
+
+  function dwdFiltern(bild, kasten) {
     const bw = bild.naturalWidth || bild.width;
     const bh = bild.naturalHeight || bild.height;
     if (!dwdRoh) dwdRoh = document.createElement('canvas');
@@ -313,6 +376,11 @@ const Radar = (() => {
       }
     }
     feinCtx.putImageData(aus, 0, 0);
+
+    /* Das geglättete Wertefeld fürs Jetzt-Bild aufheben: daraus liest
+       ortsWerte() die mm/h an den Ortsnamen ab — dieselben Zahlen, die
+       die Farben zeigen, kein zweiter Datenweg. */
+    if (kasten) feldInfo = { glatt, bw, bh, ...kasten };
 
     // 3. Den fertig eingefärbten Verlauf auf die Ausgabegröße ziehen
     dwdCtx.clearRect(0, 0, DWD_PX, DWD_PX);
@@ -394,7 +462,8 @@ const Radar = (() => {
       });
       if (lauf !== dwdLauf) return;              // inzwischen weitergeschoben
 
-      dwdFiltern(bild);
+      dwdFiltern(bild, zeitMs ? null
+        : { x0: +r(x0), y0: +r(y0), x1: +r(x1), y1: +r(y1), schluessel: speicherKey });
       /* Blob statt Daten-Adresse — genau die Falle, die schon die
          Vorhersagebilder leer ließ: MapLibre bricht bei Base64-Adressen mit
          „Failed to fetch" ab, und die Karte bleibt ohne Bild. */
@@ -420,10 +489,86 @@ const Radar = (() => {
     }
   }
 
+  function leereOrtswerte() {
+    ortMarker.forEach((m) => m.remove());
+    ortMarker = [];
+  }
+
+  /** mm/h-Text zu einem geglätteten Stufenwert, deutsch formatiert. */
+  function mmhText(v) {
+    const i = Math.min(DWD_MMH.length - 1, Math.max(0, Math.round(v) - 1));
+    const [von, bis] = DWD_MMH[i];
+    if (von >= 150) return '150+ mm/h';
+    const t = Math.min(1, Math.max(0, v - Math.round(v) + 0.5));
+    const wert = von + (bis - von) * t;
+    const zahl = wert >= 10 ? String(Math.round(wert))
+      : (Math.round(wert * 10) / 10).toLocaleString('de-DE');
+    return `≈ ${zahl} mm/h`;
+  }
+
+  /** Regenwerte an den sichtbaren Ortsnamen — wie die Stationswerte in der
+      DWD-App. Die Werte kommen aus dem aktuellen Messbild („jetzt"); beim
+      Spulen bleiben sie stehen, genau wie die Stationsschirmchen dort. */
+  function ortsWerte() {
+    leereOrtswerte();
+    if (!dwdSichtbar || !feldInfo || !map || !els.aktiveEbenen?.().has('regen')) return;
+    const { glatt, bw, bh, x0, y0, x1, y1 } = feldInfo;
+    const M = 20037508.342789244;
+    const wert = (lon, lat) => {
+      const mx = lon * M / 180;
+      const my = Math.log(Math.tan((90 + lat) * Math.PI / 360)) / Math.PI * M;
+      const ix = Math.round((mx - x0) / (x1 - x0) * bw - 0.5);
+      const iy = Math.round((y1 - my) / (y1 - y0) * bh - 0.5);
+      if (ix < 0 || iy < 0 || ix >= bw || iy >= bh) return 0;
+      return glatt[iy * bw + ix];
+    };
+    const setzen = (lngLat, v, extra = '', anker = 'top', versatz = [0, 10]) => {
+      const el = document.createElement('div');
+      el.className = 'wf-ortwert' + extra;
+      el.textContent = mmhText(v);
+      el.title = 'aktuelle Radarmessung';
+      ortMarker.push(new maplibregl.Marker({ element: el, anchor: anker, offset: versatz })
+        .setLngLat(lngLat).addTo(map));
+    };
+
+    const ebenen = ['label_city_capital', 'label_city', 'label_town']
+      .filter((id) => map.getLayer(id));
+    const gesehen = new Set();
+    let anzahl = 0;
+    for (const id of ebenen) {
+      if (anzahl >= 8) break;
+      let treffer = [];
+      try { treffer = map.queryRenderedFeatures({ layers: [id] }); } catch { continue; }
+      for (const f of treffer) {
+        if (anzahl >= 8) break;
+        const name = f.properties?.name;
+        const pos = f.geometry?.type === 'Point' ? f.geometry.coordinates : null;
+        if (!name || !pos || gesehen.has(name)) continue;
+        gesehen.add(name);
+        const v = wert(pos[0], pos[1]);
+        if (v < 0.3) continue;
+        setzen(pos, v);
+        anzahl++;
+      }
+    }
+    // Der eigene Standort bekommt seinen Wert über dem Punkt
+    if (here) {
+      const v = wert(here[0], here[1]);
+      if (v >= 0.3) setzen(here, v, ' wf-ortwert-hier', 'bottom', [0, -14]);
+    }
+  }
+
+  /** Kurz warten, bis die Karte die Beschriftung gezeichnet hat. */
+  function planeOrtswerte() {
+    clearTimeout(ortTimer);
+    ortTimer = setTimeout(ortsWerte, 450);
+  }
+
   function setzeDwdSichtbar(an) {
     dwdSichtbar = an;
     if (map?.getLayer('dwd-layer')) map.setPaintProperty('dwd-layer', 'raster-opacity', an ? 0.9 : 0);
     if (els.sharp) els.sharp.hidden = !an;
+    if (an) planeOrtswerte(); else leereOrtswerte();
 
     /* Früher lief hier eine Schleife über alle Bilder und setzte bei jedem
        Schritt dreizehn Deckkraft-Werte neu — dreizehn Neuzeichnungen der
@@ -1169,9 +1314,13 @@ const Radar = (() => {
     const naechstes = () => {
       if (i >= zeiten.length) return;
       const t = zeiten[i++];
-      ladeDwdBild(t).finally(() => setTimeout(naechstes, 60));
+      ladeDwdBild(t).finally(() => setTimeout(naechstes, 250));
     };
-    setTimeout(() => { naechstes(); naechstes(); naechstes(); }, 350);
+    /* Zwei Ketten mit 250 ms Abstand statt drei mit 60: Seit die Leiste
+       zwei Stunden zurückreicht, sind es 43 Bilder — im alten Takt reizte
+       das Vorwärmen die Ratengrenze des DWD, und ausgerechnet das
+       Jetzt-Bild bekam dann 429er. */
+    setTimeout(() => { naechstes(); naechstes(); }, 350);
   }
 
   return { init, load, setCenter, play, pause, toggle, show, isPlaying,
