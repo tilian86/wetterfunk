@@ -2819,8 +2819,17 @@ function onMapMoved(mitte, zoom) {
 function ladeRaster(lat, lon, zoom, ebenen, sicht) {
   const zeit = () => { const t = currentScrubTime(); return t ? mapZeitWort(t) : ''; };
   const laden = $('#mapLoading');
-  setMapMode(zeit(), 'Vorhersage wird geladen…', 'laden');
-  if (laden) laden.hidden = false;
+  /* Steht schon eine brauchbare Vorhersage auf der Karte, wird beim
+     Nachladen NICHT mehr „wird geladen" darübergeschrieben. Vorher
+     verschwand bei jeder Zoomstufe die fertige Karte hinter einer
+     Ladeanzeige, obwohl das alte Bild völlig in Ordnung war — genau das
+     ließ die App unruhig wirken. Das neue Bild löst das alte still ab,
+     sobald es da ist. */
+  const schonDa = Forecast.ready();
+  if (!schonDa) {
+    setMapMode(zeit(), 'Vorhersage wird geladen…', 'laden');
+    if (laden) laden.hidden = false;
+  }
 
   return Forecast.load(lat, lon, zoom, ebenen, sicht)
     .then(() => {
@@ -2842,6 +2851,8 @@ function ladeRaster(lat, lon, zoom, ebenen, sicht) {
       Radar.vorwaermen?.(stunden, flaechen);
     })
     .catch((e) => {
+      // Ein absichtlich abgebrochener Abruf ist kein Fehler
+      if (e?.name === 'AbortError') return;
       /* Zeigt die Karte gerade den DWD-Nowcast, ist das Raster gar nicht
          gefragt — dann darf ein Fehler beim Rasterabruf auch nicht
          „für diese Region keine Daten" über ein einwandfreies Radarbild
