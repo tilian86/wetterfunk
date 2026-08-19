@@ -1070,9 +1070,16 @@ function renderHourly() {
         const boe = Math.round(h.wind_gusts_10m?.[i] ?? 0);
         if (dirRoh == null) return '<span class="h-wind"></span>';
         const stark = boe >= 45;
+        /* Herkunftskürzel dazu (Wind heißt nach seiner HERKUNFT — „NO"
+           weht aus Nordost) und statt des nackten Pfeils ein kleiner
+           Flieger in Flugrichtung, wie ihn Florian von WetterOnline
+           kennt: Spitze zeigt, WOHIN der Wind weht. */
+        const kurz = ['N','NO','O','SO','S','SW','W','NW'][
+          Math.round(((dirRoh % 360) + 360) % 360 / 45) % 8];
         return `<span class="h-wind${stark ? ' on' : ''}">
-          <i style="transform:rotate(${Math.round(dirRoh + 180)}deg)">↑</i>${
-          boe >= 60 ? `<b>${boe}</b>` : w}</span>`;
+          <svg viewBox="0 0 12 12" style="transform:rotate(${Math.round(dirRoh + 180)}deg)"
+            aria-hidden="true"><path d="M6 0.8 L10.6 10.4 L6 7.9 L1.4 10.4 Z"/></svg>${
+          kurz} ${boe >= 60 ? `<b>${boe}</b>` : w}</span>`;
       })()}
     </div>`;
   }).join('');
@@ -8715,6 +8722,17 @@ function wire() {
     if (e.target.id === 'regenSheet' || e.target.classList.contains('sheet-x')) closeSheet('#regenSheet');
   });
   $('#pushToggle')?.addEventListener('click', pushUmschalten);
+
+  // Symbolfamilie: fein (Linien) oder rund (WetterOnline-Art, weiße Wolken)
+  const stilKnoepfe = $$('.stil-wahl button');
+  const stilZeigen = () => stilKnoepfe.forEach(b =>
+    b.classList.toggle('an', b.dataset.stil === (WX.stil?.() || 'fein')));
+  stilKnoepfe.forEach(b => b.addEventListener('click', () => {
+    store.set('wf.symbole', b.dataset.stil);
+    stilZeigen();
+    try { renderHero(); renderHourly(); renderDaily(); } catch {}
+  }));
+  stilZeigen();
 
 
   // Häkchen wirken sofort — auch bei bereits laufendem Abo

@@ -242,13 +242,22 @@ const Radar = (() => {
     }
     rohCtx.putImageData(img, 0, 0);
     /* Erst nach dem Filtern vergrößern: Auf dem kleinen Bild sind die
-       Zellen einzelne Pixel, und das weiche Hochrechnen erzeugt die
-       fließenden Übergänge. Vorher zu vergrößern hieße, harte Kacheln
-       nur unscharf zu machen. */
+       Zellen einzelne Pixel, und das weiche Hochrechnen erzeugt fließende
+       Übergänge. Das allein reichte aber nicht: Benachbarte Zellen mit
+       DERSELBEN Farbstufe verschmelzen zu großen einfarbigen Flächen, und
+       weich wurde nur deren Rand — innen blieb es kachelig (Florian:
+       „immer noch pixelig"). Deshalb zusätzlich eine Weichzeichnung
+       proportional zur Vergrößerung: Sie verbreitert die Übergänge zu
+       echten Verläufen, wie es die großen Wetter-Apps machen. Kosmetik,
+       keine neuen Daten — aber ehrliche: Das Auge liest Verläufe als
+       „Feld", Kacheln als „Fehler". */
+    const faktor = DWD_PX / bw;
     dwdCtx.clearRect(0, 0, DWD_PX, DWD_PX);
     dwdCtx.imageSmoothingEnabled = true;
     dwdCtx.imageSmoothingQuality = 'high';
+    dwdCtx.filter = `blur(${Math.min(6, Math.max(0.6, faktor * 0.45)).toFixed(1)}px)`;
     dwdCtx.drawImage(dwdRoh, 0, 0, DWD_PX, DWD_PX);
+    dwdCtx.filter = 'none';
     return farbig;
   }
 
@@ -1091,13 +1100,17 @@ const Radar = (() => {
   function nowcastVorwaermen() {
     const zeiten = rvZeiten();
     if (!zeiten.length) return;
+    /* Drei Ketten parallel statt einer: Seit die Bilder in Zellauflösung
+       kommen, sind sie nur noch wenige Kilobyte — der Engpass ist die
+       Rundreise zum DWD, nicht die Datenmenge. So steht der ganze
+       Zeitstrahl in einem Drittel der Zeit bereit. */
     let i = 0;
     const naechstes = () => {
       if (i >= zeiten.length) return;
       const t = zeiten[i++];
-      ladeDwdBild(t).finally(() => setTimeout(naechstes, 120));
+      ladeDwdBild(t).finally(() => setTimeout(naechstes, 60));
     };
-    setTimeout(naechstes, 400);
+    setTimeout(() => { naechstes(); naechstes(); naechstes(); }, 350);
   }
 
   return { init, load, setCenter, play, pause, toggle, show, isPlaying,

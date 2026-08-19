@@ -881,9 +881,37 @@ select#bfModel {
   font-size: 9.5px; color: var(--ink-faint); height: 13px; margin-top: 1px;
   font-variant-numeric: tabular-nums;
 }
-.h-wind i { font-style: normal; display: inline-block; font-size: 10px; line-height: 1; }
+.h-wind svg { width: 9px; height: 9px; flex: none; fill: currentColor; stroke: none; }
 .h-wind b { font-weight: 700; }
 .h-wind.on { color: var(--warn); }
+
+/* ── Runde Symbolfamilie (WetterOnline-Art) ────────────────
+   Weiße Bauschwolken, warmes Gelb, sattes Blau. Strich-Reset zuerst —
+   die globale Regel `svg { stroke: currentColor }` schlägt Inline-Werte. */
+.wx.rund * { stroke: none; }
+.wx.rund .kw-sonne { fill: #ffd029; }
+.wx.rund .kw-strahl { stroke: #ffd029; stroke-width: 4.4; stroke-linecap: round; }
+.wx.rund .kw-mond { fill: #ffdf6b; }
+.wx.rund .kw-wolke circle, .wx.rund .kw-wolke rect { fill: #f4f8fd; }
+.wx.rund .kw-wolke-hinten circle, .wx.rund .kw-wolke-hinten rect { fill: #b9c6d8; }
+.wx.rund .kw-gewitterwolke circle, .wx.rund .kw-gewitterwolke rect { fill: #9aa9be; }
+.wx.rund .kw-tropfen { stroke: #3ea5ec; stroke-width: 4.2; stroke-linecap: round; }
+.wx.rund .kw-flocke line { stroke: #f2f7ff; stroke-width: 2.6; stroke-linecap: round; }
+.wx.rund .kw-blitz { fill: #ffd029; }
+.wx.rund .kw-nebel { stroke: #c2cddc; stroke-width: 4.4; stroke-linecap: round; }
+
+/* Umschalter unter der Stundenleiste */
+.stil-wahl {
+  display: flex; align-items: center; gap: 7px; margin-top: 8px;
+  font-size: 11px; color: var(--ink-faint);
+}
+.stil-wahl button {
+  background: rgba(255,255,255,.05); border: 1px solid var(--card-line);
+  color: var(--ink-dim); border-radius: 30px; padding: 4px 11px;
+  font-size: 11px; font-weight: 600; cursor: pointer;
+}
+.stil-wahl button.an { background: rgba(122,196,250,.16);
+  border-color: rgba(122,196,250,.45); color: #a8d6f8; }
 
 .hcol-sun { width: 58px; opacity: .82; }
 .h-sunlabel { font-size: 9.5px; color: var(--ink-faint); }
