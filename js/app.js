@@ -2889,6 +2889,12 @@ function onMapMoved(mitte, zoom) {
   }, 600);
 }
 
+/** Wie viele Rasterabrufe gerade offen sind — damit ein abgebrochener
+    Lauf die Ladeanzeige nur dann aufräumt, wenn kein neuer folgt. */
+let offeneRaster = 0;
+/** Ein einziger geplanter Nachschlag nach einem Abruflimit. */
+let rasterNachschlag = null;
+
 /** Raster holen und dabei sichtbar machen, dass gerade geladen wird. */
 function ladeRaster(lat, lon, zoom, ebenen, sicht) {
   const zeit = () => { const t = currentScrubTime(); return t ? mapZeitWort(t) : ''; };
@@ -2899,6 +2905,7 @@ function ladeRaster(lat, lon, zoom, ebenen, sicht) {
      Ladeanzeige, obwohl das alte Bild völlig in Ordnung war — genau das
      ließ die App unruhig wirken. Das neue Bild löst das alte still ab,
      sobald es da ist. */
+  offeneRaster++;
   const schonDa = Forecast.ready();
   if (!schonDa) {
     setMapMode(zeit(), 'Vorhersage wird geladen…', 'laden');
@@ -2925,18 +2932,44 @@ function ladeRaster(lat, lon, zoom, ebenen, sicht) {
       Radar.vorwaermen?.(stunden, flaechen);
     })
     .catch((e) => {
-      // Ein absichtlich abgebrochener Abruf ist kein Fehler
-      if (e?.name === 'AbortError') return;
+      /* Abgebrochen heißt: ein neuerer Lauf hat übernommen und setzt gleich
+         seinen eigenen Zustand. Nur wenn KEIN Lauf mehr offen ist, muss
+         hier aufgeräumt werden — sonst bliebe „wird geladen" stehen. */
+      if (e?.name === 'AbortError') {
+        if (offeneRaster <= 1) syncMapAt(currentScrubTime());
+        return;
+      }
       /* Zeigt die Karte gerade den DWD-Nowcast, ist das Raster gar nicht
          gefragt — dann darf ein Fehler beim Rasterabruf auch nicht
          „für diese Region keine Daten" über ein einwandfreies Radarbild
          schreiben. Genau das stand bei Florian über der vollen Karte. */
-      if (Radar.nowcastAktiv) return;
+      /* Zeigt die Karte ein einwandfreies Radarbild, wird kein Fehler
+         darübergeschrieben — aber die Ladeanzeige MUSS weg. Vorher blieb
+         hier „Vorhersage wird geladen…" ewig stehen, obwohl der Abruf
+         längst gescheitert war (Open-Meteo antwortet bei erschöpftem
+         Kontingent mit 429). Man konnte nicht wissen, ob da noch etwas
+         kommt. */
+      /* Beim Abruflimit von selbst erholen: Die Sperre gilt zeitlich, nicht
+         dauerhaft. Ein einziger Nachschlag nach 90 Sekunden holt die
+         Flächenvorhersage nach, ohne dass jemand etwas tun muss — und ohne
+         den Dienst mit Dauerversuchen weiter zu belasten. */
+      if (/429/.test(e?.message) && !rasterNachschlag) {
+        rasterNachschlag = setTimeout(() => {
+          rasterNachschlag = null;
+          if (!Forecast.ready()) {
+            ladeRaster(lat, lon, zoom, ebenen, sichtbarerBereich() || sicht);
+          }
+        }, 90000);
+      }
+      if (Radar.nowcastAktiv) { syncMapAt(currentScrubTime()); return; }
       setMapMode(zeit(), /429/.test(e?.message)
-        ? 'Wetterdienst bremst — gleich nochmal versuchen'
+        ? 'Wetterdienst bremst — Flächenvorhersage kommt gleich'
         : 'für diese Region keine Daten', 'none');
     })
-    .finally(() => { if (laden) laden.hidden = true; });
+    .finally(() => {
+      offeneRaster = Math.max(0, offeneRaster - 1);
+      if (laden) laden.hidden = true;
+    });
 }
 
 /** Beim Ein- oder Ausschalten einer Ebene fehlen unter Umständen die Werte. */
