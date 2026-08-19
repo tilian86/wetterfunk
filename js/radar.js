@@ -615,7 +615,10 @@ const Radar = (() => {
     const h = Math.max(0, zeit ? Forecast.indexFor(zeit) : 0);
     const geo = {
       type: 'FeatureCollection',
-      features: Forecast.windPoints(h).map(p => ({
+      features: Forecast.windPoints(h, (() => {
+        const b = map.getBounds();
+        return { south: b.getSouth(), north: b.getNorth(), west: b.getWest(), east: b.getEast() };
+      })()).map(p => ({
         type: 'Feature',
         geometry: { type: 'Point', coordinates: [p.lon, p.lat] },
         properties: { rot: (p.richtung + 180) % 360, spd: Math.round(p.kmh) }

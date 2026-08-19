@@ -51,10 +51,20 @@ async function load(lat, lon, zoom = 7, ebenen = null, sicht = null) {
      Spanne um die Mitte — sonst endet die Vorhersage mitten im Bild an einer
      harten Kante. Etwas Rand, damit kleine Verschiebungen nicht sofort
      nachladen. */
+  /* 1,6 statt 1,3 — und weiter unten die Mitte auf Spanne/8 statt /4 gerastet.
+     Beides gehört zusammen: Mit 1,3 blieb je Seite ein Rand von 0,15
+     Bildhöhen, das Rasten der Mitte verschob den Kasten aber um bis zu
+     0,163 Bildhöhen. Der Versatz war also GRÖSSER als der Rand — bei rund
+     5 % aller Kartenpositionen konnte das frisch geladene Raster den
+     Ausschnitt gar nicht abdecken. covers() sagte „passt nicht", die App
+     lud nach, bekam dasselbe Raster, und das endlos. Genau das war
+     Florians „lädt immer nach": eine Schleife, die nie fertig wird.
+     Nebenwirkung war, dass die Vorhersage-Ebene dabei dauernd neu
+     eingeblendet wurde und das DWD-Radarbild verdeckte. */
   let SPAN_LAT = stufe.lat, SPAN_LON = stufe.lon;
   if (sicht) {
-    SPAN_LAT = Math.min(80, Math.max(SPAN_LAT, (sicht.north - sicht.south) * 1.3));
-    SPAN_LON = Math.min(150, Math.max(SPAN_LON, (sicht.east - sicht.west) * 1.3));
+    SPAN_LAT = Math.min(80, Math.max(SPAN_LAT, (sicht.north - sicht.south) * 1.6));
+    SPAN_LON = Math.min(150, Math.max(SPAN_LON, (sicht.east - sicht.west) * 1.6));
   }
 
   /* Auf ein festes Gitter rasten. 400 Punkte über fünf Tage sind ein teurer
@@ -65,7 +75,7 @@ async function load(lat, lon, zoom = 7, ebenen = null, sicht = null) {
   const stufeAuf = (v, schritt) => Math.ceil(v / schritt) * schritt;
   SPAN_LAT = stufeAuf(SPAN_LAT, stufe.lat / 2);
   SPAN_LON = stufeAuf(SPAN_LON, stufe.lon / 2);
-  const gitterLat = SPAN_LAT / 4, gitterLon = SPAN_LON / 4;
+  const gitterLat = SPAN_LAT / 8, gitterLon = SPAN_LON / 8;
   const mitteLat = Math.round(lat / gitterLat) * gitterLat;
   const mitteLon = Math.round(lon / gitterLon) * gitterLon;
 
@@ -342,11 +352,22 @@ function indexFor(date) {
 
 /** Windpfeile: jeder zweite Rasterpunkt, sonst wird die Karte zum Nadelkissen.
     Richtung ist meteorologisch — woher der Wind kommt. */
-function windPoints(h) {
+/** Windpfeile. Der Abstand richtet sich nach dem sichtbaren Ausschnitt:
+    Fest jeder zweite Punkt (`i += 2`) hieß, dass die Pfeildichte am
+    Bildschirm mit jeder Zoomstufe schwankte — herausgezoomt standen nur
+    noch eine Handvoll Pfeile im Bild. Jetzt wird der Abstand so gewählt,
+    dass quer über das Bild immer rund elf Pfeile liegen. */
+function windPoints(h, sicht = null) {
   if (!grid || !grid.windS?.[0]?.length || !grid.windD?.[0]?.length) return [];
+  let schritt = 2;
+  if (sicht && grid.spanLat > 0 && grid.spanLon > 0) {
+    const quer = N * (sicht.east - sicht.west) / grid.spanLon;
+    const hoch = N * (sicht.north - sicht.south) / grid.spanLat;
+    schritt = Math.max(1, Math.round(Math.max(quer, hoch) / 11));
+  }
   const out = [];
-  for (let i = 0; i < N; i += 2) {
-    for (let j = 0; j < N; j += 2) {
+  for (let i = 0; i < N; i += schritt) {
+    for (let j = 0; j < N; j += schritt) {
       const s = grid.windS[i * N + j]?.[h];
       const d = grid.windD[i * N + j]?.[h];
       if (s == null || d == null) continue;
