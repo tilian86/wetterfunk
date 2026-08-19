@@ -319,15 +319,15 @@ const Radar = (() => {
      dieselben Kacheln über Ansichten, Zoomstufen und Nutzer hinweg, und
      MapLibre behält beim Schieben, was es schon hat.
 
-     Die Kacheln laufen über ein eigenes Adressschema, damit unsere
-     Glättung und Farbskala pro Kachel greifen. Gegen Nähte wird jede
-     Kachel mit KACHEL_RAND Zellen Überlappung geholt, geglättet und
-     danach auf die Kachelgrenze zurückgeschnitten: Der Weichzeichner
-     sieht so echte Nachbardaten statt eines Randes, und zwei
-     aneinandergrenzende Kacheln kommen am Stoß auf denselben Wert. */
+     Seit v209 kommen die Daten nicht mehr je Kachel vom DWD, sondern aus
+     EINEM Deutschland-Bild je Zeitschritt (Worker-Endpunkt /dwdbild,
+     R2-gestützt): Der Schlüssel ist für alle Nutzer und alle Ausschnitte
+     gleich, Vergangenes liegt fertig bereit, und Schwenken oder Zoomen
+     innerhalb eines Zeitschritts braucht GAR KEIN Netz mehr — die Kacheln
+     werden hier aus dem geglätteten Deutschland-Feld geschnitten. Nähte
+     kann es nicht mehr geben: alle Kacheln stammen aus demselben Feld. */
   const KACHEL_PROTO = 'wfradar';
   const KACHEL_PX = 512;                 // Ausgabegröße je Kachel
-  const KACHEL_RAND = 4;                 // Zellen Überlappung (Kernradius ist 3)
   const KACHEL_MIN_Z = 5, KACHEL_MAX_Z = 9;
   let protoDa = false;
   /* Wie viele Kacheln gerade unterwegs sind. Ohne diese Zahl sah man beim
@@ -339,111 +339,106 @@ const Radar = (() => {
     els.onLaden?.(offeneKacheln);
   }
 
-  /** Felder der zuletzt gezeichneten Jetzt-Kacheln — daraus liest
-      ortsWerte() die mm/h an den Ortsnamen. */
-  const kachelFelder = new Map();
-  const KACHEL_FELD_MAX = 24;
+  /* Das Deutschland-Bild: fester Kasten in Web-Mercator, 1024 x 1396 —
+     eine Zelle je Kilometer, quadratisch (1087 m je Seite). Muss zum
+     Worker-Endpunkt /dwdbild passen. */
+  const DE_X0 = 612257, DE_Y0 = 5942074, DE_X1 = 1725452, DE_Y1 = 7459517;
+  const DE_BW = 1024, DE_BH = 1396;
+
+  /* Geglättete Deutschland-Felder je Zeitstempel, als Uint8 (Stufe x 16 —
+     1,4 MB je Schritt statt 5,7 als Float). Sechzehn Schritte im Speicher
+     decken Hin- und Herspulen; Älteres kommt aus dem HTTP-Cache zurück. */
+  const felder = new Map();               // stempel → { feld: Uint8Array }
+  const felderLaufend = new Map();        // stempel → Promise (kein Doppelabruf)
+  const FELDER_MAX = 16;
 
   function proxyBasis() {
     return ((localStorage.getItem('wf.proxy') || '').replace(/^"|"$/g, '')
       || 'https://wetterfunk.florian-s-thiel.workers.dev').replace(/\/+$/, '');
   }
 
-  /** Eine Kachel holen, aufbereiten und als PNG zurückgeben.
+  /** Deutschland-Feld für einen Zeitstempel: holen, zu Werten wandeln,
+      glätten, quantisieren. Läuft je Stempel genau einmal. */
+  function feldHolen(stempel, signal) {
+    const da = felder.get(stempel);
+    if (da) { felder.delete(stempel); felder.set(stempel, da); return Promise.resolve(da); }
+    if (felderLaufend.has(stempel)) return felderLaufend.get(stempel);
+    const arbeit = (async () => {
+      const url = `${proxyBasis()}/dwdbild?time=${encodeURIComponent(stempel)}`;
+      let antwort = await fetch(url, { signal });
+      if (!antwort.ok && antwort.status >= 500) {
+        await new Promise(r => setTimeout(r, 1500));
+        antwort = await fetch(url, { signal });
+      }
+      if (!antwort.ok) throw new Error(`DWD-Bild ${antwort.status}`);
+      const bild = await createImageBitmap(await antwort.blob());
+      const c = document.createElement('canvas');
+      c.width = DE_BW; c.height = DE_BH;
+      const cx = c.getContext('2d', { willReadFrequently: true });
+      cx.drawImage(bild, 0, 0);
+      const px = cx.getImageData(0, 0, DE_BW, DE_BH).data;
+      const roh = new Float32Array(DE_BW * DE_BH);
+      let farbig = 0;
+      for (let i = 0, k = 0; i < px.length; i += 4, k++) {
+        if (px[i + 3] === 0) continue;
+        const r = px[i], g = px[i + 1], b = px[i + 2];
+        if (Math.max(r, g, b) - Math.min(r, g, b) < 26) continue;
+        if (r > 200 && b > 200 && g < 120) continue;
+        const stufe = naechsteStufe(r, g, b);
+        if (stufe < 0) continue;
+        roh[k] = stufe + 1;
+        farbig++;
+      }
+      const glatt = farbig ? feldGlaetten(roh, DE_BW, DE_BH) : roh;
+      const feld = new Uint8Array(DE_BW * DE_BH);
+      for (let k = 0; k < feld.length; k++) {
+        feld[k] = Math.min(255, Math.round(glatt[k] * 16));
+      }
+      const eintrag = { feld };
+      felder.set(stempel, eintrag);
+      while (felder.size > FELDER_MAX) felder.delete(felder.keys().next().value);
+      return eintrag;
+    })();
+    felderLaufend.set(stempel, arbeit);
+    arbeit.finally(() => felderLaufend.delete(stempel));
+    return arbeit;
+  }
 
-      Entscheidend ist das Anfrageraster: Es wird auf ein GLOBALES
-      Kilometergitter gerundet, nicht auf die Kachelkante. Vorher fragte
-      jede Kachel ihr eigenes, um Sekundenbruchteile verschobenes Raster an
-      — der DWD-Server rastert seine 1-km-Daten dann für jede Anfrage neu
-      ein, und benachbarte Kacheln bekamen für dieselbe Stelle verschiedene
-      Zellen. Gemessen war die Naht dadurch bei 5 % der Zeilen bis zu 242
-      Farbstufen daneben. Auf gemeinsamem Gitter liefert der Server im
-      Überlappungsbereich dieselben Werte, und der Stoß verschwindet. */
+  /** Eine Kachel aus dem Deutschland-Feld schneiden — reine Rechnung,
+      kein Netz. Bilinear abgetastet, damit die Kachelkante nicht auf die
+      Feldzellen fallen muss. */
   async function kachelBauen(z, x, y, stempel, signal) {
+    const { feld } = await feldHolen(stempel, signal);
     const M = 20037508.342789244;
     const seite = 2 * M / Math.pow(2, z);
+    const kx0 = -M + x * seite, ky1 = M - y * seite;
+    const zellX = (DE_X1 - DE_X0) / DE_BW;
+    const zellY = (DE_Y1 - DE_Y0) / DE_BH;
 
-    // Zellgröße: 1 km, gröber nur wenn das Bild sonst zu groß würde
-    let zelle = 1000;
-    let n = Math.ceil((seite + 2 * KACHEL_RAND * zelle) / zelle);
-    while (n > 512) { zelle *= 2; n = Math.ceil((seite + 2 * KACHEL_RAND * zelle) / zelle); }
-
-    const x0 = -M + x * seite, y1 = M - y * seite;
-    // Auf das globale Gitter rasten — der Kern des Ganzen
-    const gx0 = Math.floor((x0 - KACHEL_RAND * zelle) / zelle) * zelle;
-    const gy1 = Math.ceil((y1 + KACHEL_RAND * zelle) / zelle) * zelle;
-    const gx1 = gx0 + n * zelle, gy0 = gy1 - n * zelle;
-
-    const bbox = [gx0, gy0, gx1, gy1].map(v => v.toFixed(0)).join(',');
-    const url = `${proxyBasis()}/dwdradar?bbox=${bbox}&px=${n}`
-      + `&time=${encodeURIComponent(stempel)}`;
-
-    /* Ein zweiter Versuch nach kurzer Pause: Der DWD antwortet unter Last
-       zeitweise mit 502/504. Ohne Wiederholung bliebe genau diese Kachel
-       als leeres Quadrat in der Karte stehen, bis man wegschiebt und
-       zurückkommt. */
-    let antwort = await fetch(url, { signal });
-    if (!antwort.ok && antwort.status >= 500) {
-      await new Promise(r => setTimeout(r, 1400));
-      antwort = await fetch(url, { signal });
-    }
-    if (!antwort.ok) throw new Error(`DWD ${antwort.status}`);
-    const bild = await createImageBitmap(await antwort.blob());
-
-    const roh = document.createElement('canvas');
-    roh.width = n; roh.height = n;
-    const rc = roh.getContext('2d', { willReadFrequently: true });
-    rc.drawImage(bild, 0, 0, n, n);
-    const daten = rc.getImageData(0, 0, n, n).data;
-    const feld = new Float32Array(n * n);
-    let farbig = 0;
-    for (let i = 0, k = 0; i < daten.length; i += 4, k++) {
-      if (daten[i + 3] === 0) continue;
-      const r = daten[i], g = daten[i + 1], b = daten[i + 2];
-      if (Math.max(r, g, b) - Math.min(r, g, b) < 26) continue;
-      if (r > 200 && b > 200 && g < 120) continue;
-      const stufe = naechsteStufe(r, g, b);
-      if (stufe < 0) continue;
-      feld[k] = stufe + 1;
-      farbig++;
-    }
-
-    // Glätten mit echten Nachbardaten aus dem Überlappungsbereich
-    const glatt = farbig ? feldGlaetten(feld, n, n) : feld;
-
-    if (stempel === dwdStempel(null)) {
-      kachelFelder.set(`${z}/${x}/${y}`,
-        { glatt, bw: n, bh: n, x0: gx0, y0: gy0, x1: gx1, y1: gy1 });
-      while (kachelFelder.size > KACHEL_FELD_MAX) {
-        kachelFelder.delete(kachelFelder.keys().next().value);
-      }
-    }
-
-    /* Ausgabe: direkt vom Gitterfeld auf die Kachelfläche abbilden. Weil
-       Gitter und Kachelkante nicht aufeinanderfallen, wird mit Bruchteilen
-       gerechnet — bilinear, also ohne Sprung an der Kante. */
-    /* Kein Umweg über PNG. Gemessen: das Einfärben einer Kachel kostet
-       28 ms, das PNG-Erzeugen daraus 1046 ms — über eine Sekunde
-       Hauptthread je Kachel, und genau das war das Ruckeln. MapLibre nimmt
-       ein ImageBitmap direkt an; das entsteht in 0,9 ms aus denselben
-       Bilddaten. Faktor 1176. */
     const aus = new ImageData(KACHEL_PX, KACHEL_PX);
     const ap = aus.data;
-    const hole = (ix, iy) => glatt[Math.min(n - 1, Math.max(0, iy)) * n
-                                 + Math.min(n - 1, Math.max(0, ix))];
+    /* Spaltenanteile einmal je Kachel vorrechnen statt eine Million
+       Funktionsaufrufe in der Doppelschleife — gemessen 150 ms je Kachel,
+       so um die 40. Indizes werden an den Feldrand geklemmt. */
+    const klemmX = (i) => Math.min(DE_BW - 1, Math.max(0, i));
+    const klemmY = (i) => Math.min(DE_BH - 1, Math.max(0, i));
+    const sx0 = new Int32Array(KACHEL_PX), sx1 = new Int32Array(KACHEL_PX);
+    const stx = new Float32Array(KACHEL_PX);
+    for (let ox = 0; ox < KACHEL_PX; ox++) {
+      const fx = (kx0 + (ox + 0.5) * seite / KACHEL_PX - DE_X0) / zellX - 0.5;
+      const x0i = Math.floor(fx);
+      sx0[ox] = klemmX(x0i); sx1[ox] = klemmX(x0i + 1); stx[ox] = fx - x0i;
+    }
     for (let oy = 0; oy < KACHEL_PX; oy++) {
-      const my = y1 - (oy + 0.5) * seite / KACHEL_PX;
-      const fy = (gy1 - my) / zelle - 0.5;
+      const fy = (DE_Y1 - (ky1 - (oy + 0.5) * seite / KACHEL_PX)) / zellY - 0.5;
       const y0i = Math.floor(fy), ty = fy - y0i;
+      const o1 = klemmY(y0i) * DE_BW, o2 = klemmY(y0i + 1) * DE_BW;
+      const zeile = oy * KACHEL_PX * 4;
       for (let ox = 0; ox < KACHEL_PX; ox++) {
-        const mx = x0 + (ox + 0.5) * seite / KACHEL_PX;
-        const fx = (mx - gx0) / zelle - 0.5;
-        const x0i = Math.floor(fx), tx = fx - x0i;
-        const v = hole(x0i, y0i) * (1 - tx) * (1 - ty)
-                + hole(x0i + 1, y0i) * tx * (1 - ty)
-                + hole(x0i, y0i + 1) * (1 - tx) * ty
-                + hole(x0i + 1, y0i + 1) * tx * ty;
-        stufenFarbe(v, ap, (oy * KACHEL_PX + ox) * 4);
+        const tx = stx[ox], a = sx0[ox], b = sx1[ox];
+        const v = (feld[o1 + a] * (1 - tx) + feld[o1 + b] * tx) * (1 - ty)
+                + (feld[o2 + a] * (1 - tx) + feld[o2 + b] * tx) * ty;
+        stufenFarbe(v / 16, ap, zeile + ox * 4);
       }
     }
     return await createImageBitmap(aus);
@@ -499,7 +494,6 @@ const Radar = (() => {
                  'raster-fade-duration': 150 }
       }, unterBeschriftung());
     } else if (q.tiles?.[0] !== adresse) {
-      kachelFelder.clear();
       q.setTiles([adresse]);
     }
     updateSharp();
@@ -507,57 +501,45 @@ const Radar = (() => {
     nachbarnVorladen(zeitMs);
   }
 
+  /* Der alte Name bleibt, damit die Aufrufer unverändert bleiben.
+     (War beim Umbau auf das Deutschland-Feld mit herausgeschnitten —
+     „ladeDwdBild is not defined" beim ersten Kartenzug.) */
+  async function ladeDwdBild(zeitMs = null) { dwdZeitSetzen(zeitMs); }
+
   /* Die nächsten zwei Schritte im Hintergrund holen. Wer einmal auf „weiter"
-     klickt, klickt meist gleich nochmal — dann liegt das Bild schon bereit
-     und die Wolken springen sofort weiter. */
+     klickt, klickt meist gleich nochmal — dann liegt das Deutschland-Feld
+     schon bereit und die Kacheln sind reine Rechnung. */
   let vorladeTimer = null;
   function nachbarnVorladen(zeitMs) {
     clearTimeout(vorladeTimer);
     vorladeTimer = setTimeout(() => {
       const basis = zeitMs ?? Date.now();
-      const kacheln = sichtbareKacheln().slice(0, 4);
-      const ziele = [];
       for (const d of [1, 2]) {
         const t = basis + d * RV_SCHRITT;
-        if (!rvMoeglich(t)) continue;
-        for (const k of kacheln) ziele.push([k, dwdStempel(t)]);
+        if (rvMoeglich(t)) feldHolen(dwdStempel(t)).catch(() => {});
       }
-      let i = 0;
-      const weiter = () => {
-        if (i >= ziele.length) return;
-        const [k, st] = ziele[i++];
-        warmMachen(k, st).finally(() => setTimeout(weiter, 250));
-      };
-      weiter();
     }, 900);
   }
 
   /* Den ganzen Vorhersageverlauf am Stück holen, damit das Abspielen
-     flüssig läuft. Vier gleichzeitig — mehr verträgt der DWD nicht gut,
-     weniger dauert unnötig lang. Meldet Fortschritt, weil das je nach
-     Auslastung des DWD zwischen wenigen Sekunden und einer Minute dauert. */
+     flüssig läuft: ein Deutschland-Bild je Schritt, drei gleichzeitig.
+     Vergangene Schritte liegen fertig in R2 und kommen in unter einer
+     Sekunde; nur ungewärmte Vorhersageschritte kosten den DWD-Abruf. */
   async function verlaufLaden(melden) {
     if (!ready || !map) return { fertig: 0, gesamt: 0 };
-    const kacheln = sichtbareKacheln().slice(0, 6);
-    const zeiten = rvZeiten().filter(t => t >= Date.now() - RV_SCHRITT);
-    const auftrag = [];
-    for (const t of zeiten) for (const k of kacheln) auftrag.push([k, dwdStempel(t)]);
-    let fertig = 0;
-    melden?.(0, auftrag.length);
-    let i = 0;
+    const einmalig = [...new Set(rvZeiten().map(t => dwdStempel(t)))];
+    let fertig = 0, i = 0;
+    melden?.(0, einmalig.length);
     const arbeiter = async () => {
-      while (i < auftrag.length) {
-        const [k, st] = auftrag[i++];
-        await warmMachen(k, st);
-        melden?.(++fertig, auftrag.length);
+      while (i < einmalig.length) {
+        const st = einmalig[i++];
+        await feldHolen(st).catch(() => {});
+        melden?.(++fertig, einmalig.length);
       }
     };
-    await Promise.all([arbeiter(), arbeiter(), arbeiter(), arbeiter()]);
-    return { fertig, gesamt: auftrag.length };
+    await Promise.all([arbeiter(), arbeiter(), arbeiter()]);
+    return { fertig, gesamt: einmalig.length };
   }
-
-  /* Der alte Name bleibt, damit die Aufrufer unverändert bleiben. */
-  async function ladeDwdBild(zeitMs = null) { dwdZeitSetzen(zeitMs); }
 
   function leereOrtswerte() {
     ortMarker.forEach((m) => m.remove());
@@ -581,21 +563,18 @@ const Radar = (() => {
       Spulen bleiben sie stehen, genau wie die Stationsschirmchen dort. */
   function ortsWerte() {
     leereOrtswerte();
-    if (!dwdSichtbar || !kachelFelder.size || !map || !els.aktiveEbenen?.().has('regen')) return;
+    const jetztFeld = felder.get(dwdStempel(null));
+    if (!dwdSichtbar || !jetztFeld || !map || !els.aktiveEbenen?.().has('regen')) return;
     const M = 20037508.342789244;
-    /* Der Wert kommt aus der Kachel, die den Punkt enthält — dieselben
-       Zahlen, aus denen auch die Farben entstehen, kein zweiter Datenweg. */
+    /* Der Wert kommt aus demselben Deutschland-Feld, aus dem auch die
+       Kachelfarben entstehen — kein zweiter Datenweg. */
     const wert = (lon, lat) => {
       const mx = lon * M / 180;
       const my = Math.log(Math.tan((90 + lat) * Math.PI / 360)) / Math.PI * M;
-      for (const k of kachelFelder.values()) {
-        if (mx < k.x0 || mx > k.x1 || my < k.y0 || my > k.y1) continue;
-        const ix = Math.round((mx - k.x0) / (k.x1 - k.x0) * k.bw - 0.5);
-        const iy = Math.round((k.y1 - my) / (k.y1 - k.y0) * k.bh - 0.5);
-        if (ix < 0 || iy < 0 || ix >= k.bw || iy >= k.bh) continue;
-        return k.glatt[iy * k.bw + ix];
-      }
-      return 0;
+      const ix = Math.round((mx - DE_X0) / (DE_X1 - DE_X0) * DE_BW - 0.5);
+      const iy = Math.round((DE_Y1 - my) / (DE_Y1 - DE_Y0) * DE_BH - 0.5);
+      if (ix < 0 || iy < 0 || ix >= DE_BW || iy >= DE_BH) return 0;
+      return jetztFeld.feld[iy * DE_BW + ix] / 16;
     };
     const setzen = (lngLat, v, extra = '', anker = 'top', versatz = [0, 10]) => {
       const el = document.createElement('div');
@@ -1256,7 +1235,7 @@ const Radar = (() => {
      neuen Eckkoordinaten gespannt, also die falsche Gegend zeigen. */
   const fcSchluessel = (h, ebenen) => `${Forecast.stamp()}|${h}|${[...ebenen].sort().join(',')}`;
   function leereNowcastSpeicher() {
-    kachelFelder.clear();
+    felder.clear();
   }
 
   function leereBildSpeicher() {
@@ -1381,74 +1360,18 @@ const Radar = (() => {
 
   /** Bilder des Nowcasts still vorladen, damit das Abspielen flüssig läuft. */
   function nowcastVorwaermen() {
+    /* Sanft: die nächsten drei Schritte als Deutschland-Felder holen.
+       Vergangenes liegt in R2 bereit, hier geht es nur um die nahen
+       Vorhersageschritte. */
     if (!map || !ready) return;
-    /* Früher wurden alle 43 Zeitschritte als ganze Bilder geholt und
-       gerendert. Seit der DWD zeitindiziert 7 bis 14 Sekunden je kalter
-       Anfrage braucht, war das die Hauptlast der App — und meist umsonst,
-       weil man selten die ganze Leiste abspielt. Jetzt werden nur die
-       Kacheln des SICHTBAREN Ausschnitts für die nächsten Schritte warm
-       gemacht, ohne sie zu zeichnen: Der Worker legt sie in den Cache,
-       das Abspielen findet sie dort. */
-    const zeiten = rvZeiten();
-    if (!zeiten.length) return;
-    const jetzt = Date.now();
-    /* Sparsam: drei Zeitschritte, höchstens vier Kacheln, 600 ms Abstand.
-       Sechs Schritte x neun Kacheln wären 54 kalte Anfragen gewesen — bei
-       gemessenen ~10 Sekunden je kalter DWD-Anfrage hätte das Vorwärmen
-       genau die Kacheln ausgebremst, die man gerade sehen will. */
-    const naechste = zeiten.filter(t => t >= jetzt - 5 * 60000).slice(0, 3);
-    const kacheln = sichtbareKacheln().slice(0, 4);
-    if (!kacheln.length || !naechste.length) return;
-
-    const auftrag = [];
-    for (const t of naechste) for (const k of kacheln) auftrag.push([k, t]);
+    const zeiten = rvZeiten().filter(t => t >= Date.now() - RV_SCHRITT).slice(0, 3);
     let i = 0;
     const weiter = () => {
-      if (i >= auftrag.length) return;
-      const [k, t] = auftrag[i++];
-      warmMachen(k, rvStempel(t)).finally(() => setTimeout(weiter, 600));
+      if (i >= zeiten.length) return;
+      feldHolen(dwdStempel(zeiten[i++])).catch(() => {}).then(() => setTimeout(weiter, 400));
     };
-    setTimeout(weiter, 3000);      // erst die sichtbaren Kacheln, dann vorwärmen
+    setTimeout(weiter, 2500);
   }
-
-  /** Welche Kacheln deckt der sichtbare Ausschnitt ab? */
-  function sichtbareKacheln() {
-    const b = map.getBounds();
-    const z = Math.max(KACHEL_MIN_Z,
-      Math.min(KACHEL_MAX_Z, Math.round(map.getZoom()) - 1));
-    const n = Math.pow(2, z);
-    const xVon = (lon) => Math.floor((lon + 180) / 360 * n);
-    const yVon = (lat) => {
-      const r = lat * Math.PI / 180;
-      return Math.floor((1 - Math.asinh(Math.tan(r)) / Math.PI) / 2 * n);
-    };
-    const x0 = xVon(b.getWest()), x1 = xVon(b.getEast());
-    const y0 = yVon(b.getNorth()), y1 = yVon(b.getSouth());
-    const aus = [];
-    for (let x = x0; x <= x1 && aus.length < 9; x++) {
-      for (let y = y0; y <= y1 && aus.length < 9; y++) aus.push({ z, x, y });
-    }
-    return aus;
-  }
-
-  /** Eine Kachel beim Worker anfordern, ohne sie zu verarbeiten — damit
-      sie im Cache liegt, wenn die Zeitleiste sie braucht. Muss dasselbe
-      Kilometergitter treffen wie kachelBauen, sonst wärmt es die falsche
-      Adresse. */
-  function warmMachen({ z, x, y }, stempel) {
-    const M = 20037508.342789244;
-    const seite = 2 * M / Math.pow(2, z);
-    let zelle = 1000;
-    let n = Math.ceil((seite + 2 * KACHEL_RAND * zelle) / zelle);
-    while (n > 512) { zelle *= 2; n = Math.ceil((seite + 2 * KACHEL_RAND * zelle) / zelle); }
-    const x0 = -M + x * seite, y1 = M - y * seite;
-    const gx0 = Math.floor((x0 - KACHEL_RAND * zelle) / zelle) * zelle;
-    const gy1 = Math.ceil((y1 + KACHEL_RAND * zelle) / zelle) * zelle;
-    const bbox = [gx0, gy1 - n * zelle, gx0 + n * zelle, gy1].map(v => v.toFixed(0)).join(',');
-    return fetch(`${proxyBasis()}/dwdradar?bbox=${bbox}&px=${n}`
-      + `&time=${encodeURIComponent(stempel)}`).catch(() => {});
-  }
-
 
   return { init, load, setCenter, play, pause, toggle, show, isPlaying,
            showForecast, showRadar, updateLabels, frameTimes, showAt, lastMeasured,
@@ -1462,7 +1385,6 @@ const Radar = (() => {
            verlaufLaden,
            get kachelnOffen() { return offeneKacheln; },
            kachelPruefen: (z, x, y, stempel = null) => kachelBauen(z, x, y, dwdStempel(stempel)),
-           kachelFeld: (z, x, y) => kachelFelder.get(`${z}/${x}/${y}`),
            get nowcastAktiv() { return rvAktiv; },
            updateLegend: renderLegend,
            get map() { return map; } };
