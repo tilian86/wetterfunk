@@ -214,6 +214,51 @@ const Radar = (() => {
   }
 
   /** Grau und Reichweitenband entfernen, Rest auf die eigene Skala umfärben. */
+  /** Weichzeichnen in Zellauflösung — selbst gerechnet, damit es ÜBERALL
+      wirkt: `ctx.filter` kennt WebKit nicht, deshalb blieb das Radar auf
+      iPhone und Mac kachelig, während die Chromium-Vorschau weich aussah.
+      Zwei Kastendurchgänge nähern einen Gauß an; alphagewichtet, sonst
+      blutet Schwarz aus durchsichtigen Nachbarzellen in die Ränder. */
+  function zelleWeich(px, w, h) {
+    const a4 = new Float32Array(w * h * 4);
+    for (let i = 0; i < w * h; i++) {
+      const a = px[i * 4 + 3] / 255;
+      a4[i * 4]     = px[i * 4]     * a;
+      a4[i * 4 + 1] = px[i * 4 + 1] * a;
+      a4[i * 4 + 2] = px[i * 4 + 2] * a;
+      a4[i * 4 + 3] = a;
+    }
+    const b4 = new Float32Array(a4.length);
+    const durchgang = () => {
+      for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
+        const i = (y * w + x) * 4;
+        for (let k = 0; k < 4; k++) {
+          let sum = a4[i + k], n = 1;
+          if (x > 0)     { sum += a4[i - 4 + k]; n++; }
+          if (x < w - 1) { sum += a4[i + 4 + k]; n++; }
+          b4[i + k] = sum / n;
+        }
+      }
+      for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
+        const i = (y * w + x) * 4;
+        for (let k = 0; k < 4; k++) {
+          let sum = b4[i + k], n = 1;
+          if (y > 0)     { sum += b4[i - w * 4 + k]; n++; }
+          if (y < h - 1) { sum += b4[i + w * 4 + k]; n++; }
+          a4[i + k] = sum / n;
+        }
+      }
+    };
+    durchgang(); durchgang();       // ≈ Gauß mit gut anderthalb Zellen Radius
+    for (let i = 0; i < w * h; i++) {
+      const a = a4[i * 4 + 3];
+      px[i * 4]     = a > 0.003 ? Math.min(255, Math.round(a4[i * 4]     / a)) : 0;
+      px[i * 4 + 1] = a > 0.003 ? Math.min(255, Math.round(a4[i * 4 + 1] / a)) : 0;
+      px[i * 4 + 2] = a > 0.003 ? Math.min(255, Math.round(a4[i * 4 + 2] / a)) : 0;
+      px[i * 4 + 3] = Math.round(a * 255);
+    }
+  }
+
   let dwdRoh = null;   // Arbeitsfläche in Zellauflösung
   function dwdFiltern(bild) {
     const bw = bild.naturalWidth || bild.width;
@@ -240,6 +285,11 @@ const Radar = (() => {
       px[i] = nr; px[i + 1] = ng; px[i + 2] = nb; px[i + 3] = na;
       farbig++;
     }
+    /* Nur weichzeichnen, wenn Zellen überhaupt vergrößert werden: Bei
+       Deutschland-Zoom ist eine Zelle ein Bildschirmpixel — Kacheln sind
+       da unsichtbar, und die Rechnung wäre reine Verschwendung (gemessen
+       213 ms bei 768er-Bildern gegen ~10 ms bei Stadt-Zoom). */
+    if (DWD_PX / bw >= 1.8) zelleWeich(px, bw, bh);
     rohCtx.putImageData(img, 0, 0);
     /* Erst nach dem Filtern vergrößern: Auf dem kleinen Bild sind die
        Zellen einzelne Pixel, und das weiche Hochrechnen erzeugt fließende
@@ -251,13 +301,10 @@ const Radar = (() => {
        echten Verläufen, wie es die großen Wetter-Apps machen. Kosmetik,
        keine neuen Daten — aber ehrliche: Das Auge liest Verläufe als
        „Feld", Kacheln als „Fehler". */
-    const faktor = DWD_PX / bw;
     dwdCtx.clearRect(0, 0, DWD_PX, DWD_PX);
     dwdCtx.imageSmoothingEnabled = true;
     dwdCtx.imageSmoothingQuality = 'high';
-    dwdCtx.filter = `blur(${Math.min(6, Math.max(0.6, faktor * 0.45)).toFixed(1)}px)`;
     dwdCtx.drawImage(dwdRoh, 0, 0, DWD_PX, DWD_PX);
-    dwdCtx.filter = 'none';
     return farbig;
   }
 
