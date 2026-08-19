@@ -389,7 +389,11 @@ function series(lat, lon) {
 /** Index der Stunde, die dem Zeitpunkt am nächsten liegt. */
 function indexFor(date) {
   if (!grid) return -1;
-  const t = date.getTime();
+  /* Date ODER Millisekunden annehmen. Ein Aufruf mit einer Zahl warf
+     „date.getTime is not a function" und riss den ganzen Zweig mit — beim
+     Vorwärmen der Abspielstunden blieb das unbemerkt, weil der Fehler im
+     .then() landete. */
+  const t = typeof date === 'number' ? date : date.getTime();
   let best = -1, diff = Infinity;
   for (let i = 0; i < grid.times.length; i++) {
     const d = Math.abs(new Date(grid.times[i]).getTime() - t);
