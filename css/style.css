@@ -885,6 +885,35 @@ select#bfModel {
 .h-wind b { font-weight: 700; }
 .h-wind.on { color: var(--warn); }
 
+/* ── Kräftige Symbolfamilie ────────────────────────────────
+   Gefüllte Flächen; der Strich-Reset zuerst, damit die globale Regel
+   `svg { stroke: currentColor }` den Füllformen keine Kontur anhängt. */
+.wx.kraeftig * { stroke: none; }
+.wx.kraeftig .kf-sonne { fill: #ffd60a; }
+.wx.kraeftig .kf-strahl { stroke: #ffd60a; stroke-width: 4.2; stroke-linecap: round; }
+.wx.kraeftig .kf-mond { fill: #e8f0fc; }
+.wx.kraeftig .kf-wolke { fill: #dfe8f4; }
+.wx.kraeftig .kf-wolke-hinten { fill: #9fb0c6; }
+.wx.kraeftig .kf-regenwolke { fill: #c4d2e4; }
+.wx.kraeftig .kf-gewitterwolke { fill: #8d9fb8; }
+.wx.kraeftig .kf-tropfen { stroke: #4aa8e8; stroke-width: 4; stroke-linecap: round; }
+.wx.kraeftig .kf-flocke line { stroke: #eef4fc; stroke-width: 2.6; stroke-linecap: round; }
+.wx.kraeftig .kf-blitz { fill: #ffd60a; }
+.wx.kraeftig .kf-nebel { stroke: #b9c6d8; stroke-width: 4.4; stroke-linecap: round; }
+
+/* Umschalter unter der Stundenleiste */
+.stil-wahl {
+  display: flex; align-items: center; gap: 7px; margin-top: 8px;
+  font-size: 11px; color: var(--ink-faint);
+}
+.stil-wahl button {
+  background: rgba(255,255,255,.05); border: 1px solid var(--card-line);
+  color: var(--ink-dim); border-radius: 30px; padding: 4px 11px;
+  font-size: 11px; font-weight: 600; cursor: pointer;
+}
+.stil-wahl button.an { background: rgba(122,196,250,.16);
+  border-color: rgba(122,196,250,.45); color: #a8d6f8; }
+
 .hcol-sun { width: 58px; opacity: .82; }
 .h-sunlabel { font-size: 9.5px; color: var(--ink-faint); }
 .sun-ico { height: 34px; display: grid; place-items: center; }
