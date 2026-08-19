@@ -758,9 +758,15 @@ select#bfModel {
 
 /* Zeile über dem Regler: Abspielknopf und der gerade gewählte Zeitpunkt */
 .zeit-ctrl { display: flex; align-items: center; gap: 12px; margin-top: 12px; }
+/* Die Zeitangabe wechselt zwischen „jetzt" und „Heute, 21:20 Uhr in 11 Min."
+   — sie ist also mal kurz, mal lang. Vorher schob sie die Schrittpfeile hin
+   und her, sodass man beim zweiten Klick danebentraf. Jetzt nimmt sie den
+   freien Platz ein (und kürzt notfalls), die Knöpfe stehen fest rechts. */
 .zeit-when {
   font-size: 14px; font-weight: 600; color: var(--ink);
-  font-variant-numeric: tabular-nums; min-width: 0;
+  font-variant-numeric: tabular-nums;
+  flex: 1 1 auto; min-width: 0;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 .zeit-when em {
   font-style: normal; font-weight: 400; font-size: 12px;
@@ -2972,8 +2978,28 @@ body.ar-offen { overflow: hidden; }
   display: inline-flex;
   align-items: center;
   gap: 4px;
-  margin-left: 10px;
+  margin-left: auto;        /* fest am rechten Rand, damit nichts wandert */
+  flex: 0 0 auto;
 }
+.jetzt-btn {
+  margin-left: 4px;
+  height: 30px;
+  padding: 0 12px;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, .18);
+  background: rgba(255, 255, 255, .06);
+  color: #cfe0f5;
+  font: 600 12px/1 system-ui, -apple-system, sans-serif;
+  cursor: pointer;
+  transition: background .15s, border-color .15s, opacity .15s;
+}
+.jetzt-btn:hover:not(:disabled) {
+  background: rgba(255, 255, 255, .14);
+  border-color: rgba(255, 255, 255, .3);
+}
+/* Steht der Regler schon auf jetzt, bleibt der Knopf sichtbar, aber
+   erkennbar wirkungslos — Wegblenden ließe die Leiste wieder springen. */
+.jetzt-btn:disabled { opacity: .35; cursor: default; }
 .schritt-btn {
   width: 30px; height: 30px;
   display: inline-flex; align-items: center; justify-content: center;

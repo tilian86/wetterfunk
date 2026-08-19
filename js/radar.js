@@ -414,10 +414,12 @@ const Radar = (() => {
     /* Ausgabe: direkt vom Gitterfeld auf die Kachelfläche abbilden. Weil
        Gitter und Kachelkante nicht aufeinanderfallen, wird mit Bruchteilen
        gerechnet — bilinear, also ohne Sprung an der Kante. */
-    const ziel = document.createElement('canvas');
-    ziel.width = ziel.height = KACHEL_PX;
-    const zc = ziel.getContext('2d');
-    const aus = zc.createImageData(KACHEL_PX, KACHEL_PX);
+    /* Kein Umweg über PNG. Gemessen: das Einfärben einer Kachel kostet
+       28 ms, das PNG-Erzeugen daraus 1046 ms — über eine Sekunde
+       Hauptthread je Kachel, und genau das war das Ruckeln. MapLibre nimmt
+       ein ImageBitmap direkt an; das entsteht in 0,9 ms aus denselben
+       Bilddaten. Faktor 1176. */
+    const aus = new ImageData(KACHEL_PX, KACHEL_PX);
     const ap = aus.data;
     const hole = (ix, iy) => glatt[Math.min(n - 1, Math.max(0, iy)) * n
                                  + Math.min(n - 1, Math.max(0, ix))];
@@ -436,9 +438,7 @@ const Radar = (() => {
         stufenFarbe(v, ap, (oy * KACHEL_PX + ox) * 4);
       }
     }
-    zc.putImageData(aus, 0, 0);
-    const blob = await new Promise(ok => ziel.toBlob(ok, 'image/png'));
-    return await blob.arrayBuffer();
+    return await createImageBitmap(aus);
   }
 
   function protokollAnmelden() {
@@ -448,9 +448,9 @@ const Radar = (() => {
       const m = /^wfradar:\/\/(\d+)\/(\d+)\/(\d+)\/(.+)$/.exec(params.url);
       if (!m) throw new Error('Kacheladresse unlesbar');
       const [, z, x, y, stempel] = m;
-      const daten = await kachelBauen(+z, +x, +y, decodeURIComponent(stempel),
+      const bild = await kachelBauen(+z, +x, +y, decodeURIComponent(stempel),
         abbruch?.signal);
-      return { data: daten };
+      return { data: bild };
     });
   }
 

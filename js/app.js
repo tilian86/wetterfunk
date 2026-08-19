@@ -2614,6 +2614,18 @@ function schrittKnoepfe(punkte, k) {
   txt.textContent = min >= 1440 ? `${Math.round(min / 1440)} Tag`
     : min >= 60 ? `${Math.round(min / 60)} Std.`
     : `${min} Min.`;
+  const nun = $('#toNow');
+  if (nun) nun.disabled = k === jetztIndex(punkte);
+}
+
+/** Zurück auf jetzt — nach dem Vorspulen der schnellste Weg zurück. */
+function zurueckAufJetzt() {
+  const sl = $('#scrubSlider');
+  if (!sl) return;
+  if (spielTimer) toggleZeitraffer();
+  const punkte = buildScrubPoints();
+  sl.value = String(jetztIndex(punkte));
+  sl.dispatchEvent(new Event('input'));
 }
 
 function schrittGehen(d) {
@@ -8731,6 +8743,7 @@ function wire() {
   $('#playBtn')?.addEventListener('click', toggleZeitraffer);
   $('#stepBack')?.addEventListener('click', () => schrittGehen(-1));
   $('#stepFwd')?.addEventListener('click', () => schrittGehen(1));
+  $('#toNow')?.addEventListener('click', zurueckAufJetzt);
   /* Pfeiltasten tun dasselbe — am Rechner ist das der schnellste Weg,
      Schritt für Schritt durch die Zugbahn zu gehen. */
   document.addEventListener('keydown', (e) => {
