@@ -36,10 +36,10 @@
 <meta name="theme-color" content="#0b1220">
 <link rel="apple-touch-icon" href="icons/icon-180.png">
 <link rel="icon" href="icons/icon-192.png">
-<link rel="manifest" href="manifest.webmanifest?v=204">
+<link rel="manifest" href="manifest.webmanifest?v=205">
 
-<link rel="stylesheet" href="vendor/maplibre-gl.css?v=204">
-<link rel="stylesheet" href="css/style.css?v=204">
+<link rel="stylesheet" href="vendor/maplibre-gl.css?v=205">
+<link rel="stylesheet" href="css/style.css?v=205">
 </head>
 <body>
 
@@ -199,6 +199,19 @@
         <svg class="ico-pause" viewBox="0 0 24 24"><path d="M8 4.5h3.2v15H8zM12.8 4.5H16v15h-3.2z"/></svg>
       </button>
       <span class="zeit-when" id="scrubWhen">jetzt</span>
+      <!-- Schrittweise durch die Zeit: Im DWD-Fenster steht die Leiste im
+           Fünf-Minuten-Takt, ein Klick rückt genau einen Schritt weiter.
+           Damit lässt sich ablesen, wann ein Regengebiet den eigenen Ort
+           erreicht, statt am Regler zu zielen. -->
+      <span class="schritt-paar">
+        <button class="schritt-btn" id="stepBack" aria-label="Einen Zeitschritt zurück">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15 5.5L8.5 12l6.5 6.5z"/></svg>
+        </button>
+        <span class="schritt-txt" id="stepTxt">5 Min.</span>
+        <button class="schritt-btn" id="stepFwd" aria-label="Einen Zeitschritt vor">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 5.5L15.5 12 9 18.5z"/></svg>
+        </button>
+      </span>
     </div>
     <span class="slider-wrap wide">
       <input type="range" id="scrubSlider" min="0" max="119" value="0" step="1"
@@ -663,11 +676,11 @@
 <!-- Die Kartenbibliothek (936 KB) lädt NICHT mehr hier: radar.js holt sie
      erst, wenn die Radar-Karte gebraucht wird. Die Versionsmarke dafür
      hängt am Stylesheet-Link oben — den zählt release.sh mit. -->
-<script src="js/icons.js?v=204"></script>
-<script src="js/kueste.js?v=204"></script>
-<script src="js/radar.js?v=204"></script>
-<script src="js/forecast.js?v=204"></script>
-<script src="js/briefing.js?v=204"></script>
-<script src="js/app.js?v=204"></script>
+<script src="js/icons.js?v=205"></script>
+<script src="js/kueste.js?v=205"></script>
+<script src="js/radar.js?v=205"></script>
+<script src="js/forecast.js?v=205"></script>
+<script src="js/briefing.js?v=205"></script>
+<script src="js/app.js?v=205"></script>
 </body>
 </html>

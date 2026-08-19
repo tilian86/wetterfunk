@@ -2963,3 +2963,38 @@ body.ar-offen { overflow: hidden; }
   color: #fff;
   border-color: rgba(255, 255, 255, .8);
 }
+
+/* ── Schrittknöpfe an der Zeitleiste ──────────────────────
+      Ein Klick = ein Punkt der Leiste. Im DWD-Fenster sind das fünf
+      Minuten; weiter draußen wird die Leiste gröber, deshalb steht die
+      tatsächliche Schrittweite dazwischen und wird mitgeführt. */
+.schritt-paar {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: 10px;
+}
+.schritt-btn {
+  width: 30px; height: 30px;
+  display: inline-flex; align-items: center; justify-content: center;
+  border-radius: 50%;
+  border: 1px solid rgba(255, 255, 255, .18);
+  background: rgba(255, 255, 255, .06);
+  color: #cfe0f5;
+  cursor: pointer;
+  padding: 0;
+  transition: background .15s, border-color .15s;
+}
+.schritt-btn svg { width: 18px; height: 18px; fill: currentColor; stroke: none; }
+.schritt-btn:hover:not(:disabled) {
+  background: rgba(255, 255, 255, .14);
+  border-color: rgba(255, 255, 255, .3);
+}
+.schritt-btn:disabled { opacity: .3; cursor: default; }
+.schritt-txt {
+  font-size: 11px;
+  color: #93a7bf;
+  min-width: 44px;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
