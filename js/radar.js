@@ -77,7 +77,6 @@ const Radar = (() => {
     // Globus: weit draußen Kugel, beim Hineinzoomen fließend flach
     map.on('style.load', () => {
       try { map.setProjection({ type: 'globe' }); } catch { /* ältere Fassung */ }
-      addDwdLayer();
       addHereMarker();
       beschriftungLesbar();
       ready = true;
@@ -115,8 +114,12 @@ const Radar = (() => {
      hängen erst dann das Ergebnis in die Karte. */
   /* Über den eigenen Worker: Der DWD-Dienst braucht oft mehrere Sekunden und
      fällt zeitweise ganz aus. Gepuffert kommt dasselbe Bild sofort zurück. */
-  const DWD_PX = 768;
-  let dwdCanvas = null, dwdCtx = null, dwdLauf = 0, dwdSichtbar = false, dwdTimer = null;
+  let dwdSichtbar = false, dwdTimer = null;
+  /* Marker und Zeitgeber der Ortswerte. Standen vorher im Block der alten
+     Bild-Aufbereitung und sind beim Umbau auf Kacheln mit gelöscht worden —
+     „ortTimer is not defined" bei jedem Kartenzug, was die ganze
+     Radarkarte auf „nicht erreichbar" fallen ließ. */
+  let ortMarker = [], ortTimer = null;
 
   /* ── Fünf-Minuten-Nowcast des DWD ────────────────────────
      Das RV-Komposit („Analyse und Vorhersage") liefert 1-km-Radarbilder im
@@ -135,7 +138,6 @@ const Radar = (() => {
      Deutschland durch dieselbe DWD-Aufbereitung — vorher sprang der Look
      beim Zurückspulen von weich-DWD auf grob-RainViewer. */
   const RV_ZURUECK = 120;
-  const rvBilder = new Map();                   // "bbox|zeit" → Daten-URL
   let rvLauf = 0, rvAktiv = false;
 
   /** Zeitpunkt auf das Fünf-Minuten-Raster des DWD legen. */
@@ -161,13 +163,6 @@ const Radar = (() => {
   /** Deutschland grob — außerhalb lohnt der Abruf nicht. */
   const inDeutschland = (b) =>
     b.getEast() > 5.5 && b.getWest() < 15.5 && b.getNorth() > 47 && b.getSouth() < 55.5;
-
-  function addDwdLayer() {
-    if (dwdCanvas) return;
-    dwdCanvas = document.createElement('canvas');
-    dwdCanvas.width = dwdCanvas.height = DWD_PX;
-    dwdCtx = dwdCanvas.getContext('2d', { willReadFrequently: true });
-  }
 
   /* ── Umfärben auf die eigene Skala ────────────────────────
      Der DWD liefert seine eigene Farbgebung: Cyan → Grün → Gelb → Rot →
@@ -243,16 +238,6 @@ const Radar = (() => {
      behält die Kerne scharf und lässt die Ränder über genau eine Zelle
      auslaufen statt über zehn. */
 
-  /* Zwei Arbeitsflächen: dwdRoh in Zellauflösung (dorthin malt der Browser
-     das DWD-Bild zum Auslesen), dwdFein für das interpolierte Farbfeld.
-     dwdRoh war beim Umbau mit dem alten Weichzeichner-Block verschwunden —
-     „dwdRoh is not defined" in der Konsole, das Radar blieb leer. */
-  let dwdRoh = null, dwdFein = null;
-  /** Geglättetes Wertefeld des Jetzt-Bilds samt Kasten, für die Ortswerte. */
-  let feldInfo = null;
-  let ortMarker = [];
-  let ortTimer = null;
-
   /** Farbe zu einem Zwischenwert der Stufenleiter (0 = keine, 12 = extrem).
 
       Wie beim DWD: die FORM ist weich, die FARBEN bleiben in Klassen. Ein
@@ -326,168 +311,192 @@ const Radar = (() => {
     return aus;
   }
 
-  function dwdFiltern(bild, kasten) {
-    const bw = bild.naturalWidth || bild.width;
-    const bh = bild.naturalHeight || bild.height;
-    if (!dwdRoh) dwdRoh = document.createElement('canvas');
-    dwdRoh.width = bw; dwdRoh.height = bh;
-    const rohCtx = dwdRoh.getContext('2d', { willReadFrequently: true });
-    rohCtx.drawImage(bild, 0, 0);
-    const px = rohCtx.getImageData(0, 0, bw, bh).data;
-    let farbig = 0;
+  /* ── DWD als echtes Kachelraster ──────────────────────────────────
+     Vorher holte die App EIN Bild in Form des Bildausschnitts. Jede
+     Ansicht hatte damit ein eigenes Rechteck, also war fast jede Anfrage
+     neu — und eine kalte, zeitindizierte Anfrage kostet den DWD gemessen
+     7 bis 14,5 Sekunden (warm 0,12). Beim Kachelraster wiederholen sich
+     dieselben Kacheln über Ansichten, Zoomstufen und Nutzer hinweg, und
+     MapLibre behält beim Schieben, was es schon hat.
 
-    // 1. Bild → Wertefeld
-    const feld = new Float32Array(bw * bh);
-    for (let i = 0, z = 0; i < px.length; i += 4, z++) {
-      if (px[i + 3] === 0) continue;
-      const r = px[i], g = px[i + 1], b = px[i + 2];
-      const max = Math.max(r, g, b), min = Math.min(r, g, b);
-      if (max - min < 26) continue;                                    // weiß bis dunkelgrau
-      if (r > 200 && b > 200 && g < 120) continue;                     // Reichweitenrand
+     Die Kacheln laufen über ein eigenes Adressschema, damit unsere
+     Glättung und Farbskala pro Kachel greifen. Gegen Nähte wird jede
+     Kachel mit KACHEL_RAND Zellen Überlappung geholt, geglättet und
+     danach auf die Kachelgrenze zurückgeschnitten: Der Weichzeichner
+     sieht so echte Nachbardaten statt eines Randes, und zwei
+     aneinandergrenzende Kacheln kommen am Stoß auf denselben Wert. */
+  const KACHEL_PROTO = 'wfradar';
+  const KACHEL_PX = 512;                 // Ausgabegröße je Kachel
+  const KACHEL_RAND = 4;                 // Zellen Überlappung (Kernradius ist 3)
+  const KACHEL_MIN_Z = 5, KACHEL_MAX_Z = 9;
+  let protoDa = false;
+
+  /** Felder der zuletzt gezeichneten Jetzt-Kacheln — daraus liest
+      ortsWerte() die mm/h an den Ortsnamen. */
+  const kachelFelder = new Map();
+  const KACHEL_FELD_MAX = 24;
+
+  function proxyBasis() {
+    return ((localStorage.getItem('wf.proxy') || '').replace(/^"|"$/g, '')
+      || 'https://wetterfunk.florian-s-thiel.workers.dev').replace(/\/+$/, '');
+  }
+
+  /** Eine Kachel holen, aufbereiten und als PNG zurückgeben.
+
+      Entscheidend ist das Anfrageraster: Es wird auf ein GLOBALES
+      Kilometergitter gerundet, nicht auf die Kachelkante. Vorher fragte
+      jede Kachel ihr eigenes, um Sekundenbruchteile verschobenes Raster an
+      — der DWD-Server rastert seine 1-km-Daten dann für jede Anfrage neu
+      ein, und benachbarte Kacheln bekamen für dieselbe Stelle verschiedene
+      Zellen. Gemessen war die Naht dadurch bei 5 % der Zeilen bis zu 242
+      Farbstufen daneben. Auf gemeinsamem Gitter liefert der Server im
+      Überlappungsbereich dieselben Werte, und der Stoß verschwindet. */
+  async function kachelBauen(z, x, y, stempel, signal) {
+    const M = 20037508.342789244;
+    const seite = 2 * M / Math.pow(2, z);
+
+    // Zellgröße: 1 km, gröber nur wenn das Bild sonst zu groß würde
+    let zelle = 1000;
+    let n = Math.ceil((seite + 2 * KACHEL_RAND * zelle) / zelle);
+    while (n > 512) { zelle *= 2; n = Math.ceil((seite + 2 * KACHEL_RAND * zelle) / zelle); }
+
+    const x0 = -M + x * seite, y1 = M - y * seite;
+    // Auf das globale Gitter rasten — der Kern des Ganzen
+    const gx0 = Math.floor((x0 - KACHEL_RAND * zelle) / zelle) * zelle;
+    const gy1 = Math.ceil((y1 + KACHEL_RAND * zelle) / zelle) * zelle;
+    const gx1 = gx0 + n * zelle, gy0 = gy1 - n * zelle;
+
+    const bbox = [gx0, gy0, gx1, gy1].map(v => v.toFixed(0)).join(',');
+    const url = `${proxyBasis()}/dwdradar?bbox=${bbox}&px=${n}`
+      + `&time=${encodeURIComponent(stempel)}`;
+
+    /* Ein zweiter Versuch nach kurzer Pause: Der DWD antwortet unter Last
+       zeitweise mit 502/504. Ohne Wiederholung bliebe genau diese Kachel
+       als leeres Quadrat in der Karte stehen, bis man wegschiebt und
+       zurückkommt. */
+    let antwort = await fetch(url, { signal });
+    if (!antwort.ok && antwort.status >= 500) {
+      await new Promise(r => setTimeout(r, 1400));
+      antwort = await fetch(url, { signal });
+    }
+    if (!antwort.ok) throw new Error(`DWD ${antwort.status}`);
+    const bild = await createImageBitmap(await antwort.blob());
+
+    const roh = document.createElement('canvas');
+    roh.width = n; roh.height = n;
+    const rc = roh.getContext('2d', { willReadFrequently: true });
+    rc.drawImage(bild, 0, 0, n, n);
+    const daten = rc.getImageData(0, 0, n, n).data;
+    const feld = new Float32Array(n * n);
+    let farbig = 0;
+    for (let i = 0, k = 0; i < daten.length; i += 4, k++) {
+      if (daten[i + 3] === 0) continue;
+      const r = daten[i], g = daten[i + 1], b = daten[i + 2];
+      if (Math.max(r, g, b) - Math.min(r, g, b) < 26) continue;
+      if (r > 200 && b > 200 && g < 120) continue;
       const stufe = naechsteStufe(r, g, b);
       if (stufe < 0) continue;
-      feld[z] = stufe + 1;
+      feld[k] = stufe + 1;
       farbig++;
     }
 
-    // 2. Feld weichzeichnen, dann glatt hochrechnen
-    const glatt = farbig ? feldGlaetten(feld, bw, bh) : feld;
-    const faktor = Math.max(1, Math.min(8, Math.round(DWD_PX / Math.max(1, bw))));
-    const fw = bw * faktor, fh = bh * faktor;
-    if (!dwdFein) dwdFein = document.createElement('canvas');
-    dwdFein.width = fw; dwdFein.height = fh;
-    const feinCtx = dwdFein.getContext('2d');
-    const aus = feinCtx.createImageData(fw, fh);
+    // Glätten mit echten Nachbardaten aus dem Überlappungsbereich
+    const glatt = farbig ? feldGlaetten(feld, n, n) : feld;
+
+    if (stempel === dwdStempel(null)) {
+      kachelFelder.set(`${z}/${x}/${y}`,
+        { glatt, bw: n, bh: n, x0: gx0, y0: gy0, x1: gx1, y1: gy1 });
+      while (kachelFelder.size > KACHEL_FELD_MAX) {
+        kachelFelder.delete(kachelFelder.keys().next().value);
+      }
+    }
+
+    /* Ausgabe: direkt vom Gitterfeld auf die Kachelfläche abbilden. Weil
+       Gitter und Kachelkante nicht aufeinanderfallen, wird mit Bruchteilen
+       gerechnet — bilinear, also ohne Sprung an der Kante. */
+    const ziel = document.createElement('canvas');
+    ziel.width = ziel.height = KACHEL_PX;
+    const zc = ziel.getContext('2d');
+    const aus = zc.createImageData(KACHEL_PX, KACHEL_PX);
     const ap = aus.data;
-
-    const hole = (x, y) => glatt[Math.min(bh - 1, Math.max(0, y)) * bw
-                               + Math.min(bw - 1, Math.max(0, x))];
-    for (let y = 0; y < fh; y++) {
-      const sy = (y + 0.5) / faktor - 0.5;
-      const y0 = Math.floor(sy), ty = sy - y0;
-      for (let x = 0; x < fw; x++) {
-        const sx = (x + 0.5) / faktor - 0.5;
-        const x0 = Math.floor(sx), tx = sx - x0;
-        const v = hole(x0, y0)     * (1 - tx) * (1 - ty)
-                + hole(x0 + 1, y0) * tx       * (1 - ty)
-                + hole(x0, y0 + 1) * (1 - tx) * ty
-                + hole(x0 + 1, y0 + 1) * tx   * ty;
-        stufenFarbe(v, ap, (y * fw + x) * 4);
+    const hole = (ix, iy) => glatt[Math.min(n - 1, Math.max(0, iy)) * n
+                                 + Math.min(n - 1, Math.max(0, ix))];
+    for (let oy = 0; oy < KACHEL_PX; oy++) {
+      const my = y1 - (oy + 0.5) * seite / KACHEL_PX;
+      const fy = (gy1 - my) / zelle - 0.5;
+      const y0i = Math.floor(fy), ty = fy - y0i;
+      for (let ox = 0; ox < KACHEL_PX; ox++) {
+        const mx = x0 + (ox + 0.5) * seite / KACHEL_PX;
+        const fx = (mx - gx0) / zelle - 0.5;
+        const x0i = Math.floor(fx), tx = fx - x0i;
+        const v = hole(x0i, y0i) * (1 - tx) * (1 - ty)
+                + hole(x0i + 1, y0i) * tx * (1 - ty)
+                + hole(x0i, y0i + 1) * (1 - tx) * ty
+                + hole(x0i + 1, y0i + 1) * tx * ty;
+        stufenFarbe(v, ap, (oy * KACHEL_PX + ox) * 4);
       }
     }
-    feinCtx.putImageData(aus, 0, 0);
-
-    /* Das geglättete Wertefeld fürs Jetzt-Bild aufheben: daraus liest
-       ortsWerte() die mm/h an den Ortsnamen ab — dieselben Zahlen, die
-       die Farben zeigen, kein zweiter Datenweg. */
-    if (kasten) feldInfo = { glatt, bw, bh, ...kasten };
-
-    // 3. Den fertig eingefärbten Verlauf auf die Ausgabegröße ziehen
-    dwdCtx.clearRect(0, 0, DWD_PX, DWD_PX);
-    dwdCtx.imageSmoothingEnabled = true;
-    dwdCtx.imageSmoothingQuality = 'high';
-    dwdCtx.drawImage(dwdFein, 0, 0, DWD_PX, DWD_PX);
-    return farbig;
+    zc.putImageData(aus, 0, 0);
+    const blob = await new Promise(ok => ziel.toBlob(ok, 'image/png'));
+    return await blob.arrayBuffer();
   }
 
-  /** Bild für den aktuellen Ausschnitt holen, filtern, einhängen.
-      Mit `zeitMs` das RV-Produkt für diesen Zeitpunkt, sonst das Messbild. */
-  async function ladeDwdBild(zeitMs = null) {
+  function protokollAnmelden() {
+    if (protoDa || !window.maplibregl?.addProtocol) return;
+    protoDa = true;
+    maplibregl.addProtocol(KACHEL_PROTO, async (params, abbruch) => {
+      const m = /^wfradar:\/\/(\d+)\/(\d+)\/(\d+)\/(.+)$/.exec(params.url);
+      if (!m) throw new Error('Kacheladresse unlesbar');
+      const [, z, x, y, stempel] = m;
+      const daten = await kachelBauen(+z, +x, +y, decodeURIComponent(stempel),
+        abbruch?.signal);
+      return { data: daten };
+    });
+  }
+
+  /* IMMER ein ausdrücklicher Zeitstempel, auch für „jetzt".
+     Ohne ihn sucht sich jede Kachel beim Worker eigenständig den aktuellen
+     Zeitschritt — und da die Kacheln Sekunden auseinander gebaut werden,
+     stammten Nachbarkacheln teils aus verschiedenen Radarbildern. Gemessen
+     war die Naht dadurch bei 5 % der Zeilen bis zu 245 Farbstufen daneben,
+     während normale Nachbarpixel nur 31 auseinanderliegen. Mit festem
+     Zeitstempel sehen alle Kacheln dasselbe Bild — und sind nebenbei
+     gemeinsam zwischenspeicherbar. */
+  /* Für „jetzt" einen Schritt zurückgehen: Der laufende Fünf-Minuten-Schritt
+     ist beim DWD noch nicht veröffentlicht (gemessen: aktueller Schritt
+     antwortet gar nicht, der davor mit 200). Ohne diesen Versatz lief jede
+     Kachelanfrage in einen 502. */
+  const dwdStempel = (zeitMs) => rvStempel(zeitMs ?? (Date.now() - RV_SCHRITT));
+
+  /** Die Kachelquelle auf einen Zeitpunkt stellen. MapLibre holt danach
+      selbst, was fehlt, und behält, was es schon hat. */
+  function dwdZeitSetzen(zeitMs = null) {
     if (!ready || !map) return;
-    const b = map.getBounds();
-    if (!inDeutschland(b) || map.getZoom() < 5.5) { setzeDwdSichtbar(false); return; }
-
-    addDwdLayer();
-    const lauf = ++dwdLauf;
-
-    // Bounding Box in Web-Mercator-Metern
-    const sw = maplibregl.MercatorCoordinate.fromLngLat(b.getSouthWest());
-    const ne = maplibregl.MercatorCoordinate.fromLngLat(b.getNorthEast());
-    const M = 20037508.342789244;
-    const zuM = (m) => [(m.x * 2 - 1) * M, (1 - m.y * 2) * M];
-    const [x0, y0] = zuM(sw), [x1, y1] = zuM(ne);
-
-    // Auf 2 km runden — sonst ergibt jede Mausbewegung eine neue Adresse
-    // und der Zwischenspeicher im Worker greift nie.
-    const r = (v) => (Math.round(v / 2000) * 2000).toFixed(0);
-    const bbox = `${r(x0)},${r(y0)},${r(x1)},${r(y1)}`;
-    const proxy = (localStorage.getItem('wf.proxy') || '').replace(/^"|"$/g, '')
-      || 'https://wetterfunk.florian-s-thiel.workers.dev';
-    const zeitTeil = zeitMs ? `&time=${encodeURIComponent(rvStempel(zeitMs))}` : '';
-    /* EIN Pixel je Radarzelle (1 km) statt fester 768: Vorher malte der
-       DWD-Server jede Zelle als harte 7-Pixel-Kachel, und beim Vergrößern
-       wurden daraus grobe Quadrate — Florians „zu grob aufgelöst". Holt
-       man das Bild in Zellauflösung und vergrößert SELBST mit Glättung,
-       rechnet der Browser zwischen den Zellen weich über — wie bei den
-       großen Wetter-Apps. Mehr als die 1-km-Daten steckt auch dort nicht
-       drin; der Unterschied ist die Überblendung. */
-    const kmBreite = Math.round((+r(x1) - +r(x0)) / 1000);
-    const anfragePx = Math.max(64, Math.min(DWD_PX, kmBreite));
-    const url = `${proxy.replace(/\/+$/, '')}/dwdradar?bbox=${bbox}&px=${anfragePx}${zeitTeil}`;
-    const speicherKey = `${bbox}|${zeitMs ? rvRaster(zeitMs) : 'jetzt'}`;
-
-    // Ecken passend zur gerundeten Anfrage, sonst läge das Bild leicht versetzt
-    const zuGrad = (mx, my) => {
-      const lon = (mx / M) * 180;
-      const lat = (Math.atan(Math.exp((my / M) * Math.PI)) * 360 / Math.PI) - 90;
-      return [lon, lat];
-    };
-    const [gw, gs] = zuGrad(+r(x0), +r(y0));
-    const [ge, gn] = zuGrad(+r(x1), +r(y1));
-
-    const ecken = [[gw, gn], [ge, gn], [ge, gs], [gw, gs]];
-
-    // Schon einmal geholt? Dann sofort zeigen, ohne Netz und ohne Filtern.
-    const fertig = rvBilder.get(speicherKey);
-    if (fertig) {
-      if (!map.getSource('dwd')) {
-        map.addSource('dwd', { type: 'image', url: fertig, coordinates: ecken });
-        map.addLayer({ id: 'dwd-layer', type: 'raster', source: 'dwd',
-          paint: { 'raster-opacity': 0, 'raster-opacity-transition': { duration: 200 } } },
-          unterBeschriftung());
-      } else {
-        map.getSource('dwd').updateImage({ url: fertig, coordinates: ecken });
-      }
-      updateSharp();
-      return;
-    }
-
-    try {
-      const bild = await new Promise((ok, fehler) => {
-        const i = new Image();
-        i.crossOrigin = 'anonymous';
-        i.onload = () => ok(i);
-        i.onerror = () => fehler(new Error('DWD-Bild'));
-        i.src = url;
+    protokollAnmelden();
+    const stempel = dwdStempel(zeitMs);
+    const adresse = `${KACHEL_PROTO}://{z}/{x}/{y}/${encodeURIComponent(stempel)}`;
+    const q = map.getSource('dwd');
+    if (!q) {
+      map.addSource('dwd', {
+        type: 'raster', tiles: [adresse], tileSize: KACHEL_PX,
+        minzoom: KACHEL_MIN_Z, maxzoom: KACHEL_MAX_Z,
+        bounds: [5.5, 47, 15.5, 55.5]        // nur wo der DWD misst
       });
-      if (lauf !== dwdLauf) return;              // inzwischen weitergeschoben
-
-      dwdFiltern(bild, zeitMs ? null
-        : { x0: +r(x0), y0: +r(y0), x1: +r(x1), y1: +r(y1), schluessel: speicherKey });
-      /* Blob statt Daten-Adresse — genau die Falle, die schon die
-         Vorhersagebilder leer ließ: MapLibre bricht bei Base64-Adressen mit
-         „Failed to fetch" ab, und die Karte bleibt ohne Bild. */
-      const daten = await new Promise((ok) =>
-        dwdCanvas.toBlob((b) => ok(b ? URL.createObjectURL(b) : null), 'image/png'));
-      if (!daten) throw new Error('Bild konnte nicht erzeugt werden');
-      if (lauf !== dwdLauf) { URL.revokeObjectURL(daten); return; }
-      if (rvBilder.size > 120) leereNowcastSpeicher();
-      rvBilder.set(speicherKey, daten);
-
-      if (!map.getSource('dwd')) {
-        map.addSource('dwd', { type: 'image', url: daten, coordinates: ecken });
-        map.addLayer({ id: 'dwd-layer', type: 'raster', source: 'dwd',
-          paint: { 'raster-opacity': 0, 'raster-opacity-transition': { duration: 200 } } },
-          unterBeschriftung());
-      } else {
-        map.getSource('dwd').updateImage({ url: daten, coordinates: ecken });
-      }
-      updateSharp();
-    } catch (e) {
-      console.warn('DWD-Detailbild:', e.message);
-      setzeDwdSichtbar(false);
+      map.addLayer({
+        id: 'dwd-layer', type: 'raster', source: 'dwd',
+        paint: { 'raster-opacity': 0, 'raster-opacity-transition': { duration: 200 },
+                 'raster-fade-duration': 150 }
+      }, unterBeschriftung());
+    } else if (q.tiles?.[0] !== adresse) {
+      kachelFelder.clear();
+      q.setTiles([adresse]);
     }
+    updateSharp();
+    planeOrtswerte();
   }
+
+  /* Der alte Name bleibt, damit die Aufrufer unverändert bleiben. */
+  async function ladeDwdBild(zeitMs = null) { dwdZeitSetzen(zeitMs); }
 
   function leereOrtswerte() {
     ortMarker.forEach((m) => m.remove());
@@ -511,16 +520,21 @@ const Radar = (() => {
       Spulen bleiben sie stehen, genau wie die Stationsschirmchen dort. */
   function ortsWerte() {
     leereOrtswerte();
-    if (!dwdSichtbar || !feldInfo || !map || !els.aktiveEbenen?.().has('regen')) return;
-    const { glatt, bw, bh, x0, y0, x1, y1 } = feldInfo;
+    if (!dwdSichtbar || !kachelFelder.size || !map || !els.aktiveEbenen?.().has('regen')) return;
     const M = 20037508.342789244;
+    /* Der Wert kommt aus der Kachel, die den Punkt enthält — dieselben
+       Zahlen, aus denen auch die Farben entstehen, kein zweiter Datenweg. */
     const wert = (lon, lat) => {
       const mx = lon * M / 180;
       const my = Math.log(Math.tan((90 + lat) * Math.PI / 360)) / Math.PI * M;
-      const ix = Math.round((mx - x0) / (x1 - x0) * bw - 0.5);
-      const iy = Math.round((y1 - my) / (y1 - y0) * bh - 0.5);
-      if (ix < 0 || iy < 0 || ix >= bw || iy >= bh) return 0;
-      return glatt[iy * bw + ix];
+      for (const k of kachelFelder.values()) {
+        if (mx < k.x0 || mx > k.x1 || my < k.y0 || my > k.y1) continue;
+        const ix = Math.round((mx - k.x0) / (k.x1 - k.x0) * k.bw - 0.5);
+        const iy = Math.round((k.y1 - my) / (k.y1 - k.y0) * k.bh - 0.5);
+        if (ix < 0 || iy < 0 || ix >= k.bw || iy >= k.bh) continue;
+        return k.glatt[iy * k.bw + ix];
+      }
+      return 0;
     };
     const setzen = (lngLat, v, extra = '', anker = 'top', versatz = [0, 10]) => {
       const el = document.createElement('div');
@@ -1181,8 +1195,7 @@ const Radar = (() => {
      neuen Eckkoordinaten gespannt, also die falsche Gegend zeigen. */
   const fcSchluessel = (h, ebenen) => `${Forecast.stamp()}|${h}|${[...ebenen].sort().join(',')}`;
   function leereNowcastSpeicher() {
-    for (const u of rvBilder.values()) { try { URL.revokeObjectURL(u); } catch {} }
-    rvBilder.clear();
+    kachelFelder.clear();
   }
 
   function leereBildSpeicher() {
@@ -1307,29 +1320,86 @@ const Radar = (() => {
 
   /** Bilder des Nowcasts still vorladen, damit das Abspielen flüssig läuft. */
   function nowcastVorwaermen() {
+    if (!map || !ready) return;
+    /* Früher wurden alle 43 Zeitschritte als ganze Bilder geholt und
+       gerendert. Seit der DWD zeitindiziert 7 bis 14 Sekunden je kalter
+       Anfrage braucht, war das die Hauptlast der App — und meist umsonst,
+       weil man selten die ganze Leiste abspielt. Jetzt werden nur die
+       Kacheln des SICHTBAREN Ausschnitts für die nächsten Schritte warm
+       gemacht, ohne sie zu zeichnen: Der Worker legt sie in den Cache,
+       das Abspielen findet sie dort. */
     const zeiten = rvZeiten();
     if (!zeiten.length) return;
-    /* Drei Ketten parallel statt einer: Seit die Bilder in Zellauflösung
-       kommen, sind sie nur noch wenige Kilobyte — der Engpass ist die
-       Rundreise zum DWD, nicht die Datenmenge. So steht der ganze
-       Zeitstrahl in einem Drittel der Zeit bereit. */
+    const jetzt = Date.now();
+    /* Sparsam: drei Zeitschritte, höchstens vier Kacheln, 600 ms Abstand.
+       Sechs Schritte x neun Kacheln wären 54 kalte Anfragen gewesen — bei
+       gemessenen ~10 Sekunden je kalter DWD-Anfrage hätte das Vorwärmen
+       genau die Kacheln ausgebremst, die man gerade sehen will. */
+    const naechste = zeiten.filter(t => t >= jetzt - 5 * 60000).slice(0, 3);
+    const kacheln = sichtbareKacheln().slice(0, 4);
+    if (!kacheln.length || !naechste.length) return;
+
+    const auftrag = [];
+    for (const t of naechste) for (const k of kacheln) auftrag.push([k, t]);
     let i = 0;
-    const naechstes = () => {
-      if (i >= zeiten.length) return;
-      const t = zeiten[i++];
-      ladeDwdBild(t).finally(() => setTimeout(naechstes, 250));
+    const weiter = () => {
+      if (i >= auftrag.length) return;
+      const [k, t] = auftrag[i++];
+      warmMachen(k, rvStempel(t)).finally(() => setTimeout(weiter, 600));
     };
-    /* Zwei Ketten mit 250 ms Abstand statt drei mit 60: Seit die Leiste
-       zwei Stunden zurückreicht, sind es 43 Bilder — im alten Takt reizte
-       das Vorwärmen die Ratengrenze des DWD, und ausgerechnet das
-       Jetzt-Bild bekam dann 429er. */
-    setTimeout(() => { naechstes(); naechstes(); }, 350);
+    setTimeout(weiter, 3000);      // erst die sichtbaren Kacheln, dann vorwärmen
   }
+
+  /** Welche Kacheln deckt der sichtbare Ausschnitt ab? */
+  function sichtbareKacheln() {
+    const b = map.getBounds();
+    const z = Math.max(KACHEL_MIN_Z,
+      Math.min(KACHEL_MAX_Z, Math.round(map.getZoom()) - 1));
+    const n = Math.pow(2, z);
+    const xVon = (lon) => Math.floor((lon + 180) / 360 * n);
+    const yVon = (lat) => {
+      const r = lat * Math.PI / 180;
+      return Math.floor((1 - Math.asinh(Math.tan(r)) / Math.PI) / 2 * n);
+    };
+    const x0 = xVon(b.getWest()), x1 = xVon(b.getEast());
+    const y0 = yVon(b.getNorth()), y1 = yVon(b.getSouth());
+    const aus = [];
+    for (let x = x0; x <= x1 && aus.length < 9; x++) {
+      for (let y = y0; y <= y1 && aus.length < 9; y++) aus.push({ z, x, y });
+    }
+    return aus;
+  }
+
+  /** Eine Kachel beim Worker anfordern, ohne sie zu verarbeiten — damit
+      sie im Cache liegt, wenn die Zeitleiste sie braucht. Muss dasselbe
+      Kilometergitter treffen wie kachelBauen, sonst wärmt es die falsche
+      Adresse. */
+  function warmMachen({ z, x, y }, stempel) {
+    const M = 20037508.342789244;
+    const seite = 2 * M / Math.pow(2, z);
+    let zelle = 1000;
+    let n = Math.ceil((seite + 2 * KACHEL_RAND * zelle) / zelle);
+    while (n > 512) { zelle *= 2; n = Math.ceil((seite + 2 * KACHEL_RAND * zelle) / zelle); }
+    const x0 = -M + x * seite, y1 = M - y * seite;
+    const gx0 = Math.floor((x0 - KACHEL_RAND * zelle) / zelle) * zelle;
+    const gy1 = Math.ceil((y1 + KACHEL_RAND * zelle) / zelle) * zelle;
+    const bbox = [gx0, gy1 - n * zelle, gx0 + n * zelle, gy1].map(v => v.toFixed(0)).join(',');
+    return fetch(`${proxyBasis()}/dwdradar?bbox=${bbox}&px=${n}`
+      + `&time=${encodeURIComponent(stempel)}`).catch(() => {});
+  }
+
 
   return { init, load, setCenter, play, pause, toggle, show, isPlaying,
            showForecast, showRadar, updateLabels, frameTimes, showAt, lastMeasured,
            leereBildSpeicher, vorwaermen,
            zeigeNowcast, nowcastVorwaermen, rvZeiten, rvMoeglich, leereNowcastSpeicher,
+           /* Diagnose: eine einzelne Kachel bauen, ohne Karte. Damit lässt
+              sich prüfen, ob Zuschnitt und Glättung stimmen und ob zwei
+              benachbarte Kacheln am Stoß denselben Wert ergeben — die
+              Kartenvorschau pausiert ihre Zeichenschleife und kann das
+              nicht zeigen. */
+           kachelPruefen: (z, x, y, stempel = null) => kachelBauen(z, x, y, dwdStempel(stempel)),
+           kachelFeld: (z, x, y) => kachelFelder.get(`${z}/${x}/${y}`),
            get nowcastAktiv() { return rvAktiv; },
            updateLegend: renderLegend,
            get map() { return map; } };
