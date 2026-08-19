@@ -249,8 +249,17 @@ export default {
         let res = null;
         for (const ziel of kandidaten) {
           try {
+            /* Vergangene Zeitpunkte ändern sich NIE — ein Radarbild von
+               vor einer Stunde ist morgen noch dasselbe. Die bisherigen
+               fünf Minuten für alles waren der Grund, warum die Zeitleiste
+               dauernd neu beim DWD anfragte. Gemessen: eine kalte Anfrage
+               mit Zeitstempel kostet den DWD 7 bis 14 Sekunden, eine warme
+               0,12. Also: Vergangenes einen Tag halten, nur das laufende
+               Bild kurz. */
+            const alterMin = zeitOk ? (Date.now() - Date.parse(zeit)) / 60000 : 0;
+            const ttl = alterMin > 12 ? 86400 : 300;
             res = await withTimeout(
-              fetch(ziel, { cf: { cacheTtl: 300, cacheEverything: true } }), 12000);
+              fetch(ziel, { cf: { cacheTtl: ttl, cacheEverything: true } }), 12000);
             if (res.ok && /image\/png/i.test(res.headers.get('content-type') || '')) break;
           } catch { res = null; }
           res = res && null;
@@ -258,11 +267,17 @@ export default {
         if (!res) {
           return json({ error: 'DWD liefert derzeit kein Radarbild' }, 502, origin);
         }
+        const alterMin = zeitOk ? (Date.now() - Date.parse(zeit)) / 60000 : 0;
+        const maxAge = alterMin > 12 ? 86400 : 300;
         return new Response(res.body, {
           headers: {
             ...cors(origin),
             'content-type': 'image/png',
-            'cache-control': 'public, max-age=300'
+            /* `immutable` nur für Vergangenes — das Jetzt-Bild ändert
+               sich alle fünf Minuten und darf nicht als unveränderlich
+               ausgezeichnet werden. */
+            'cache-control': `public, max-age=${maxAge}`
+              + (maxAge > 300 ? ', immutable' : '')
           }
         });
       } catch {
