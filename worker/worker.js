@@ -237,6 +237,17 @@ export default {
         if (Date.now() - marke > 20 * 60000) {
           await env.WF_PUSH.put('radar:aktiv', String(Date.now()));
         }
+        /* Nach einer Pause hat der Cron nichts vorgewärmt — die Zeitleiste
+           wäre also genau dann kalt, wenn jemand sie zuerst antippt
+           (gemessen 2,8 bis 9,3 s je Schritt). Deshalb hier sofort selbst
+           anstoßen, statt bis zu fünf Minuten auf den nächsten Cron zu
+           warten. Höchstens alle vier Minuten, damit sich die Läufe nicht
+           überlappen. */
+        const letzte = +(await env.WF_PUSH.get('radar:warm') || 0);
+        if (Date.now() - letzte > 4 * 60000) {
+          await env.WF_PUSH.put('radar:warm', String(Date.now()));
+          await radarBildVorwaermen(env, true);
+        }
       })().catch(() => {}));
 
       /* Getrennte Ablagen: bild/ hält die endgültige Analyse (für immer
@@ -1605,7 +1616,7 @@ async function deutschlandBild(zeit) {
 /* Beim Fünf-Minuten-Lauf den frischen Analyse-Schritt nach R2 legen: Dann
    trifft schon der ERSTE Nutzer eines Schritts auf das fertige Bild und
    niemand wartet je auf den kalten DWD-Abruf der Vergangenheit. */
-async function radarBildVorwaermen(env) {
+async function radarBildVorwaermen(env, erzwingen = false) {
   const takt = Math.floor(Date.now() / 300000) * 300000 - 300000;   // letzter fertiger Schritt
   const zeit = (ms) => new Date(ms).toISOString().replace(/\.\d{3}Z$/, '.000Z');
 
@@ -1619,11 +1630,17 @@ async function radarBildVorwaermen(env) {
      benutzt wurde — sonst fragte der Cron den DWD rund um die Uhr für
      niemanden. Mit Vorwärmen ist JEDER Schritt der Zeitleiste beim
      Antippen sofort da, wie in der DWD-App. */
-  const marke = +(await env.WF_PUSH.get('radar:aktiv') || 0);
-  if (Date.now() - marke > 2 * 3600e3) return;
+  if (!erzwingen) {
+    const marke = +(await env.WF_PUSH.get('radar:aktiv') || 0);
+    if (Date.now() - marke > 2 * 3600e3) return;
+  }
 
   const schritte = [];
-  for (let m = 5; m <= 90; m += 5) schritte.push(takt + m * 60000);
+  /* Bis +120 statt +90: Gezählt wird ab dem letzten FERTIGEN Schritt, der
+     schon fünf Minuten zurückliegt — mit 90 endete das Vorwärmen deshalb
+     fünf Minuten vor dem Ende der Zeitleiste, und genau der letzte Schritt
+     kostete wieder 4 Sekunden. Das RV-Produkt reicht ohnehin bis +120. */
+  for (let m = 5; m <= 120; m += 5) schritte.push(takt + m * 60000);
   let i = 0;
   const kette = async () => {
     while (i < schritte.length) {
