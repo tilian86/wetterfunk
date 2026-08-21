@@ -115,7 +115,7 @@ const Radar = (() => {
      hängen erst dann das Ergebnis in die Karte. */
   /* Über den eigenen Worker: Der DWD-Dienst braucht oft mehrere Sekunden und
      fällt zeitweise ganz aus. Gepuffert kommt dasselbe Bild sofort zurück. */
-  let dwdSichtbar = false, dwdTimer = null;
+  let dwdSichtbar = false, dwdTimer = null, fcZeigtRegen = false;
   /* Marker und Zeitgeber der Ortswerte. Standen vorher im Block der alten
      Bild-Aufbereitung und sind beim Umbau auf Kacheln mit gelöscht worden —
      „ortTimer is not defined" bei jedem Kartenzug, was die ganze
@@ -497,6 +497,7 @@ const Radar = (() => {
     } else if (q.tiles?.[0] !== adresse) {
       q.setTiles([adresse]);
     }
+    ebenenOrdnen();
     updateSharp();
     planeOrtswerte();
     nachbarnVorladen(zeitMs);
@@ -657,7 +658,7 @@ const Radar = (() => {
     const letzteMessung = frames.findIndex(f => f.kind === 'now');
     const istAktuell = idx === (letzteMessung > 0 ? letzteMessung - 1 : frames.length - 1);
     const moeglich = !!map.getSource('dwd') && inDeutschland(map.getBounds()) && map.getZoom() >= 5.5;
-    setzeDwdSichtbar(istAktuell && !playing && !fcVisible && moeglich);
+    setzeDwdSichtbar(istAktuell && !playing && !fcZeigtRegen && moeglich);
   }
 
   /** Temperaturzahlen an den Rasterpunkten — damit man auf der Karte sofort
@@ -1295,19 +1296,36 @@ const Radar = (() => {
       map.getSource('fc').updateImage({ url, coordinates: ecken });
     }
     map.setLayoutProperty('fc-layer', 'visibility', 'visible');
+    ebenenOrdnen();
   }
 
   /** Die Flächenvorhersage verbergen, solange ihr Bild den Ausschnitt nicht
       mehr abdeckt. Ein halb gefülltes Raster endet sonst als harte
       waagerechte Kante mitten im Bild — das sieht aus wie ein Defekt, nicht
       wie „lädt noch". */
+  /* Das Radar gehört ÜBER die Wolken. Beide Ebenen werden zu
+     unterschiedlichen Zeitpunkten angelegt; wer zuletzt kam, lag oben — und
+     eine Wolkenfläche mit 95 % Deckkraft verschluckt jeden Regen darunter.
+     Deshalb nach jedem Anlegen die Reihenfolge festziehen. */
+  function ebenenOrdnen() {
+    if (!map?.getLayer('dwd-layer') || !map.getLayer('fc-layer')) return;
+    try { map.moveLayer('dwd-layer', unterBeschriftung()); } catch { /* Stil im Umbau */ }
+  }
+
   function fcVerbergen() {
     if (map?.getLayer('fc-layer')) map.setLayoutProperty('fc-layer', 'visibility', 'none');
     fcVisible = false;
+    fcZeigtRegen = false;
   }
 
   function showForecast(hourIndex, ebenen) {
     if (!ready || !map || !Forecast.ready()) return false;
+    /* Entscheidend ist nicht, OB die Flächenebene sichtbar ist, sondern ob
+       sie REGEN zeigt. Seit sie im DWD-Fenster die Wolken trägt, war das
+       alte `!fcVisible` in updateSharp falsch: Es schaltete das Radar ab,
+       sobald Wolken zu sehen waren — die Karte zeigte dann Grau ohne einen
+       einzigen Regenfleck, obwohl es draußen regnete. */
+    fcZeigtRegen = !!(ebenen && ebenen.has && ebenen.has('regen'));
 
     const key = fcSchluessel(hourIndex, ebenen);
     const fertig = fcBilder.get(key);
