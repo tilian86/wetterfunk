@@ -158,8 +158,21 @@ export async function pruefeOrt(lat, lon, tag) {
       }
     }
 
-    // ── Bewölkung gegen die Reanalyse
-    const wahr = wahrWolken.get(k);
+    /* ── Bewölkung: zuerst gegen die STATION, sonst gegen die Reanalyse.
+       Vorher wurde nur gegen ERA5 geprüft. Nachgemessen über 697 Stunden
+       in Tübingen weichen beide Wahrheiten stark voneinander ab: ERA5
+       32,1 % mittlere Bewölkung, Station 45,1 %, im Betrag 24,2 Punkte
+       Unterschied — in nur 55 % der Stunden dieselbe Kategorie. Eine
+       Trefferquote gegen ERA5 misst damit vor allem, wie gut die Modelle
+       zu ERA5 passen, nicht wie gut sie zu dem passen, was man draußen
+       sieht. Temperatur und Regen werden längst an der Station geprüft;
+       der Himmel gehört auf dieselbe Grundlage.
+
+       Belegt wurde das beim Versuch einer Ortskorrektur für die Bewölkung:
+       Gegen ERA5 hob sie die Quote um 5,0 Punkte (z = 4,50), gegen die
+       Station bewirkte sie nichts (z = 0,00, repariert 3 Stunden, verdirbt
+       4). Der scheinbare Modellversatz war ein ERA5-Versatz. */
+    const wahr = mess?.get(k)?.cloud_cover ?? wahrWolken.get(k);
     if (wahr != null) {
       const einzel = feld('cloud_cover', 'icon_d2')[i];
       const alle = MODELLE.map(x => feld('cloud_cover', x)[i]).filter(v => v != null);
