@@ -36,10 +36,10 @@
 <meta name="theme-color" content="#0b1220">
 <link rel="apple-touch-icon" href="icons/icon-180.png">
 <link rel="icon" href="icons/icon-192.png">
-<link rel="manifest" href="manifest.webmanifest?v=219">
+<link rel="manifest" href="manifest.webmanifest?v=220">
 
-<link rel="stylesheet" href="vendor/maplibre-gl.css?v=219">
-<link rel="stylesheet" href="css/style.css?v=219">
+<link rel="stylesheet" href="vendor/maplibre-gl.css?v=220">
+<link rel="stylesheet" href="css/style.css?v=220">
 </head>
 <body>
 
@@ -338,6 +338,23 @@
        target="_blank" rel="noopener noreferrer">
       <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 7.5A2.5 2.5 0 0 1 5.5 5h9A2.5 2.5 0 0 1 17 7.5v9A2.5 2.5 0 0 1 14.5 19h-9A2.5 2.5 0 0 1 3 16.5z"/><path d="m17 10.5 4-2.5v8l-4-2.5z"/></svg>
       <span><b>Wettervideo der tagesschau</b><i>Jeden Tag neu — Deutschland und Südwesten</i></span>
+      <svg class="dwd-video-chev" viewBox="0 0 24 24" aria-hidden="true"><path d="m9 6 6 6-6 6"/></svg>
+    </a>
+    <!-- „Wetter vor acht": die tägliche ARD-Wettersendung, wie das
+         Landesschau-Wetter im Fernsehstil. Die Sendungsseite ist eine feste
+         Adresse und trägt immer die neueste Folge zuoberst.
+
+         Das Landesschau-Wetter selbst ist NICHT verlinkbar — dreifach
+         geprüft (25.08.): Die Folge führt in der Mediathek keine
+         Kapitelmarken; der SWR schneidet zwar viele Einzelbeiträge aus der
+         Sendung, das Wetter aber nie (50 jüngste Beiträge: keiner, während
+         NDR und MDR ihre Wetterblöcke als eigene Clips einstellen); und der
+         Mediathek-Player bietet kein Teilen mit Zeitmarke, ein
+         Zeitsprung-Link wäre also nicht verlässlich. -->
+    <a class="dwd-video" href="https://www.ardmediathek.de/sendung/wetter-vor-acht/Y3JpZDovL2Rhc2Vyc3RlLmRlL2RhcyB3ZXR0ZXIgaW0gZXJzdGVu"
+       target="_blank" rel="noopener noreferrer">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 7.5A2.5 2.5 0 0 1 5.5 5h9A2.5 2.5 0 0 1 17 7.5v9A2.5 2.5 0 0 1 14.5 19h-9A2.5 2.5 0 0 1 3 16.5z"/><path d="m17 10.5 4-2.5v8l-4-2.5z"/></svg>
+      <span><b>Wetter vor acht (ARD)</b><i>Tägliche Wettersendung — neueste Folge zuoberst</i></span>
       <svg class="dwd-video-chev" viewBox="0 0 24 24" aria-hidden="true"><path d="m9 6 6 6-6 6"/></svg>
     </a>
     <a class="dwd-video" href="https://www.youtube.com/@DWDderWetterdienst/videos"
@@ -702,11 +719,11 @@
 <!-- Die Kartenbibliothek (936 KB) lädt NICHT mehr hier: radar.js holt sie
      erst, wenn die Radar-Karte gebraucht wird. Die Versionsmarke dafür
      hängt am Stylesheet-Link oben — den zählt release.sh mit. -->
-<script src="js/icons.js?v=219"></script>
-<script src="js/kueste.js?v=219"></script>
-<script src="js/radar.js?v=219"></script>
-<script src="js/forecast.js?v=219"></script>
-<script src="js/briefing.js?v=219"></script>
-<script src="js/app.js?v=219"></script>
+<script src="js/icons.js?v=220"></script>
+<script src="js/kueste.js?v=220"></script>
+<script src="js/radar.js?v=220"></script>
+<script src="js/forecast.js?v=220"></script>
+<script src="js/briefing.js?v=220"></script>
+<script src="js/app.js?v=220"></script>
 </body>
 </html>
