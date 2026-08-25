@@ -3035,3 +3035,19 @@ body.ar-offen { overflow: hidden; }
 @media (prefers-reduced-motion: reduce) {
   .schritt-txt.laedt { animation: none; opacity: .8 }
 }
+
+/* Verlauf der eigenen Berichte — die letzten zehn bleiben abrufbar. */
+.bf-verlauf {
+  margin-top: 10px; padding-top: 9px;
+  border-top: 1px solid rgba(255,255,255,.09);
+  font-size: 12px; color: var(--ink-faint);
+  display: flex; flex-wrap: wrap; align-items: center; gap: 6px;
+}
+.bf-alt {
+  border: 1px solid rgba(255,255,255,.16);
+  background: rgba(255,255,255,.05);
+  color: #cfe0f5; border-radius: 999px;
+  padding: 3px 10px; font-size: 12px; cursor: pointer;
+}
+.bf-alt:hover { background: rgba(255,255,255,.12); }
+.bf-alt.ist-da { border-color: rgba(127,196,255,.5); color: #7fc4ff; }

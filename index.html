@@ -36,10 +36,10 @@
 <meta name="theme-color" content="#0b1220">
 <link rel="apple-touch-icon" href="icons/icon-180.png">
 <link rel="icon" href="icons/icon-192.png">
-<link rel="manifest" href="manifest.webmanifest?v=218">
+<link rel="manifest" href="manifest.webmanifest?v=219">
 
-<link rel="stylesheet" href="vendor/maplibre-gl.css?v=218">
-<link rel="stylesheet" href="css/style.css?v=218">
+<link rel="stylesheet" href="vendor/maplibre-gl.css?v=219">
+<link rel="stylesheet" href="css/style.css?v=219">
 </head>
 <body>
 
@@ -320,13 +320,36 @@
       </button>
       <button class="dwd-more" id="dwdMore" hidden>Ganzer Bericht</button>
     </div>
-    <!-- Der DWD spricht seine Lage täglich auch auf Video. Verlinkt statt
-         eingebettet: Eingebettet lädt YouTube Zählpixel mit, und die
-         Sicherheitsregeln dieser Seite lassen das nicht zu. -->
+    <!-- Zwei Videoquellen. Verlinkt statt eingebettet: Eingebettet lädt
+         YouTube Zählpixel mit, und die Sicherheitsregeln dieser Seite
+         lassen das nicht zu.
+
+         Die tagesschau steht oben, weil sie verlässlich ist: Unter dieser
+         festen Adresse liegt jeden Tag das aktuelle Wettervideo (nachgesehen
+         am 25.08. — Beitrag vom selben Morgen). Der DWD-Kanal bleibt als
+         zweite Quelle, veröffentlicht aber unregelmäßig.
+
+         Vom SWR gibt es bewusst KEINEN Verweis: Das Wetter aus der
+         Landesschau erscheint nicht als eigenes Video, sondern nur
+         innerhalb der ganzen Sendung. Geprüft wurden die Landesschau-Seite,
+         die Videoübersicht („alle Videos", 0 Wetterbeiträge), swr.de/wetter
+         (keinerlei Video) und die ARD-Mediathek-Suche. -->
+    <a class="dwd-video" href="https://www.tagesschau.de/wetter/deutschland/wettervorhersage-deutschland-100.html"
+       target="_blank" rel="noopener noreferrer">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 7.5A2.5 2.5 0 0 1 5.5 5h9A2.5 2.5 0 0 1 17 7.5v9A2.5 2.5 0 0 1 14.5 19h-9A2.5 2.5 0 0 1 3 16.5z"/><path d="m17 10.5 4-2.5v8l-4-2.5z"/></svg>
+      <span><b>Wettervideo der tagesschau</b><i>Jeden Tag neu — Deutschland und Südwesten</i></span>
+      <svg class="dwd-video-chev" viewBox="0 0 24 24" aria-hidden="true"><path d="m9 6 6 6-6 6"/></svg>
+    </a>
     <a class="dwd-video" href="https://www.youtube.com/@DWDderWetterdienst/videos"
        target="_blank" rel="noopener noreferrer">
       <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 7.5A2.5 2.5 0 0 1 5.5 5h9A2.5 2.5 0 0 1 17 7.5v9A2.5 2.5 0 0 1 14.5 19h-9A2.5 2.5 0 0 1 3 16.5z"/><path d="m17 10.5 4-2.5v8l-4-2.5z"/></svg>
-      <span><b>Wettervideo des DWD</b><i>Die Lage täglich von Meteorologen erklärt</i></span>
+      <span><b>Wettervideo des DWD</b><i>Meteorologen erklären die Lage — unregelmäßig</i></span>
+      <svg class="dwd-video-chev" viewBox="0 0 24 24" aria-hidden="true"><path d="m9 6 6 6-6 6"/></svg>
+    </a>
+    <a class="dwd-video" href="https://www.swr.de/wetter/index.html"
+       target="_blank" rel="noopener noreferrer">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v18M3 12h18"/><circle cx="12" cy="12" r="9"/></svg>
+      <span><b>SWR — Wetter im Südwesten</b><i>Regionale Lage und Unwetterwarnungen</i></span>
       <svg class="dwd-video-chev" viewBox="0 0 24 24" aria-hidden="true"><path d="m9 6 6 6-6 6"/></svg>
     </a>
     <div class="bf-voice" id="dwdVoiceBar"></div>
@@ -679,11 +702,11 @@
 <!-- Die Kartenbibliothek (936 KB) lädt NICHT mehr hier: radar.js holt sie
      erst, wenn die Radar-Karte gebraucht wird. Die Versionsmarke dafür
      hängt am Stylesheet-Link oben — den zählt release.sh mit. -->
-<script src="js/icons.js?v=218"></script>
-<script src="js/kueste.js?v=218"></script>
-<script src="js/radar.js?v=218"></script>
-<script src="js/forecast.js?v=218"></script>
-<script src="js/briefing.js?v=218"></script>
-<script src="js/app.js?v=218"></script>
+<script src="js/icons.js?v=219"></script>
+<script src="js/kueste.js?v=219"></script>
+<script src="js/radar.js?v=219"></script>
+<script src="js/forecast.js?v=219"></script>
+<script src="js/briefing.js?v=219"></script>
+<script src="js/app.js?v=219"></script>
 </body>
 </html>
