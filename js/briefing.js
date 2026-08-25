@@ -31,7 +31,28 @@ const LENGTHS = [
 
 const LS = { proxy: 'wf.proxy', model: 'wf.model', parts: 'wf.parts', len: 'wf.len',
              route: 'wf.route', key: 'wf.aikey', voice: 'wf.voice', rate: 'wf.rate',
-             ttsPass: 'wf.ttsPass', kiStimme: 'wf.kiStimme', nutzeKI: 'wf.nutzeKI' };
+             ttsPass: 'wf.ttsPass', kiStimme: 'wf.kiStimme', nutzeKI: 'wf.nutzeKI',
+             berichte: 'wf.berichte' };
+
+/* Berichte bleiben liegen. Vorher lebte der fertige Text nur in einer
+   Variablen — wer die App kurz verließ, fand ihn nicht wieder, obwohl er
+   Rechenzeit gekostet hatte. Jetzt landen die letzten zehn im Speicher des
+   Geräts, mit Zeitstempel; beim Öffnen steht der jüngste wieder da. */
+const BERICHTE_MAX = 10;
+const BERICHTE_TAGE = 30;
+
+function berichteLesen() {
+  const alle = store.get(LS.berichte, []);
+  if (!Array.isArray(alle)) return [];
+  const grenze = Date.now() - BERICHTE_TAGE * 86400000;
+  return alle.filter(b => b && typeof b.text === 'string' && b.t > grenze);
+}
+
+function berichtMerken(eintrag) {
+  const alle = [eintrag, ...berichteLesen()].slice(0, BERICHTE_MAX);
+  store.set(LS.berichte, alle);
+  return alle;
+}
 
 /** Adresse des eigenen Cloudflare Workers. */
 const DEFAULT_PROXY = 'https://wetterfunk.florian-s-thiel.workers.dev';
@@ -258,6 +279,7 @@ async function generate() {
     const out = await ask(system, user, model);
     text = out.text;
     if (!text) { host.toast('Keine Antwort erhalten.'); return; }
+    berichtMerken({ t: Date.now(), text, label: viaLabel(model, out) });
     renderResult(model, out);
   } catch (e) {
     console.error(e);
@@ -575,7 +597,28 @@ function viaLabel(model, out) {
 }
 
 function renderResult(model, out) {
+  zeigeBericht(viaLabel(model, out), true);
+}
+
+/** Wann wurde der Bericht geschrieben? */
+function alterWort(t) {
+  const min = Math.round((Date.now() - t) / 60000);
+  if (min < 2) return 'gerade eben';
+  if (min < 60) return `vor ${min} Min.`;
+  const d = new Date(t);
+  const heute = d.toDateString() === new Date().toDateString();
+  const uhr = d.toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' });
+  if (heute) return `heute ${uhr} Uhr`;
+  return `${d.toLocaleDateString('de-DE', { weekday: 'short', day: '2-digit', month: '2-digit' })}, ${uhr} Uhr`;
+}
+
+/** Den Bericht anzeigen — frisch erzeugt oder aus dem Speicher geholt.
+    `springen` nur beim frischen, sonst würde die Seite beim Öffnen
+    ungefragt nach unten rutschen. */
+function zeigeBericht(label, springen, stand = Date.now(), pos = 0) {
   const box = $('#bfResult');
+  if (!box) return;
+  const alle = berichteLesen();
 
   box.innerHTML = `
     <p class="bf-text">${esc(text).replace(/\n+/g, '</p><p class="bf-text">')}</p>
@@ -585,14 +628,32 @@ function renderResult(model, out) {
         <svg viewBox="0 0 24 24" class="ico-stop"><rect x="6" y="6" width="12" height="12" rx="2.5"/></svg>
         <span id="bfSpeakLabel">Vorlesen</span>
       </button>
-      <span class="bf-cost">${viaLabel(model, out)}</span>
+      <span class="bf-cost">${label} <i>· ${esc(alterWort(stand))}</i></span>
     </div>
-    <div class="bf-voice" id="bfVoiceBar"></div>`;
+    <div class="bf-voice" id="bfVoiceBar"></div>
+    ${alle.length > 1 ? `<div class="bf-verlauf">Frühere Berichte: ${
+      alle.map((b, i) => `<button class="bf-alt${i === pos ? ' ist-da' : ''}" data-nr="${i}">${
+        esc(alterWort(b.t))}</button>`).join('')}</div>` : ''}`;
 
   $('#bfSpeak').addEventListener('click', speak);
+  box.querySelectorAll('.bf-alt').forEach(k => k.addEventListener('click', () => {
+    const b = berichteLesen()[+k.dataset.nr];
+    if (!b) return;
+    if (speaking) stopSpeaking();
+    text = b.text;
+    zeigeBericht(b.label || '', false, b.t, +k.dataset.nr);
+  }));
   renderVoiceBar();
   setSpeaking(false);
-  box.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+  if (springen) box.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+}
+
+/** Beim Start den zuletzt geschriebenen Bericht wieder hinstellen. */
+function letztenBerichtZeigen() {
+  const alle = berichteLesen();
+  if (!alle.length) return;
+  text = alle[0].text;
+  zeigeBericht(alle[0].label || '', false, alle[0].t, 0);
 }
 
 const RATES = [0.8, 1, 1.2, 1.5, 2];
@@ -777,6 +838,7 @@ function saveSettings() {
 function init(hostApi) {
   host = hostApi;
   renderChips();
+  letztenBerichtZeigen();
   $('#bfGo').addEventListener('click', generate);
   $('#bfSettings').addEventListener('click', openSettings);
   $('#bfSave').addEventListener('click', saveSettings);
