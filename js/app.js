@@ -216,6 +216,22 @@ function himmelCode(i) {
   if (code === 45 || code === 48) return code;          // Nebel
   if (code >= 95) return code;                          // Gewitter
   if ((h.precipitation[i] ?? 0) >= REGEN.nichts) return code;
+  /* Die Gesamtbewölkung taugt nicht als Maß für „wie sonnig".
+     Nachgemessen für den 27.08.: von 12 bis 19 Uhr meldeten die Modelle
+     100 % Bewölkung — aber 0 % TIEFE Wolken und 60 Minuten Sonne je
+     Stunde. Es waren reine Schleierwolken in großer Höhe, durch die die
+     Sonne scheint. Die App zeichnete trotzdem eine geschlossene Wolke und
+     kam für einen Tag mit 10,9 Sonnenstunden auf „bedeckt".
+
+     Deshalb entscheidet jetzt die gerechnete Sonnenscheindauer. Sie ist
+     das, was man draußen merkt. Nur wo sie fehlt (nachts, oder wenn das
+     Modell sie nicht liefert), bleibt die Bewölkung der Maßstab. */
+  const sonne = h.sunshine_duration?.[i];
+  const tags = h.is_day ? h.is_day[i] === 1 : true;
+  if (sonne != null && tags) {
+    const anteil = Math.max(0, Math.min(1, sonne / 3600));
+    return anteil >= 0.75 ? 0 : anteil >= 0.4 ? 1 : anteil >= 0.1 ? 2 : 3;
+  }
   const w = wolkenFuer(h.time[i], h.cloud_cover?.[i] ?? 0);
   return w < 25 ? 0 : w < 55 ? 1 : w < 80 ? 2 : 3;
 }
@@ -1217,7 +1233,22 @@ function daySymbol(dayIndex) {
   // Gewitter nie verschlucken
   if (idx.some(i => [95, 96, 99].includes(h.weather_code[i]))) return 95;
 
-  // Sonst: mittlere Bewölkung der Tagstunden entscheidet
+  /* Sonst entscheidet die Sonnenscheindauer, nicht die Bewölkung: Hohe
+     Schleierwolken zählen in der Gesamtbewölkung voll mit, lassen die
+     Sonne aber durch. Am 27.08. ergab das mittlere 90 % Bewölkung — bei
+     10,9 Sonnenstunden. Die App zeigte „bedeckt", DWD und WetterOnline
+     zeigten Sonne mit Wolken. Gemessen wird der Anteil der Sonnenstunden
+     an der möglichen Tageslänge. */
+  const sonneSek = idx.map(i => h.sunshine_duration?.[i])
+    .filter(v => v != null).reduce((a, b) => a + b, 0);
+  const moeglich = idx.length * 3600;
+  if (moeglich > 0 && idx.some(i => h.sunshine_duration?.[i] != null)) {
+    const anteil = sonneSek / moeglich;
+    if (anteil >= 0.6) return 0;      // überwiegend sonnig
+    if (anteil >= 0.35) return 1;     // heiter
+    if (anteil >= 0.12) return 2;     // wolkig mit Sonne
+    return 3;                         // wirklich trüb
+  }
   const cc = idx.map(i => wolkenFuer(h.time[i], h.cloud_cover?.[i])).filter(v => v != null);
   if (!cc.length) return raw;
   const avg = cc.reduce((a, b) => a + b, 0) / cc.length;
