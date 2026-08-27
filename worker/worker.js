@@ -423,8 +423,15 @@ export default {
           + `&bbox=${bb}&width=101&height=101&i=50&j=50`
           + `&info_format=application/json&time=${encodeURIComponent(zeit)}`;
         try {
+          /* Vergangene Zeitpunkte aendern sich nie — ein Messwert von vor
+             zehn Minuten ist morgen derselbe. Mit pauschal vier Minuten
+             wurde jeder Aufruf neu beim DWD geholt: gemessen 5,6 bis 8,2
+             Sekunden, reproduzierbar, fuer 539 Byte Antwort. Vergangenes
+             gilt jetzt einen Tag, nur Gegenwart und Vorhersage kurz. */
+          const alterMin = (Date.now() - t) / 60000;
+          const ttl = alterMin > 6 ? 86400 : 240;
           const r = await withTimeout(
-            fetch(u, { cf: { cacheTtl: 240, cacheEverything: true } }), 8000);
+            fetch(u, { cf: { cacheTtl: ttl, cacheEverything: true } }), 8000);
           if (!r.ok) return null;
           const d = await r.json();
           const v = d?.features?.[0]?.properties?.RV_ANALYSIS;
@@ -875,16 +882,38 @@ async function regenPruefen(env) {
           const start = Math.floor(regenlage.naechste.start / 300000) * 300000;
           zeiten = [start, start + 6e5];
         }
-        if (zeiten && reichtFuer(zeiten.length)) {
-          radarAusgegeben += zeiten.length;
+        /* Nicht nur die eigene Zelle fragen, sondern auch das Umfeld.
+           Unterdrückt wurde bisher, sobald das Radar an GENAU dieser
+           1-km-Zelle trocken meldete — derselbe Zufall, den /dwdverlauf an
+           anderer Stelle längst berücksichtigt: Ein Sommerschauer ist wenige
+           Kilometer groß, ob er die eigene Zelle trifft, ist Glückssache.
+           Gemessen: 69 von 260 Unterdrückungen (26 %) waren falsch — es
+           regnete innerhalb einer Dreiviertelstunde doch.
+
+           Jetzt zählt auch ein Treffer im Umkreis von 2,5 km als „nass", und
+           unterdrückt wird nur, wenn ringsum alles trocken ist. Reicht das
+           Anfragebudget dafür nicht, wird NICHT unterdrückt — im Zweifel
+           lieber eine Meldung zu viel als ein verpasster Regen. */
+        const RING_KM = 2.5;
+        const dLat = RING_KM / 111;
+        const dLon = RING_KM / (111 * Math.cos(eintrag.lat * Math.PI / 180));
+        const punkte = [[eintrag.lat, eintrag.lon],
+                        [eintrag.lat + dLat, eintrag.lon],
+                        [eintrag.lat - dLat, eintrag.lon],
+                        [eintrag.lat, eintrag.lon + dLon],
+                        [eintrag.lat, eintrag.lon - dLon]];
+        const kosten = zeiten ? zeiten.length * punkte.length : 0;
+        if (zeiten && reichtFuer(kosten)) {
+          radarAusgegeben += kosten;
           const werte = await Promise.all(
-            zeiten.map(t => radarWert(eintrag.lat, eintrag.lon, t)));
-          if (werte.every(v => typeof v === 'number')) {
+            zeiten.flatMap(t => punkte.map(([a, b]) => radarWert(a, b, t))));
+          const eigen = werte.filter((_, i) => i % punkte.length === 0);
+          if (eigen.every(v => typeof v === 'number')) {
             if (meldung.art !== 'start') {
-              merke(ortKey, 'obs', { nass: werte[0] >= RADAR_NASS,
-                                     mm: Math.round(werte[0] * 100) / 100 });
+              merke(ortKey, 'obs', { nass: eigen[0] >= RADAR_NASS,
+                                     mm: Math.round(eigen[0] * 100) / 100 });
             }
-            if (!werte.some(v => v >= RADAR_NASS)) {
+            if (!werte.some(v => typeof v === 'number' && v >= RADAR_NASS)) {
               /* Kein Merker, kein zuletzt-Stempel: Der nächste Durchgang
                  prüft neu. Solange das Modell Gespenster sieht, kostet das
                  eine Anfrage alle fünf Minuten — der Preis der Ruhe. */
