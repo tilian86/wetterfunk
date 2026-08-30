@@ -1664,12 +1664,20 @@ async function radarBildVorwaermen(env, erzwingen = false) {
     if (Date.now() - marke > 2 * 3600e3) return;
   }
 
-  const schritte = [];
   /* Bis +120 statt +90: Gezählt wird ab dem letzten FERTIGEN Schritt, der
-     schon fünf Minuten zurückliegt — mit 90 endete das Vorwärmen deshalb
-     fünf Minuten vor dem Ende der Zeitleiste, und genau der letzte Schritt
-     kostete wieder 4 Sekunden. Das RV-Produkt reicht ohnehin bis +120. */
-  for (let m = 5; m <= 120; m += 5) schritte.push(takt + m * 60000);
+     schon fünf Minuten zurückliegt. Das RV-Produkt reicht bis +120.
+
+     ABER NICHT ALLE AUF EINMAL: 24 Bilder à 141 KB in einem Lauf zu holen
+     und in R2 abzulegen sprengte die Cloudflare-Grenzen — gemessen 71
+     „exceededResources" an einem Tag bei nur 129 Erfolgen, 37 am Tag davor.
+     Jetzt je Lauf ein Sechstel, reihum durchgewechselt. Der Cron läuft alle
+     fünf Minuten, nach spätestens einer halben Stunde ist alles gewärmt. */
+  const alle = [];
+  for (let m = 5; m <= 120; m += 5) alle.push(takt + m * 60000);
+  const TEILE = 6;
+  const runde = Math.floor(Date.now() / 300000) % TEILE;
+  const schritte = alle.filter((_, k) => k % TEILE === runde);
+
   let i = 0;
   const kette = async () => {
     while (i < schritte.length) {
@@ -1678,7 +1686,7 @@ async function radarBildVorwaermen(env, erzwingen = false) {
       if (daten) await env.RADAR_BILDER.put(`fc/${zeit(t)}`, daten);
     }
   };
-  await Promise.all([kette(), kette(), kette(), kette()]);
+  await Promise.all([kette(), kette()]);
 }
 
 /* Aufräumen: R2 hält 10 GB frei; ein Tag sind rund 40 MB Bilder. Drei Tage
