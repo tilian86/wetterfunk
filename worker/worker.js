@@ -388,6 +388,19 @@ export default {
         return json({ error: 'Zu viele Anfragen' }, 429, origin);
       }
 
+      /* Fertigen Verlauf aus R2, wenn er frisch ist. Die Berechnung kostet
+         rund 35 DWD-Abfragen und gemessen 3 bis 8 Sekunden — pro
+         Fuenf-Minuten-Schritt lohnt sie sich genau einmal. Der Cron stoesst
+         sie im Voraus an, sodass der Nutzer den fertigen Stand vorfindet. */
+      const vKey = `verlauf/${lat.toFixed(3)},${lon.toFixed(3)}`;
+      const vDa = await env.RADAR_BILDER.get(vKey);
+      if (vDa && Date.now() - new Date(vDa.uploaded).getTime() < 6 * 60000) {
+        return new Response(await vDa.text(), {
+          headers: { ...cors(origin), 'content-type': 'application/json',
+                     'cache-control': 'public, max-age=120' }
+        });
+      }
+
       /* Fünf Minuten Raster für die nächste halbe Stunde, danach zehn: Für
          „fängt es gleich an?" zählt die Minute, für „wie wird der Abend?"
          nicht mehr. Das spart Abrufe für die Umgebungspunkte. */
@@ -455,8 +468,13 @@ export default {
       if (werte.length < schritte.length / 2) {
         return json({ error: 'DWD antwortet nicht vollständig' }, 502, origin);
       }
-      return json({ punkte: werte, einheit: 'mm/h', umkreisKm: RING_KM,
-                    quelle: 'DWD RV 1 km' }, 200, origin, 'public, max-age=120');
+      const koerper = JSON.stringify({ punkte: werte, einheit: 'mm/h',
+                                       umkreisKm: RING_KM, quelle: 'DWD RV 1 km' });
+      ctx.waitUntil(env.RADAR_BILDER.put(vKey, koerper));
+      return new Response(koerper, {
+        headers: { ...cors(origin), 'content-type': 'application/json',
+                   'cache-control': 'public, max-age=120' }
+      });
     }
 
     /* ── Amtlicher Regionalwetterbericht des DWD ──────────────
@@ -697,6 +715,7 @@ export default {
       return;
     }
     ctx.waitUntil(regenPruefen(env));
+    ctx.waitUntil(verlaufVorwaermen(env).catch(() => {}));
     ctx.waitUntil(radarBildVorwaermen(env).catch(() => {}));
   }
 };
@@ -1704,5 +1723,30 @@ async function radarBilderPutzen(env) {
       if (alt.length) await env.RADAR_BILDER.delete(alt.map((o) => o.key));
       cursor = seite.truncated ? seite.cursor : null;
     } while (cursor);
+  }
+}
+
+
+/* Den Punktverlauf im Voraus rechnen lassen, damit der Nutzer nie auf die
+   35 DWD-Abfragen wartet (gemessen 3 bis 8 Sekunden).
+
+   Bewusst ueber einen HTTP-Aufruf an den eigenen Worker statt als
+   Funktionsaufruf: So bekommt die schwere Arbeit ein EIGENES
+   Unteranfrage-Budget und eigene Rechenzeit. Im Cron selbst gerechnet
+   haette sie genau die Grenze gesprengt, an der das Bild-Vorwaermen schon
+   einmal gescheitert ist (71 "exceededResources" an einem Tag). Der Cron
+   zahlt so nur eine Unteranfrage je Standort. */
+async function verlaufVorwaermen(env) {
+  const liste = await env.WF_PUSH.list({ prefix: 'abo:' });
+  const orte = new Map();
+  for (const k of liste.keys.slice(0, 4)) {
+    const e = await env.WF_PUSH.get(k.name, 'json');
+    if (!e || typeof e.lat !== 'number' || typeof e.lon !== 'number') continue;
+    orte.set(`${e.lat.toFixed(3)},${e.lon.toFixed(3)}`, e);
+  }
+  for (const e of orte.values()) {
+    await fetch('https://wetterfunk.florian-s-thiel.workers.dev/dwdverlauf'
+      + `?lat=${e.lat.toFixed(3)}&lon=${e.lon.toFixed(3)}`,
+      { headers: { Origin: 'https://tilian86.github.io' } }).catch(() => {});
   }
 }
