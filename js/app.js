@@ -598,6 +598,26 @@ function renderHeroUhr() {
   el.title = `${zeit} Uhr — ${phase.toLowerCase()} zu ${anteil} % vorbei, noch ${rest}`;
 }
 
+/* Was misst das Radar GERADE an deinem Standort? Das Modell rechnet, das
+   Radar misst — und wo beide sich widersprechen, hat die Messung recht.
+   Ohne diesen Schritt stand oben „Klar" mit Sonne, während es draußen
+   schüttete: Die Überschrift las nur den Modellwert, obwohl die App die
+   Radarmessung längst im Haus hatte (sie stand zwei Kästen tiefer).
+
+   Das Umfeld zählt mit, aber gedämpft: Eine Radarzelle ist einen Kilometer
+   breit, ein Schauer wenige Kilometer — gemessen in Hirschau 1,7 mm/h in
+   der eigenen Zelle bei 10,1 im Umkreis von 2,5 km. Wer draußen steht,
+   erlebt das Kräftigere. */
+function radarJetzt() {
+  if (!punktVerlauf) return 0;
+  const jetzt = Date.now();
+  const nah = punktVerlauf.punkte.filter(x => Math.abs(x.t - jetzt) <= 10 * 60000);
+  if (!nah.length) return 0;
+  const eigen = Math.max(0, ...nah.map(x => x.mm ?? 0));
+  const umfeld = Math.max(0, ...nah.map(x => x.umfeld ?? 0));
+  return Math.max(eigen, umfeld * 0.6);
+}
+
 // ══ Rendering: Jetzt ═══════════════════════════════════════
 function renderHero() {
   const c = data.current, d = data.daily;
@@ -612,9 +632,14 @@ function renderHero() {
   const hi = nowIndex(data.hourly.time);
   /* Dieselbe Regel wie in der Leiste darunter: Fällt nichts, beschreibt
      der Mittelweg den Himmel. Sonst gilt der Code des feinen Modells. */
-  const zeigeCode = nassJetzt || c.weather_code === 45 || c.weather_code === 48
-                    || c.weather_code >= 95
-    ? c.weather_code
+  /* Nebel und Gewitter behalten Vorrang — die sieht das Radar nicht.
+     Sonst schlägt eine Radarmessung alles andere. */
+  const radarMm = radarJetzt();
+  const zeigeCode = (c.weather_code === 45 || c.weather_code === 48
+                     || c.weather_code >= 95) ? c.weather_code
+    : radarMm >= REGEN.nichts
+      ? (radarMm >= 5 ? 65 : radarMm >= 2 ? 63 : 61)
+    : nassJetzt ? c.weather_code
     : himmelCode(hi);
 
   $('#heroIcon').innerHTML = WX.icon(zeigeCode, c.is_day);
