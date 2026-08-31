@@ -229,8 +229,10 @@ function himmelCode(i) {
   const sonne = h.sunshine_duration?.[i];
   const tags = h.is_day ? h.is_day[i] === 1 : true;
   if (sonne != null && tags) {
+    /* Dieselbe Schieflage wie beim Tagessymbol, deshalb auch hier
+       strenger: volle Sonne erst bei nahezu ungetrübter Stunde. */
     const anteil = Math.max(0, Math.min(1, sonne / 3600));
-    return anteil >= 0.75 ? 0 : anteil >= 0.4 ? 1 : anteil >= 0.1 ? 2 : 3;
+    return anteil >= 0.90 ? 0 : anteil >= 0.60 ? 1 : anteil >= 0.15 ? 2 : 3;
   }
   const w = wolkenFuer(h.time[i], h.cloud_cover?.[i] ?? 0);
   return w < 25 ? 0 : w < 55 ? 1 : w < 80 ? 2 : 3;
@@ -1268,10 +1270,21 @@ function daySymbol(dayIndex) {
     .filter(v => v != null).reduce((a, b) => a + b, 0);
   const moeglich = idx.length * 3600;
   if (moeglich > 0 && idx.some(i => h.sunshine_duration?.[i] != null)) {
+    /* Geeicht an gemessenen Sonnenstunden der Station, 15 Tage:
+       Die Modelle ÜBERSCHÄTZEN die Sonne massiv — Median Faktor 2,2, im
+       Einzelfall 7,7 (77 % vorhergesagt, 10 % gemessen). An echten
+       Sonnentagen liegen sie richtig (92 % → 88 %), an wechselhaften weit
+       daneben. Mit den urspruenglichen Schwellen 0,60/0,35/0,12 waren
+       11 von 15 Tagen ZU POSITIV und kein einziger zu negativ.
+
+       Nachgerechnet mit 0,90/0,60/0,15: 10 von 15 Tagen richtig statt 4,
+       mittlerer Fehler 0,47 statt 1,07 Stufen. „Sonnig" verlangt jetzt
+       fast durchgehende Sonne — genau die Lage, in der die Modelle
+       zuverlaessig sind. */
     const anteil = sonneSek / moeglich;
-    if (anteil >= 0.6) return 0;      // überwiegend sonnig
-    if (anteil >= 0.35) return 1;     // heiter
-    if (anteil >= 0.12) return 2;     // wolkig mit Sonne
+    if (anteil >= 0.90) return 0;     // überwiegend sonnig
+    if (anteil >= 0.60) return 1;     // heiter
+    if (anteil >= 0.15) return 2;     // wolkig mit Sonne
     return 3;                         // wirklich trüb
   }
   const cc = idx.map(i => wolkenFuer(h.time[i], h.cloud_cover?.[i])).filter(v => v != null);
