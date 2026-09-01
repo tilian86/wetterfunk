@@ -751,9 +751,9 @@ const MIN_ABSTAND    = 20 * 60000;   // Nie öfter als alle 20 Minuten irgendetw
 
    Der Schlüssel heißt bewusst NICHT `abo:…`: Sonst fiele er den anderen
    Stellen, die nach `abo:` auflisten, als vermeintliches Gerät in die Hand. */
-const ABO_INDEX = 'index:abos';
+export const ABO_INDEX = 'index:abos';
 
-async function aboEintraege(env) {
+export async function aboEintraege(env) {
   try {
     const namen = await env.WF_PUSH.get(ABO_INDEX, 'json');
     if (Array.isArray(namen)) return namen.map((name) => ({ name }));

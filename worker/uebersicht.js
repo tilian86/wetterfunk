@@ -1,4 +1,5 @@
 /* Wetterfunk — Übersicht der angemeldeten Geräte
+
    Nur für den Betreiber. Eigene Adresse, nirgends verlinkt, hinter einem
    Kennwort. Bewusst NICHT in der App: Wer Regenmeldungen einschaltet, soll
    nicht das Gefühl haben, beobachtet zu werden.
@@ -10,6 +11,8 @@
 
    Die Notiz je Gerät setzt der Betreiber, nicht das Gerät. Ein Namensfeld
    in der App wäre der Anfang davon, dass sich Leute verfolgt fühlen. */
+
+import { aboEintraege } from './worker.js';
 
 /* Welcher Dienst die Meldung zustellt, verrät grob die Art des Geräts —
    aber weniger, als man denkt: Chrome meldet über Google, auch auf einem
@@ -125,9 +128,12 @@ export async function uebersicht(url, request, env, { gleich, zuVieleAnfragen, s
 
   if (url.pathname !== '/uebersicht/daten') return antwort({ error: 'Nicht gefunden' }, 404);
 
-  const liste = await env.WF_PUSH.list({ prefix: 'abo:' });
+  /* Über das Verzeichnis, nicht über eine Auflistung: Diese Seite hängt
+     an der Funkzentrale, und deren Technik-Blatt lädt sich alle fünf
+     Minuten selbst nach. Ein offenes Dashboard hätte sonst 288
+     Auflistungen am Tag erzeugt — bei 1.000 erlaubten. */
   const geraete = [];
-  for (const k of liste.keys) {
+  for (const k of await aboEintraege(env)) {
     const e = await env.WF_PUSH.get(k.name, 'json');
     if (!e) continue;
     const host = (e.abo?.endpoint || '').split('/')[2] || '';
