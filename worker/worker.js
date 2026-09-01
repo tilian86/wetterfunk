@@ -609,7 +609,14 @@ export default {
         && !!alt.nachtruhe === neu.nachtruhe
         && JSON.stringify(alt.arten || {}) === JSON.stringify(neu.arten);
 
-      if (!unveraendert) await env.WF_PUSH.put(key, JSON.stringify(neu));
+      if (!unveraendert) {
+        await env.WF_PUSH.put(key, JSON.stringify(neu));
+        /* Nur wenn wirklich ein Gerät DAZUKOMMT. Die App meldet ihren
+           Standort bei jedem Öffnen nach; würde das Verzeichnis dabei
+           jedes Mal verworfen, listete die Wache gleich wieder auf — und
+           genau die Auflistungen sollen ja weg. */
+        if (!alt) await aboIndexVerwerfen(env);
+      }
       return json({ ok: true, geschrieben: !unveraendert }, 200, origin);
     }
 
@@ -618,6 +625,7 @@ export default {
       try { req = await request.json(); } catch { return json({ error: 'Ungültige Anfrage' }, 400, origin); }
       if (!req?.endpoint) return json({ error: 'endpoint fehlt' }, 400, origin);
       await env.WF_PUSH.delete(aboSchluessel(req.endpoint));
+      await aboIndexVerwerfen(env);
       return json({ ok: true }, 200, origin);
     }
 
@@ -711,6 +719,7 @@ export default {
        Vortag steht und niemand die App benutzt. */
     if (event.cron === '20 3 * * *') {
       ctx.waitUntil(taeglichePruefung(env));
+      ctx.waitUntil(aboIndexNeu(env).catch(() => {}));
       ctx.waitUntil(radarBilderPutzen(env));
       return;
     }
@@ -728,8 +737,46 @@ export default {
 const START_TOLERANZ = 25 * 60000;   // Verschiebt sich der Beginn stärker, ist es eine neue Lage
 const MIN_ABSTAND    = 20 * 60000;   // Nie öfter als alle 20 Minuten irgendetwas melden
 
-async function regenPruefen(env) {
+/* ── Verzeichnis der Abos ─────────────────────────────────
+   Die Regenwache lief alle fünf Minuten und listete jedes Mal alle Abos
+   auf — zweimal sogar, einmal für die Wache und einmal fürs Vorwärmen.
+   Macht 576 Auflistungen am Tag, erlaubt sind 1.000. Cloudflare hat
+   deshalb gewarnt, dass die Hälfte des Tageskontingents weg ist.
+
+   Auflisten ist die knappste Währung im kostenlosen Tarif; Lesen gibt es
+   hundertmal so oft. Also steht die Namensliste jetzt in einem einzigen
+   Eintrag, und die Wache liest den. Aufgelistet wird nur noch, wenn das
+   Verzeichnis fehlt — also nach einer An- oder Abmeldung und einmal
+   nachts zur Sicherheit, falls es je auseinanderläuft.
+
+   Der Schlüssel heißt bewusst NICHT `abo:…`: Sonst fiele er den anderen
+   Stellen, die nach `abo:` auflisten, als vermeintliches Gerät in die Hand. */
+const ABO_INDEX = 'index:abos';
+
+async function aboEintraege(env) {
+  try {
+    const namen = await env.WF_PUSH.get(ABO_INDEX, 'json');
+    if (Array.isArray(namen)) return namen.map((name) => ({ name }));
+  } catch {}
+  return aboIndexNeu(env);
+}
+
+async function aboIndexNeu(env) {
   const liste = await env.WF_PUSH.list({ prefix: 'abo:' });
+  const namen = liste.keys.map((k) => k.name);
+  try { await env.WF_PUSH.put(ABO_INDEX, JSON.stringify(namen)); } catch {}
+  return namen.map((name) => ({ name }));
+}
+
+/* Nach jeder Änderung an den Abos wegwerfen — dann baut der nächste
+   Durchgang es neu. Ein neues Gerät wartet so nie auf seine erste Meldung. */
+async function aboIndexVerwerfen(env) {
+  try { await env.WF_PUSH.delete(ABO_INDEX); } catch {}
+}
+
+
+async function regenPruefen(env) {
+  const liste = { keys: await aboEintraege(env) };
   if (!liste.keys.length) return;
 
   // Amtliche Warnungen einmal für alle holen, nicht je Abo
@@ -952,6 +999,7 @@ async function regenPruefen(env) {
       // 404/410 heißt: Gerät hat das Abo verworfen
       if (status === 404 || status === 410) {
         await env.WF_PUSH.delete(eintragMeta.name);
+        await aboIndexVerwerfen(env);
         continue;
       }
       if (status < 300) {
@@ -1737,7 +1785,7 @@ async function radarBilderPutzen(env) {
    einmal gescheitert ist (71 "exceededResources" an einem Tag). Der Cron
    zahlt so nur eine Unteranfrage je Standort. */
 async function verlaufVorwaermen(env) {
-  const liste = await env.WF_PUSH.list({ prefix: 'abo:' });
+  const liste = { keys: await aboEintraege(env) };
   const orte = new Map();
   for (const k of liste.keys.slice(0, 4)) {
     const e = await env.WF_PUSH.get(k.name, 'json');
