@@ -80,6 +80,35 @@ export default {
                                             pruefung: { pruefeOrt, pruefVerlauf } });
     }
 
+    // ── Meldung von einem eigenen Dienst (z. B. Limit-Wächter) ──
+    // Schickt eine freie Nachricht an ALLE Push-Abos dieses Geräts.
+    // Geschützt mit demselben Geheimnis wie die Mac-Brücke.
+    if (url.pathname === '/push/melden' && request.method === 'POST') {
+      if (!env.BRIDGE_SECRET ||
+          request.headers.get('x-bridge-secret') !== env.BRIDGE_SECRET) {
+        return json({ error: 'Nicht erlaubt' }, 403, origin);
+      }
+      let req;
+      try { req = await request.json(); } catch { return json({ error: 'Ungültige Anfrage' }, 400, origin); }
+      const titel = String(req?.titel || 'Meldung').slice(0, 100);
+      const text = String(req?.text || '').slice(0, 300);
+      if (!text) return json({ error: 'text fehlt' }, 400, origin);
+      const nutz = JSON.stringify({ titel, text, art: String(req?.art || 'dienst') });
+
+      const liste = await env.WF_PUSH.list({ prefix: 'abo:' });
+      let ok = 0, weg = 0;
+      for (const k of liste.keys) {
+        const eintrag = await env.WF_PUSH.get(k.name, 'json');
+        if (!eintrag?.abo) continue;
+        try {
+          const status = await sendPush(eintrag.abo, nutz, env);
+          if (status === 404 || status === 410) { await env.WF_PUSH.delete(k.name); weg++; }
+          else if (status < 300) ok++;
+        } catch { /* ein totes Abo darf den Rest nicht aufhalten */ }
+      }
+      return json({ ok, entfernt: weg }, 200, origin);
+    }
+
     /* Absender MUSS bekannt sein — auch wenn gar keiner mitgeschickt wird.
        Vorher stand hier `if (origin && …)`: Fehlt der Kopf ganz, griff die
        Prüfung nicht. Browser senden ihn immer, Skripte und curl nicht — damit
