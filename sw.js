@@ -4,7 +4,7 @@
 
 // Bei jeder Auslieferung hochzählen — sonst behalten Geräte die alte
 // Programmhülle im Cache und sehen Korrekturen nicht.
-const VERSION = 'wetterfunk-v223';
+const VERSION = 'wetterfunk-v224';
 const SHELL = [
   './',
   './index.html',
@@ -14,7 +14,7 @@ const SHELL = [
   './js/radar.js',
   './js/forecast.js',
   './js/briefing.js',
-  './js/news.js',
+  './js/kueste.js',
   './vendor/maplibre-gl.js',
   './vendor/maplibre-gl.css',
   './manifest.webmanifest',
@@ -38,6 +38,18 @@ self.addEventListener('activate', (e) => {
   );
 });
 
+/* Ein hängendes Mobilfunknetz ist schlimmer als gar keins: `fetch` meldet
+   dann keinen Fehler, sondern wartet ewig — die App blieb weiß. Nach dieser
+   Frist wird deshalb die gespeicherte Fassung gezeigt, falls es eine gibt. */
+const NETZ_FRIST = 4000;
+
+/** Passende Ablage suchen. Zweiter Versuch ohne `?v=` — die vorab gespeicherte
+    Schale liegt ohne Versionsmarke da, angefragt wird sie aber mit. */
+async function ausAblage(request) {
+  return (await caches.match(request)) ||
+         (await caches.match(request, { ignoreSearch: true }));
+}
+
 self.addEventListener('fetch', (e) => {
   const { request } = e;
   if (request.method !== 'GET') return;
@@ -47,16 +59,39 @@ self.addEventListener('fetch', (e) => {
   // Fremde Dienste (Wetter, Radar, Karte, Webcams) nie aus dem Cache bedienen
   if (url.origin !== self.location.origin) return;
 
-  // Programmhülle: erst Netz, bei Ausfall Cache
-  e.respondWith(
-    fetch(request)
-      .then(res => {
-        const copy = res.clone();
-        caches.open(VERSION).then(c => c.put(request, copy)).catch(() => {});
-        return res;
-      })
-      .catch(() => caches.match(request).then(r => r || caches.match('./index.html')))
-  );
+  // Programmhülle: erst Netz, bei Ausfall oder Hänger die Ablage
+  e.respondWith((async () => {
+    const ausNetz = fetch(request).then(res => {
+      const copy = res.clone();
+      caches.open(VERSION).then(c => c.put(request, copy)).catch(() => {});
+      return res;
+    });
+
+    let bremse;
+    const frist = new Promise(ok => { bremse = setTimeout(() => ok('spaet'), NETZ_FRIST); });
+
+    try {
+      const erster = await Promise.race([ausNetz.catch(() => 'weg'), frist]);
+      clearTimeout(bremse);
+      if (erster !== 'spaet' && erster !== 'weg') return erster;
+
+      const gespeichert = await ausAblage(request);
+      if (gespeichert) return gespeichert;
+      if (erster === 'spaet') return await ausNetz;   // nichts da — dann eben warten
+      throw new Error('offline');
+    } catch {
+      clearTimeout(bremse);
+      const gespeichert = await ausAblage(request);
+      if (gespeichert) return gespeichert;
+      /* Nur echte Seitenaufrufe dürfen auf die Startseite ausweichen. Vorher
+         bekam auch ein fehlendes Skript das HTML zurück — der Browser wollte
+         es als JavaScript lesen und die App war kaputt statt nur unvollständig. */
+      if (request.mode === 'navigate') {
+        return (await caches.match('./index.html')) || Response.error();
+      }
+      return Response.error();
+    }
+  })());
 });
 
 /* ── Meldungen vom Worker ───────────────────────────────────

@@ -7326,6 +7326,14 @@ async function selectPlace(p) {
 // ══ Laden & Aktualisieren ══════════════════════════════════
 let busy = false;
 
+/** Wartet höchstens `ms` auf ein Versprechen und bricht dann ab. */
+function mitFrist(p, ms) {
+  return Promise.race([
+    p,
+    new Promise((_, weg) => setTimeout(() => weg(new Error('Zeitüberschreitung')), ms))
+  ]);
+}
+
 async function refresh(leise = false) {
   if (!place || busy) return;
   busy = true;
@@ -7348,12 +7356,16 @@ async function refresh(leise = false) {
   try {
     let [fc, aq, md, warn] = [null, null, null, null];
     try {
-      [fc, aq, md, warn] = await Promise.all([
+      /* Mit Frist. Ein stehendes Mobilfunknetz meldet keinen Fehler, es
+         schweigt — ohne diese Grenze blieb die App im Ladezustand hängen und
+         zeigte gar nichts. Danach greift derselbe Weg wie bei einem Ausfall:
+         lieber die zuletzt geholten Zahlen als eine leere Seite. */
+      [fc, aq, md, warn] = await mitFrist(Promise.all([
         loadForecast(place.lat, place.lon),
         loadAir(place.lat, place.lon),
         loadModels(place.lat, place.lon),
         loadWarnings()
-      ]);
+      ]), 15000);
     } catch (e) {
       /* Lieber die letzten bekannten Zahlen zeigen als eine leere App. Beim
          Abruflimit oder ohne Netz stand sonst gar nichts da, obwohl die
@@ -7421,10 +7433,16 @@ async function refresh(leise = false) {
     document.body.classList.remove('loading', 'error');
   } catch (err) {
     console.error(err);
-    toast(/429/.test(err?.message)
+    const gebremst = /429/.test(err?.message);
+    toast(gebremst
       ? 'Der Wetterdienst bremst gerade wegen zu vieler Abrufe. In ein paar Minuten nochmal.'
       : 'Daten konnten nicht geladen werden. Offline?', 5000);
+    /* Die Meldung blieb nur fünf Sekunden stehen, danach sah man eine leere
+       App ohne Erklärung. Der Hinweis in der Kopfzeile bleibt jetzt, bis der
+       nächste Abruf klappt — und „lädt…" muss weg, sonst wirkt es hängend. */
+    document.body.classList.remove('loading');
     document.body.classList.add('error');
+    zeigeStand(gebremst ? 'Dienst bremst' : 'nicht erreichbar');
   } finally {
     busy = false;
     $('#refreshBtn').classList.remove('spin');
