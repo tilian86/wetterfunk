@@ -95,18 +95,36 @@ export default {
       if (!text) return json({ error: 'text fehlt' }, 400, origin);
       const nutz = JSON.stringify({ titel, text, art: String(req?.art || 'dienst') });
 
+      /* Dienst-Meldungen (Limit-Wächter & Co.) sind PRIVAT und gehen
+         ausschließlich an die eigenen Geräte. Vorher ging jede an ALLE
+         Wetterfunk-Abos — fremde Nutzer bekamen also Meldungen, die sie
+         nichts angehen. Wer "eigen" ist, steht in KV unter 'dienst:eigene'
+         als Liste von Namensteilen, z. B. ["Florian"]; verglichen wird mit
+         dem Gerätenamen aus den Push-Einstellungen.
+         Fehlt der Eintrag, wird NICHTS verschickt — lieber keine Meldung
+         als eine an Fremde. */
+      const eigene = await env.WF_PUSH.get('dienst:eigene', 'json');
+      if (!Array.isArray(eigene) || !eigene.length) {
+        return json({ error: 'Keine eigenen Geräte hinterlegt (dienst:eigene)' }, 409, origin);
+      }
+      const istEigen = (name) => {
+        const n = String(name || '').toLowerCase();
+        return !!n && eigene.some(t => n.includes(String(t).toLowerCase()));
+      };
+
       const liste = await env.WF_PUSH.list({ prefix: 'abo:' });
-      let ok = 0, weg = 0;
+      let ok = 0, weg = 0, fremd = 0;
       for (const k of liste.keys) {
         const eintrag = await env.WF_PUSH.get(k.name, 'json');
         if (!eintrag?.abo) continue;
+        if (!istEigen(eintrag.geraet)) { fremd++; continue; }
         try {
           const status = await sendPush(eintrag.abo, nutz, env);
           if (status === 404 || status === 410) { await env.WF_PUSH.delete(k.name); weg++; }
           else if (status < 300) ok++;
         } catch { /* ein totes Abo darf den Rest nicht aufhalten */ }
       }
-      return json({ ok, entfernt: weg }, 200, origin);
+      return json({ ok, entfernt: weg, uebersprungen: fremd }, 200, origin);
     }
 
     /* Absender MUSS bekannt sein — auch wenn gar keiner mitgeschickt wird.
