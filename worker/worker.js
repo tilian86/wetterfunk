@@ -773,6 +773,18 @@ export default {
     ctx.waitUntil(regenPruefen(env));
     ctx.waitUntil(verlaufVorwaermen(env).catch(() => {}));
     ctx.waitUntil(radarBildVorwaermen(env).catch(() => {}));
+
+    /* Nachzügler: Der Prüflauf hatte genau EINEN Versuch um 03:20. Blieb
+       Open-Meteo oder Bright Sky einmal stumm, war der Tag für immer weg —
+       nachgezählt fehlten so der 29. und 30. August und der 2. September,
+       obwohl die Daten längst dalagen (von Hand angestoßen lief jeder
+       dieser Tage anstandslos durch). Deshalb bis zum Mittag stündlich ein
+       weiterer Anlauf. Er kostet fast nichts: Liegt das Ergebnis schon vor,
+       steigt taeglichePruefung() nach einem einzigen KV-Lesevorgang aus. */
+    const jetzt = new Date();
+    if (jetzt.getUTCMinutes() < 5 && jetzt.getUTCHours() >= 4 && jetzt.getUTCHours() <= 11) {
+      ctx.waitUntil(taeglichePruefung(env).catch(() => {}));
+    }
   }
 };
 

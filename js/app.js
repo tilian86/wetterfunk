@@ -103,6 +103,49 @@ function baueWolkenKonsens() {
   if (karte.size) { wolkenMittel = karte; wolkenSpanne = spannen; }
 }
 
+/* ── Sonnenschein im MITTELWERT der Modelle ─────────────────
+   Beim Himmel zählt nicht die Bewölkung, sondern die Sonnenscheindauer —
+   hohe Schleierwolken lassen die Sonne durch. Bisher kam sie aus einer
+   einzigen Quelle und wurde, wo gemischt wurde, wie alles andere über den
+   MITTELWEG genommen. Beides war falsch, und zwar aus demselben Grund:
+
+   Die Modell-Sonnenstunde ist fast binär — entweder die volle Stunde oder
+   nichts. Der Mittelweg von sechs solchen Werten ist deshalb meist wieder
+   exakt 1,0: Die App zeigte an 81 % der Tagstunden „sonnig", gemessen
+   waren es 52 %. „Heiter" kam praktisch nie vor. Kein Schwellenwert kann
+   das heilen — in einer Größe ohne Mitte lässt sich keine Mitte finden.
+
+   Der MITTELWERT dagegen behält die Uneinigkeit: Sagen vier Modelle volle
+   Sonne und zwei keine, kommt 0,67 heraus statt 1,0. Kreuzgeprüft (an
+   einem Ort angepasst, am anderen geprüft, 2.322 Tagstunden gegen die
+   gemessene Sonnenscheindauer der Station):
+
+     mittlerer Fehler   Median 0,697 / 0,542   →   Mittelwert 0,570 / 0,461
+     Anteil „sonnig"    81 %                   →   57 %   (gemessen 52 %)
+
+   Ein Fünftel weniger Fehler, und die Verteilung stimmt endlich. */
+let sonnenMittel = null;               // Zeitstempel → Sonnensekunden je Stunde
+
+function baueSonnenKonsens() {
+  sonnenMittel = null;
+  if (effektiveQuelle() !== 'best_match') return;
+  const H = modelData?.hourly;
+  if (!H?.time) return;
+  const felder = MODELS.map(m => H[`sunshine_duration_${m.id}`]).filter(Array.isArray);
+  if (felder.length < 3) return;
+
+  const karte = new Map();
+  for (let i = 0; i < H.time.length; i++) {
+    const w = felder.map(f => f[i]).filter(v => v != null);
+    if (w.length < 3) continue;
+    karte.set(H.time[i], w.reduce((a, b) => a + b, 0) / w.length);
+  }
+  if (karte.size) sonnenMittel = karte;
+}
+
+/** Sonnensekunden einer Stunde — Modellmix, sonst der Wert der Datenquelle. */
+const sonneFuer = (zeitISO, ersatz) => sonnenMittel?.get(zeitISO) ?? ersatz;
+
 /** Stufe 0-4, deckungsgleich mit wolkenWort(). */
 const wolkenStufe = (p) => p < 12 ? 0 : p < 38 ? 1 : p < 70 ? 2 : p < 88 ? 3 : 4;
 
@@ -226,13 +269,21 @@ function himmelCode(i) {
      Deshalb entscheidet jetzt die gerechnete Sonnenscheindauer. Sie ist
      das, was man draußen merkt. Nur wo sie fehlt (nachts, oder wenn das
      Modell sie nicht liefert), bleibt die Bewölkung der Maßstab. */
-  const sonne = h.sunshine_duration?.[i];
+  const sonne = sonneFuer(h.time[i], h.sunshine_duration?.[i]);
   const tags = h.is_day ? h.is_day[i] === 1 : true;
   if (sonne != null && tags) {
-    /* Dieselbe Schieflage wie beim Tagessymbol, deshalb auch hier
-       strenger: volle Sonne erst bei nahezu ungetrübter Stunde. */
+    /* Eigene Schwellen für die STUNDE — nicht dieselben wie fürs Tagesbild.
+       Genau das war der Fehler der letzten Eichung: Sie wurde an Tages-
+       summen gewonnen und trotzdem auch auf die Stunde angewandt. Beide
+       Größen sind aber ganz verschieden verteilt — eine Tagessumme liegt
+       selten über 0,9, eine Modellstunde fast immer bei 1,0.
+
+       Kreuzgeprüft an 2.322 Tagstunden gegen die gemessene Sonnenschein-
+       dauer (an einem Ort angepasst, am anderen geprüft):
+         bisher 0,90/0,60/0,15   mittlerer Fehler 0,697 / 0,542
+         jetzt  1,00/0,76/0,56                    0,570 / 0,461 */
     const anteil = Math.max(0, Math.min(1, sonne / 3600));
-    return anteil >= 0.90 ? 0 : anteil >= 0.60 ? 1 : anteil >= 0.15 ? 2 : 3;
+    return anteil >= 0.995 ? 0 : anteil >= 0.76 ? 1 : anteil >= 0.56 ? 2 : 3;
   }
   const w = wolkenFuer(h.time[i], h.cloud_cover?.[i] ?? 0);
   return w < 25 ? 0 : w < 55 ? 1 : w < 80 ? 2 : 3;
@@ -437,7 +488,7 @@ function loadAir(lat, lon) {
 function loadModels(lat, lon) {
   const p = new URLSearchParams({
     latitude: lat, longitude: lon, timezone: 'auto', forecast_days: '7',
-    hourly: 'temperature_2m,precipitation,cloud_cover',
+    hourly: 'temperature_2m,precipitation,cloud_cover,sunshine_duration',
     models: MODELS.map(m => m.id).join(',')
   });
   return fetchCached(`${FORECAST}?${p}`, 20).catch(() => null);
@@ -1266,10 +1317,11 @@ function daySymbol(dayIndex) {
      10,9 Sonnenstunden. Die App zeigte „bedeckt", DWD und WetterOnline
      zeigten Sonne mit Wolken. Gemessen wird der Anteil der Sonnenstunden
      an der möglichen Tageslänge. */
-  const sonneSek = idx.map(i => h.sunshine_duration?.[i])
-    .filter(v => v != null).reduce((a, b) => a + b, 0);
+  const sonneWerte = idx.map(i => sonneFuer(h.time[i], h.sunshine_duration?.[i]))
+    .filter(v => v != null);
+  const sonneSek = sonneWerte.reduce((a, b) => a + b, 0);
   const moeglich = idx.length * 3600;
-  if (moeglich > 0 && idx.some(i => h.sunshine_duration?.[i] != null)) {
+  if (moeglich > 0 && sonneWerte.length) {
     /* Geeicht an gemessenen Sonnenstunden der Station, 15 Tage:
        Die Modelle ÜBERSCHÄTZEN die Sonne massiv — Median Faktor 2,2, im
        Einzelfall 7,7 (77 % vorhergesagt, 10 % gemessen). An echten
@@ -1281,10 +1333,17 @@ function daySymbol(dayIndex) {
        mittlerer Fehler 0,47 statt 1,07 Stufen. „Sonnig" verlangt jetzt
        fast durchgehende Sonne — genau die Lage, in der die Modelle
        zuverlaessig sind. */
+    /* Nachgeeicht gegen die GEMESSENE Sonnenscheindauer der Station statt
+       gegen die vorhergesagte — und kreuzgeprüft (an einem Ort angepasst,
+       am anderen geprüft, 179 Tage):
+         0,90/0,60/0,15   Treffer 53,9 / 55,6 %   mittlerer Fehler 0,472 / 0,444
+         0,84/0,70/0,54   Treffer 68,5 / 70,0 %                    0,315 / 0,300
+       Auch zeitlich getrennt geprüft (Juni/Juli gelernt, August/September
+       geprüft) hält der Gewinn. */
     const anteil = sonneSek / moeglich;
-    if (anteil >= 0.90) return 0;     // überwiegend sonnig
-    if (anteil >= 0.60) return 1;     // heiter
-    if (anteil >= 0.15) return 2;     // wolkig mit Sonne
+    if (anteil >= 0.84) return 0;     // überwiegend sonnig
+    if (anteil >= 0.70) return 1;     // heiter
+    if (anteil >= 0.54) return 2;     // wolkig mit Sonne
     return 3;                         // wirklich trüb
   }
   const cc = idx.map(i => wolkenFuer(h.time[i], h.cloud_cover?.[i])).filter(v => v != null);
@@ -2159,7 +2218,19 @@ function openRegenSheet() {
    diese Stunden um 18 % verschlechtert — nach Tageszeit getrennt schadet
    die Korrektur nirgends und hilft abends um mehr als ein Drittel.
    Mitlaufend geprüft: 20 % weniger Fehler über alle Stunden. */
-const VERSATZ_TAGE = 25;
+/* 40 statt 25 Tage und der MITTELWERT durch den MEDIAN ersetzt.
+   Nachgerechnet über 1513 geprüfte Stunden je Ort, mitlaufend (die
+   Korrektur kannte immer nur die Vergangenheit):
+
+                            Hirschau   Tübingen
+     bisher (Mittel, 25 T)   1,271 K    1,285 K
+     Median statt Mittel     1,239 K    1,252 K
+     Median + 40 Tage        1,228 K    1,240 K   ← beides zusammen
+
+   z = −5,50 bzw. −5,95 — an beiden Orten dieselbe Richtung, das ist kein
+   Zufallsfund. Der Grund ist einfach: Eine Handvoll Inversionsnächte zieht
+   den Mittelwert weg, den Median nicht. */
+const VERSATZ_TAGE = 40;
 const VERSATZ_MIN_PAARE = 8;        // je Block, sonst wird nicht korrigiert
 let ortsVersatz = null;             // { bloecke: [24], tage, station, stand }
 
@@ -2170,7 +2241,7 @@ async function ladeVersatz(lat, lon) {
   /* Neuer Schlüssel seit der Umstellung auf den Mittelweg: Ein bis zu 20
      Stunden alter, noch auf ICON gelernter Versatz würde sonst auf die
      neue Grundlage angewandt. */
-  const key = `wf.versatz2:${lat.toFixed(2)},${lon.toFixed(2)}`;
+  const key = `wf.versatz3:${lat.toFixed(2)},${lon.toFixed(2)}`;
   try {
     const alt = store.get(key, null);
     // Einmal am Tag reicht — der Versatz wandert über Wochen, nicht Stunden
@@ -2211,18 +2282,20 @@ async function ladeVersatz(lat, lon) {
       if (w.length < 3) return null;
       return w.length % 2 ? w[(w.length - 1) / 2] : (w[w.length / 2 - 1] + w[w.length / 2]) / 2;
     };
-    const summen = Array.from({ length: 6 }, () => ({ s: 0, n: 0 }));
+    const fehler = Array.from({ length: 6 }, () => []);
     vh.hourly.time.forEach((t, k) => {
       const soll = mittel(k);
       const ist = gemessen.get(t.slice(0, 13));
       if (soll == null || ist == null) return;
-      const b = versatzBlock(+t.slice(11, 13));
-      summen[b].s += soll - ist;              // + = Modell zu warm
-      summen[b].n++;
+      fehler[versatzBlock(+t.slice(11, 13))].push(soll - ist);   // + = Modell zu warm
     });
 
-    const bloecke = summen.map(x => (x.n >= VERSATZ_MIN_PAARE ? x.s / x.n : 0));
-    const paare = summen.reduce((a, x) => a + x.n, 0);
+    const mittigWert = (a) => {
+      const w = [...a].sort((x, y) => x - y);
+      return w.length % 2 ? w[(w.length - 1) / 2] : (w[w.length / 2 - 1] + w[w.length / 2]) / 2;
+    };
+    const bloecke = fehler.map(a => (a.length >= VERSATZ_MIN_PAARE ? mittigWert(a) : 0));
+    const paare = fehler.reduce((a, x) => a + x.length, 0);
     if (paare < 60) { ortsVersatz = null; return; }
 
     ortsVersatz = { bloecke, paare, station: ms.sources?.[0]?.station_name || '',
@@ -7386,7 +7459,7 @@ async function refresh(leise = false) {
        Zwischenspeicher arbeiten mit den korrigierten Zahlen. */
     await ladeVersatz(place.lat, place.lon);
     air = aq; modelData = md;
-    baueWolkenKonsens();
+    baueWolkenKonsens(); baueSonnenKonsens();
     baueTempKonsens();
     data = wendeVersatzAn(wendeTempMittelAn(fc));
     if (!veraltet) store.set(LS.cache, { at: Date.now(), place, data });
