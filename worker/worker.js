@@ -636,6 +636,7 @@ export default {
           ? geraet.replace(/[\u0000-\u001f\u007f]/g, '').trim().slice(0, 30)
           : (alt?.geraet || ''),
         seit: alt?.seit || Date.now(),
+        gesehen: alt?.gesehen || 0,
         zuletzt: alt?.zuletzt || 0,
         gemeldet: alt?.gemeldet || null,
         warnGemeldet: alt?.warnGemeldet || [],
@@ -656,7 +657,23 @@ export default {
         && !!alt.nachtruhe === neu.nachtruhe
         && JSON.stringify(alt.arten || {}) === JSON.stringify(neu.arten);
 
-      if (!unveraendert) {
+      /* „Wann war dieses Gerät zuletzt da?" — die Frage lag bisher offen.
+         Angezeigt wurde nur, wann zuletzt eine MELDUNG hinausging; wer
+         die App täglich öffnet, aber seit Tagen keinen Regen hatte, sah
+         einen wochenalten Stempel und musste ihn zwangsläufig für ein
+         Versäumnis der App halten. Der Standort hatte dasselbe Problem:
+         Er wird nur bei Änderung geschrieben, also stand dort ein Wert
+         ohne Datum — richtig oder Wochen alt, nicht unterscheidbar.
+
+         Warum nicht bei jedem Öffnen stempeln: Genau das war der Grund
+         für die Schreibsperre oben — der kostenlose Tarif gibt tausend
+         Schreibvorgänge am Tag her. Ein Stempel alle sechs Stunden reicht
+         für die Frage völlig und kostet je Gerät höchstens vier davon. */
+      const GESEHEN_ABSTAND = 6 * 3600 * 1000;
+      const stempelFaellig = Date.now() - (alt?.gesehen || 0) > GESEHEN_ABSTAND;
+      if (stempelFaellig) neu.gesehen = Date.now();
+
+      if (!unveraendert || stempelFaellig) {
         await env.WF_PUSH.put(key, JSON.stringify(neu));
         /* Nur wenn wirklich ein Gerät DAZUKOMMT. Die App meldet ihren
            Standort bei jedem Öffnen nach; würde das Verzeichnis dabei
@@ -664,7 +681,7 @@ export default {
            genau die Auflistungen sollen ja weg. */
         if (!alt) await aboIndexVerwerfen(env);
       }
-      return json({ ok: true, geschrieben: !unveraendert }, 200, origin);
+      return json({ ok: true, geschrieben: !unveraendert || stempelFaellig }, 200, origin);
     }
 
     if (url.pathname === '/push/aus' && request.method === 'POST') {

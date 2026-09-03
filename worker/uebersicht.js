@@ -151,6 +151,7 @@ export async function uebersicht(url, request, env, { gleich, zuVieleAnfragen, s
       arten: e.arten || {},
       seit: e.seit || 0,
       zuletzt: e.zuletzt || 0,
+      gesehen: e.gesehen || 0,
       letzteArt: e.gemeldet?.art || ''
     });
   }
@@ -258,7 +259,14 @@ function zeichne(d) {
     const b = document.createElement('b');
     b.textContent = g.notiz || ('Gerät ' + (i + 1));
     const s = document.createElement('span');
-    s.textContent = 'zuletzt gemeldet: ' + zeit(g.zuletzt) + (g.letzteArt ? ' (' + g.letzteArt + ')' : '');
+    /* Vorher stand hier „zuletzt gemeldet" — gemeint war aber die letzte
+       MELDUNG des Workers an das Gerät, nicht der letzte Besuch. Wer die
+       App täglich öffnet und seit Tagen keinen Regen hatte, las daraus,
+       die App habe sich nicht mehr blicken lassen. Jetzt beides getrennt
+       und beim Namen genannt. */
+    s.textContent = g.gesehen
+      ? 'zuletzt da: ' + zeit(g.gesehen)
+      : 'zuletzt da: noch nicht erfasst';
     kopf.append(b, s);
 
     const dl = document.createElement('dl');
@@ -285,6 +293,9 @@ function zeichne(d) {
     zeile('Zeitzone des Geräts', g.tz);
     zeile('Meldungen', artenText(g.arten));
     zeile('Angemeldet seit', zeit(g.seit));
+    zeile('Letzte Meldung', g.zuletzt
+      ? zeit(g.zuletzt) + (g.letzteArt ? ' (' + g.letzteArt + ')' : '')
+      : 'noch keine verschickt');
 
     const notiz = document.createElement('div');
     notiz.className = 'notiz';
@@ -343,8 +354,9 @@ function zeichne(d) {
   const f = $('#fuss');
   f.textContent = d.geraete.length + ' Gerät(e) angemeldet. Gespeichert wird nur, was zum '
     + 'Verschicken einer Meldung nötig ist: Ort, Zeitzone und die Adresse des Push-Dienstes. '
-    + 'Keine Namen, keine Konten, kein Verlauf. Die Koordinaten aktualisieren sich, wenn die '
-    + 'Person die App öffnet — es ist kein laufender Standort.';
+    + 'Keine Namen, keine Konten, kein Verlauf. Dazu ein Zeitstempel höchstens alle sechs '
+    + 'Stunden, damit sich alte von frischen Angaben unterscheiden lassen. Die Koordinaten '
+    + 'aktualisieren sich, wenn die Person die App öffnet — es ist kein laufender Standort.';
   f.hidden = false;
 }
 
