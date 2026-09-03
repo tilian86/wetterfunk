@@ -34,12 +34,12 @@ async function holJson(url, ms = 20000) {
 /* Die nächste Station, die gestern wirklich gemeldet hat. Ohne Messung
    keine Prüfung — dann fehlt der Tag lieber, als dass er geraten wird. */
 async function messung(lat, lon, tag) {
-  /* Geholt wird nicht nur der Prüftag, sondern auch die 26 Tage davor:
+  /* Geholt wird nicht nur der Prüftag, sondern auch die 41 Tage davor:
      Daraus lernt die Prüfung dieselbe Ortskorrektur, die auch die App
-     benutzt — sonst prüfte sie ein Verfahren, das niemand mehr sieht.
+     benutzt — seit dem Umstieg auf 40 Tage entsprechend länger — sonst prüfte sie ein Verfahren, das niemand mehr sieht.
      `last_date` muss dabei der FOLGETAG sein; mit demselben Datum in
      beiden Feldern liefert Bright Sky genau eine Stunde. */
-  const von = iso(Date.parse(tag) - 26 * TAG);
+  const von = iso(Date.parse(tag) - 41 * TAG);
   const bis = iso(Date.parse(tag) + TAG);
   const d = await holJson(`https://api.brightsky.dev/weather?lat=${lat}&lon=${lon}`
     + `&date=${von}&last_date=${bis}&tz=Europe/Berlin`, 30000);
@@ -67,19 +67,20 @@ export async function pruefeOrt(lat, lon, tag) {
      Luft. Mit fest eingetragenen zwei Tagen fehlte jeder Prüftag, der
      länger als gestern zurücklag — das Fenster reichte gar nicht dorthin. */
   const zurueck = Math.min(90, Math.max(2,
-    Math.ceil((Date.now() - Date.parse(tag)) / TAG) + 27));
+    Math.ceil((Date.now() - Date.parse(tag)) / TAG) + 42));
   const [vh, mess, wolken] = await Promise.all([
     holJson('https://previous-runs-api.open-meteo.com/v1/forecast?'
       + new URLSearchParams({
           latitude: String(lat), longitude: String(lon), timezone: 'Europe/Berlin',
-          hourly: 'temperature_2m_previous_day1,precipitation_previous_day1,cloud_cover_previous_day1',
+          hourly: 'temperature_2m_previous_day1,precipitation_previous_day1,'
+                  + 'cloud_cover_previous_day1,sunshine_duration_previous_day1',
           models: MODELLE.join(','), past_days: String(zurueck), forecast_days: '1'
         }), 25000),
     messung(lat, lon, tag),
     holJson('https://archive-api.open-meteo.com/v1/archive?'
       + new URLSearchParams({
           latitude: String(lat), longitude: String(lon), timezone: 'Europe/Berlin',
-          hourly: 'cloud_cover', start_date: tag, end_date: tag
+          hourly: 'cloud_cover,is_day', start_date: tag, end_date: tag
         }), 25000)
   ]);
   if (!vh?.hourly?.time) return null;
@@ -97,19 +98,25 @@ export async function pruefeOrt(lat, lon, tag) {
      der 25 Tage VOR dem Prüftag — die Korrektur kennt nur Vergangenheit,
      sonst prüfte sie sich selbst. Für beide Grundlagen getrennt gelernt. */
   const block = (h) => Math.floor(h / 4);
+  /* Median statt Mittelwert und 40 statt 25 Tage — genau wie in der App.
+     Nachgerechnet über 1513 Stunden je Ort: 1,271 → 1,228 K in Hirschau,
+     1,285 → 1,240 K in Tübingen, z = −5,50 bzw. −5,95. Eine Handvoll
+     Inversionsnächte zieht den Mittelwert weg, den Median nicht. */
+  const LERN_TAGE = 40;
+  const lernVon = iso(Date.parse(tag) - LERN_TAGE * TAG);
   const lerne = (wertBei) => {
-    const summen = Array.from({ length: 6 }, () => ({ s: 0, n: 0 }));
+    const e = Array.from({ length: 6 }, () => []);
     for (let i = 0; i < H.time.length; i++) {
       const t = H.time[i];
-      if (t.slice(0, 10) >= tag) continue;              // nur Vergangenheit
+      const d = t.slice(0, 10);
+      if (d >= tag || d < lernVon) continue;            // nur das Lernfenster
       const m = mess?.get(t.slice(0, 13));
       const v = wertBei(i);
       if (!m || v == null) continue;
-      const b = block(+t.slice(11, 13));
-      summen[b].s += v - m.temperature; summen[b].n++;
+      e[block(+t.slice(11, 13))].push(v - m.temperature);
     }
-    if (summen.reduce((a, x) => a + x.n, 0) < 60) return null;
-    return summen.map(x => (x.n >= 8 ? x.s / x.n : 0));
+    if (e.reduce((a, x) => a + x.length, 0) < 60) return null;
+    return e.map(a => (a.length >= 8 ? median(a) : 0));
   };
   const offsIcon = lerne((i) => feld('temperature_2m', 'icon_d2')[i]);
   const offsMittel = lerne(tempMittelBei);
@@ -118,12 +125,16 @@ export async function pruefeOrt(lat, lon, tag) {
   const tempFehlerKorr = [], tempFehlerMittelKorr = [];
   let regenRichtig = 0, regenGesamt = 0, regenVerpasst = 0, regenFehlalarm = 0;
   const himmelEinzel = [], himmelMittel = [];
+  const symbolTreffer = [];
 
   const wahrWolken = new Map();
+  const istTag = new Map();
   if (wolken?.hourly?.time) {
     wolken.hourly.time.forEach((t, i) => {
       const c = wolken.hourly.cloud_cover[i];
       if (c != null) wahrWolken.set(t.slice(0, 13), c);
+      const d = wolken.hourly.is_day?.[i];
+      if (d != null) istTag.set(t.slice(0, 13), d === 1);
     });
   }
 
@@ -172,6 +183,28 @@ export async function pruefeOrt(lat, lon, tag) {
        Gegen ERA5 hob sie die Quote um 5,0 Punkte (z = 4,50), gegen die
        Station bewirkte sie nichts (z = 0,00, repariert 3 Stunden, verdirbt
        4). Der scheinbare Modellversatz war ein ERA5-Versatz. */
+    /* ── Das ANGEZEIGTE Symbol prüfen, nicht die Bewölkung ──────
+       Die App entscheidet den Himmel längst über die Sonnenscheindauer.
+       Geprüft wurde aber weiter die Bewölkungs-Kategorie — also etwas,
+       das gar nicht mehr auf dem Bildschirm steht. Hier steht jetzt
+       dasselbe Verfahren wie in app.js (Mittelwert der Modelle, Schwellen
+       1,00/0,76/0,56) gegen die GEMESSENE Sonnenscheindauer der Station.
+       Die Wahrheitsschwellen sind bewusst fest und sachlich: sonnig =
+       Sonne fast durchgehend, heiter = mehr Sonne als nicht, wolkig =
+       zeitweise. Sie wandern nicht mit, sonst prüfte sich das Verfahren
+       an sich selbst. Nur Tagstunden — nachts wäre jede Antwort richtig. */
+    const sonneMin = mess?.get(k)?.sunshine;
+    if (sonneMin != null && istTag.get(k) !== false) {
+      const alleS = MODELLE.map(x => feld('sunshine_duration', x)[i]).filter(v => v != null);
+      if (alleS.length >= 3) {
+        const anteil = (alleS.reduce((a, b) => a + b, 0) / alleS.length) / 3600;
+        const gezeigt = anteil >= 0.995 ? 0 : anteil >= 0.76 ? 1 : anteil >= 0.56 ? 2 : 3;
+        const w = sonneMin / 60;
+        const echt = w >= 0.80 ? 0 : w >= 0.50 ? 1 : w >= 0.15 ? 2 : 3;
+        symbolTreffer.push(gezeigt === echt ? 1 : 0);
+      }
+    }
+
     const wahr = mess?.get(k)?.cloud_cover ?? wahrWolken.get(k);
     if (wahr != null) {
       const einzel = feld('cloud_cover', 'icon_d2')[i];
@@ -195,7 +228,11 @@ export async function pruefeOrt(lat, lon, tag) {
                             verpasst: regenVerpasst, fehlalarm: regenFehlalarm } : null,
     himmel: himmelEinzel.length ? { einzel: r2(mittelwert(himmelEinzel)),
                                     mittelweg: r2(mittelwert(himmelMittel)),
-                                    stunden: himmelEinzel.length } : null
+                                    stunden: himmelEinzel.length } : null,
+    /* Das ist die Zahl, die zählt: Wie oft stimmte das Symbol, das der
+       Nutzer wirklich gesehen hat? */
+    symbol: symbolTreffer.length ? { quote: r2(mittelwert(symbolTreffer)),
+                                     stunden: symbolTreffer.length } : null
   };
 }
 
@@ -329,7 +366,8 @@ export async function pruefVerlauf(env, tage = 30) {
       regenVerpasst:  mit(o => o.regen?.verpasst).reduce((a, b) => a + b, 0),
       regenFehlalarm: mit(o => o.regen?.fehlalarm).reduce((a, b) => a + b, 0),
       himmelEinzel:   schnitt(mit(o => o.himmel?.einzel)),
-      himmelMittelweg: schnitt(mit(o => o.himmel?.mittelweg))
+      himmelMittelweg: schnitt(mit(o => o.himmel?.mittelweg)),
+      symbolQuote:     schnitt(mit(o => o.symbol?.quote))
     },
     /* Summen statt Schnitt: „3 verpasste Phasen in 30 Tagen" ist die
        Aussage, nicht „0,1 pro Tag". */
