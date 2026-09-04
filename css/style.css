@@ -3051,3 +3051,14 @@ body.ar-offen { overflow: hidden; }
 }
 .bf-alt:hover { background: rgba(255,255,255,.12); }
 .bf-alt.ist-da { border-color: rgba(127,196,255,.5); color: #7fc4ff; }
+
+/* Entwarnung im Ausland: ruhig, aber sichtbar. Eine leere Fläche ließe
+   offen, ob nichts gemeldet ist oder nichts ankam. */
+.warn-ok {
+  margin: 0; padding: 10px 12px;
+  border: 1px solid var(--card-line); border-radius: var(--r-md);
+  background: rgba(79, 212, 138, .08);
+  font-size: .88rem; line-height: 1.45; color: var(--ink-dim);
+}
+.warn-ok span { display: block; margin-top: 2px; font-size: .8rem; opacity: .72; }
+.warn-en { opacity: .66; font-size: .85em; }

@@ -1,5 +1,6 @@
 /* Wetterfunk — Hauptlogik
-   Datenquellen: Open-Meteo (Wetter, Luft, Geocoding), DWD (Warnungen), RainViewer (Radar).
+   Datenquellen: Open-Meteo (Wetter, Luft, Geocoding), DWD (Warnungen in
+   Deutschland), MeteoAlarm (amtliche Warnungen im Ausland), RainViewer (Radar).
    Kein Konto, kein Tracker, kein Backend. Alles bleibt im Browser. */
 
 (() => {
@@ -494,8 +495,18 @@ function loadModels(lat, lon) {
   return fetchCached(`${FORECAST}?${p}`, 20).catch(() => null);
 }
 
-/** DWD-Warnungen. Antwort ist JSONP: warnWetter.loadWarnings({…}); */
+/** Warnungen für den gewählten Ort.
+
+    In Deutschland vom DWD, im Ausland von MeteoAlarm — dem gemeinsamen
+    Sprachrohr der nationalen Wetterdienste. Beides sind amtliche Warnungen;
+    welche Quelle greift, entscheidet allein das Land des Ortes.
+
+    Antwort des DWD ist JSONP: warnWetter.loadWarnings({…}); */
 async function loadWarnings() {
+  const land = (place?.country || '').toUpperCase();
+  if (land && land !== 'DE') {
+    return window.WF_AUSLAND?.warnungen(place).catch(() => null) ?? null;
+  }
   try {
     const res = await fetch(DWD, { cache: 'no-store' });
     const txt = await res.text();
@@ -1072,19 +1083,40 @@ function renderWarnings(raw) {
   const box = $('#warnings');
   box.innerHTML = '';
   activeWarnings = [];
-  if (!raw || place?.country && place.country !== 'DE') return;
+  if (!raw) return;
 
-  const targets = [normalize(place.name), normalize(place.county)].filter(Boolean);
-  const all = [];
-  for (const group of [raw.warnings, raw.vorabInformation]) {
-    for (const id in (group || {})) {
-      for (const w of group[id]) {
-        const region = normalize(w.regionName);
-        if (targets.some(t => t && region && (region === t || region.includes(t) || t.includes(region)))) {
-          all.push(w);
+  /* Warnungen aus dem Ausland sind schon nach Warngebiet gefiltert — dort
+     ist der Ort über den Umriss bestimmt worden, nicht über den Namen. */
+  let all;
+  if (raw.fertig) {
+    all = raw.fertig;
+  } else {
+    if (place?.country && place.country !== 'DE') return;
+    const targets = [normalize(place.name), normalize(place.county)].filter(Boolean);
+    all = [];
+    for (const group of [raw.warnings, raw.vorabInformation]) {
+      for (const id in (group || {})) {
+        for (const w of group[id]) {
+          const region = normalize(w.regionName);
+          if (targets.some(t => t && region && (region === t || region.includes(t) || t.includes(region)))) {
+            all.push(w);
+          }
         }
       }
     }
+  }
+
+  /* Im Ausland auch dann etwas hinschreiben, wenn nichts gemeldet ist.
+     In Deutschland weiß man, dass die App warnt — jenseits der Grenze ist
+     eine leere Fläche zweideutig: keine Warnung, oder kein Empfang? Die
+     Zeile nennt zusätzlich das erkannte Warngebiet, dann ist auf einen
+     Blick zu sehen, dass der Ort richtig zugeordnet wurde. */
+  if (raw.fremd && !all.length) {
+    const wo = raw.gebiete?.length ? esc(raw.gebiete.join(', ')) : 'dein Land';
+    box.innerHTML = `<p class="warn-ok">Keine amtlichen Warnungen für ${wo}.
+      <span>Geprüft bei ${esc(raw.dienst || 'zuständigen Wetterdienst')}${
+        raw.genau ? '' : ' — landesweit, dieses Land liefert keine Gebietsgrenzen'}.</span></p>`;
+    return;
   }
   if (!all.length) return;
 
@@ -1107,6 +1139,7 @@ function renderWarnings(raw) {
      eine eigene Skala (50 aufwärts), für Wetterwarnungen 1 bis 4. Die
      Überschrift ist dagegen immer eindeutig formuliert. */
   const stufeVon = (w) => {
+    if (w.stufeText) return w.stufeText;
     const h = String(w.headline || '').toUpperCase();
     if (h.includes('EXTREME')) return 'Extremes Unwetter';
     if (h.includes('UNWETTER')) return 'Unwetterwarnung';
@@ -1131,9 +1164,10 @@ function renderWarnings(raw) {
       </summary>
       <div class="warn-body">
         <p class="warn-gueltig">${zeit(w).voll}</p>
-        <p>${esc(w.description)}</p>
+        <p>${esc(w.description)}${w.englisch
+          ? ' <em class="warn-en">(Wortlaut im Original — der Dienst schickt ihn nur auf Englisch)</em>' : ''}</p>
         ${w.instruction ? `<p class="warn-instr">${esc(w.instruction)}</p>` : ''}
-        <p class="warn-src">${stufeVon(w)} · Deutscher Wetterdienst${
+        <p class="warn-src">${stufeVon(w)} · ${esc(raw.quelle || 'Deutscher Wetterdienst')}${
           raw.time ? ` · Warnlage vom ${new Date(raw.time).toLocaleDateString('de-DE',
             { day: '2-digit', month: '2-digit', year: 'numeric' })}, ${hhmm(raw.time)} Uhr` : ''}</p>
       </div>
