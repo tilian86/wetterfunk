@@ -112,7 +112,8 @@ export default {
         return !!n && eigene.some(t => n.includes(String(t).toLowerCase()));
       };
 
-      const liste = await env.WF_PUSH.list({ prefix: 'abo:' });
+      // Über den Index statt list() – KV erlaubt nur 1000 list-Aufrufe am Tag.
+      const liste = { keys: await aboEintraege(env) };
       let ok = 0, weg = 0, fremd = 0;
       for (const k of liste.keys) {
         const eintrag = await env.WF_PUSH.get(k.name, 'json');
@@ -120,7 +121,7 @@ export default {
         if (!istEigen(eintrag.geraet)) { fremd++; continue; }
         try {
           const status = await sendPush(eintrag.abo, nutz, env);
-          if (status === 404 || status === 410) { await env.WF_PUSH.delete(k.name); weg++; }
+          if (status === 404 || status === 410) { await env.WF_PUSH.delete(k.name); await aboIndexVerwerfen(env); weg++; }
           else if (status < 300) ok++;
         } catch { /* ein totes Abo darf den Rest nicht aufhalten */ }
       }
