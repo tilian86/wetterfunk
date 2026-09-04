@@ -903,7 +903,7 @@ export default {
        Vortag steht und niemand die App benutzt. */
     if (event.cron === '20 3 * * *') {
       ctx.waitUntil(taeglichePruefung(env));
-      ctx.waitUntil(aboIndexNeu(env).catch(() => {}));
+      ctx.waitUntil(aboIndexAbgleich(env).catch(() => {}));
       ctx.waitUntil(radarBilderPutzen(env));
       return;
     }
@@ -921,6 +921,11 @@ export default {
     const jetzt = new Date();
     if (jetzt.getUTCMinutes() < 5 && jetzt.getUTCHours() >= 4 && jetzt.getUTCHours() <= 11) {
       ctx.waitUntil(taeglichePruefung(env).catch(() => {}));
+    }
+    // Halbstündlich prüfen, ob das Abo-Verzeichnis noch der Wirklichkeit entspricht.
+    const min = jetzt.getUTCMinutes();
+    if (min < 5 || (min >= 30 && min < 35)) {
+      ctx.waitUntil(aboIndexAbgleich(env).catch(() => {}));
     }
   }
 };
@@ -968,6 +973,31 @@ async function aboIndexNeu(env) {
    Durchgang es neu. Ein neues Gerät wartet so nie auf seine erste Meldung. */
 async function aboIndexVerwerfen(env) {
   try { await env.WF_PUSH.delete(ABO_INDEX); } catch {}
+}
+
+/* Das Netz unter dem Verzeichnis: alle halbe Stunde wirklich nachschauen,
+   ob es noch stimmt. Sollte je eine Stelle das Wegwerfen vergessen, bekäme
+   ein neues Gerät sonst still keine Meldungen. Kostet 48 Auflistungen am
+   Tag — Cloudflare erlaubt 1000. Geschrieben wird nur bei Abweichung,
+   damit der Abgleich selbst keine Schreibvorgänge verbraucht. */
+async function aboIndexAbgleich(env) {
+  const vorher = await env.WF_PUSH.get(ABO_INDEX, 'json');
+  const liste = await env.WF_PUSH.list({ prefix: 'abo:' });
+  const namen = liste.keys.map((k) => k.name);
+  const gleich = Array.isArray(vorher)
+    && vorher.length === namen.length
+    && vorher.every((n, i) => n === namen[i]);
+  if (gleich) return false;
+  await env.WF_PUSH.put(ABO_INDEX, JSON.stringify(namen));
+  /* Festhalten, damit man sieht, ob so etwas je vorkommt — und wo.
+     Fehlte das Verzeichnis nur (nach einer Ab-/Anmeldung), ist das
+     der Normalfall und keine Meldung wert. */
+  if (vorher !== null) {
+    await env.WF_PUSH.put('index:abweichung', JSON.stringify({
+      wann: new Date().toISOString(), vorher, nachher: namen,
+    }));
+  }
+  return true;
 }
 
 
