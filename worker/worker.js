@@ -551,6 +551,125 @@ export default {
       }
     }
 
+    /* ── Amtliche Warnungen im Ausland (MeteoAlarm) ───────────
+       In Deutschland kommen die Warnungen vom DWD. Jenseits der Grenze
+       schweigt der aber, und genau dort wird eine Wetter-App gebraucht.
+       MeteoAlarm ist kein eigener Wetterdienst, sondern das gemeinsame
+       Sprachrohr der nationalen Dienste: Was hier ankommt, hat GeoSphere
+       Austria, ARSO oder das kroatische DHMZ selbst herausgegeben — die
+       amtliche Warnung des jeweiligen Landes, nur in einem einheitlichen
+       Format.
+
+       Die App schickt mit, in welchen Warngebieten sie steht; gefiltert
+       wird hier, damit aufs Handy nur das Nötige geht. Österreich hat
+       gerade über 400 laufende Warnungen — ungefiltert wären das ein paar
+       hundert Kilobyte für eine Handvoll Zeilen.
+
+       Kosten: Der Feed-Abruf hängt im Randspeicher von Cloudflare
+       (`cacheTtl`), also holt ihn ein Aufruf alle zehn Minuten wirklich.
+       Kein einziger KV-Schreibvorgang — das Tageslimit bleibt unberührt. */
+    if (url.pathname === '/auslandswarnungen') {
+      const MA_LAENDER = {
+        AT: 'austria', SI: 'slovenia', HR: 'croatia', IT: 'italy', HU: 'hungary',
+        CH: 'switzerland', FR: 'france', ES: 'spain', NL: 'netherlands', BE: 'belgium',
+        LU: 'luxembourg', CZ: 'czechia', PL: 'poland', SK: 'slovakia', DK: 'denmark',
+        SE: 'sweden', NO: 'norway', FI: 'finland', GR: 'greece', PT: 'portugal',
+        IE: 'ireland', RO: 'romania', BG: 'bulgaria', RS: 'serbia', ME: 'montenegro',
+        BA: 'bosnia-herzegovina', EE: 'estonia', LV: 'latvia', LT: 'lithuania',
+        IS: 'iceland', MT: 'malta', CY: 'cyprus', MD: 'moldova', UA: 'ukraine',
+        GB: 'united-kingdom'
+      };
+      /* Deutschland fehlt mit Absicht: Dafür ist der DWD zuständig, und der
+         deutsche MeteoAlarm-Feed ist über acht Megabyte groß. */
+
+      const land = (url.searchParams.get('land') || '').toUpperCase();
+      const feed = MA_LAENDER[land];
+      if (!feed) return json({ error: 'Für dieses Land gibt es keinen Feed' }, 400, origin);
+
+      /* Warnart und -stufe stecken bei MeteoAlarm nicht im Freitext, sondern
+         in zwei festen Kennziffern. Die sind in allen Ländern gleich — also
+         lässt sich das Wichtigste auf Deutsch anzeigen, auch wenn Kroatien
+         seine Beschreibung nur auf Englisch mitschickt. */
+      const ARTEN = {
+        1: 'Sturm', 2: 'Schnee und Eis', 3: 'Gewitter', 4: 'Nebel', 5: 'Hitze',
+        6: 'Kälte', 7: 'Küste', 8: 'Waldbrand', 9: 'Lawinen', 10: 'Regen',
+        11: 'Hochwasser', 12: 'Überflutung', 13: 'Regen und Hochwasser'
+      };
+      const kenn = (info, name) => {
+        const p = (info.parameter || []).find(x => x.valueName === name);
+        return p ? String(p.value) : '';
+      };
+
+      const gebiete = new Set((url.searchParams.get('gebiete') || '')
+        .split('|').map(s => s.trim()).filter(Boolean));
+
+      try {
+        const res = await withTimeout(fetch(
+          `https://feeds.meteoalarm.org/api/v1/warnings/feeds-${feed}`,
+          { headers: { 'Accept': '*/*' }, cf: { cacheTtl: 600, cacheEverything: true } }
+        ), 12000);
+        if (!res.ok) return json({ error: `MeteoAlarm antwortet ${res.status}` }, 502, origin);
+        const daten = await res.json();
+
+        const jetzt = Date.now();
+        const gesammelt = new Map();
+
+        for (const eintrag of (daten.warnings || [])) {
+          const alarm = eintrag.alert || {};
+          if (alarm.status && alarm.status !== 'Actual') continue;
+          if (alarm.msgType === 'Cancel') continue;
+
+          const bloecke = alarm.info || [];
+          /* Deutsch, wenn das Land es liefert (Österreich, Schweiz), sonst
+             Englisch. Die Landessprache hilft hier niemandem weiter. */
+          const info = bloecke.find(i => (i.language || '').startsWith('de'))
+                    || bloecke.find(i => (i.language || '').startsWith('en'))
+                    || bloecke[0];
+          if (!info) continue;
+
+          const stufe = parseInt(kenn(info, 'awareness_level'), 10) || 0;
+          if (stufe < 2) continue;          // grün heißt „keine Warnung“
+          const art = parseInt(kenn(info, 'awareness_type'), 10) || 0;
+
+          const von = Date.parse(info.onset || info.effective || alarm.sent || '') || null;
+          const bis = Date.parse(info.expires || '') || null;
+          if (bis && bis <= jetzt) continue;
+
+          const treffer = (info.area || [])
+            .filter(a => !gebiete.size || gebiete.has(a.areaDesc))
+            .map(a => a.areaDesc);
+          if (!treffer.length) continue;
+
+          /* Dieselbe Warnung kommt für jedes Gebiet einzeln. Zusammenfassen,
+             sonst steht in Wien dieselbe Meldung dreiundzwanzigmal. */
+          const schluessel = `${art}|${stufe}|${von}|${bis}|${info.event || ''}`;
+          const alt = gesammelt.get(schluessel);
+          if (alt) { for (const t of treffer) alt.orte.add(t); continue; }
+
+          gesammelt.set(schluessel, {
+            orte: new Set(treffer),
+            art, artName: ARTEN[art] || 'Wetterwarnung', stufe,
+            event: info.event || ARTEN[art] || 'Wetterwarnung',
+            headline: info.headline || '',
+            description: info.description || '',
+            instruction: info.instruction || '',
+            start: von, end: bis,
+            sprache: (info.language || '').slice(0, 2),
+            sender: info.senderName || alarm.sender || ''
+          });
+        }
+
+        const warnungen = [...gesammelt.values()]
+          .map(w => ({ ...w, gebiete: [...w.orte].sort(), orte: undefined }))
+          .sort((a, b) => b.stufe - a.stufe || (a.start || 0) - (b.start || 0))
+          .slice(0, 40);
+
+        return json({ land, stand: jetzt, warnungen }, 200, origin, 'public, max-age=600');
+      } catch (e) {
+        return json({ error: `MeteoAlarm nicht erreichbar: ${e.message}` }, 502, origin);
+      }
+    }
+
     /* ── Wetterdaten über den Worker holen ────────────────────
        Open-Meteo begrenzt die Abrufe pro IP. Sitzen mehrere Geräte hinter
        demselben Anschluss oder wurde viel getestet, greift das Limit für

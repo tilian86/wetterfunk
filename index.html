@@ -36,10 +36,10 @@
 <meta name="theme-color" content="#0b1220">
 <link rel="apple-touch-icon" href="icons/icon-180.png">
 <link rel="icon" href="icons/icon-192.png">
-<link rel="manifest" href="manifest.webmanifest?v=225">
+<link rel="manifest" href="manifest.webmanifest?v=227">
 
-<link rel="stylesheet" href="vendor/maplibre-gl.css?v=225">
-<link rel="stylesheet" href="css/style.css?v=225">
+<link rel="stylesheet" href="vendor/maplibre-gl.css?v=227">
+<link rel="stylesheet" href="css/style.css?v=227">
 </head>
 <body>
 
@@ -567,7 +567,10 @@
       <span class="fa-text">Wetterfunk — gebaut von <b>Florian S. Thiel</b></span>
     </p>
     <p>Daten: <b>Open-Meteo</b> (DWD ICON-D2, ECMWF, GFS) · Messwerte: <b>DWD</b> über
-      <b>Bright Sky</b> · Radar: <b>RainViewer</b> · Warnungen und Berichte: <b>DWD</b> ·
+      <b>Bright Sky</b> · Radar: <b>RainViewer</b> · Warnungen und Berichte: <b>DWD</b>,
+      im Ausland die nationalen Wetterdienste über <b>MeteoAlarm</b> ·
+      Warngebiete: <a href="https://www.geoboundaries.org" target="_blank" rel="noopener">geoBoundaries</a>
+      (<a href="https://creativecommons.org/licenses/by/4.0/" target="_blank" rel="noopener">CC BY 4.0</a>) ·
       Karte: <b>OpenFreeMap</b> / <b>OpenStreetMap</b></p>
     <p class="foot-privacy">Keine Tracker, keine Cookies, keine Konten. Standort bleibt auf dem Gerät.</p>
     <p class="foot-links">
@@ -719,11 +722,12 @@
 <!-- Die Kartenbibliothek (936 KB) lädt NICHT mehr hier: radar.js holt sie
      erst, wenn die Radar-Karte gebraucht wird. Die Versionsmarke dafür
      hängt am Stylesheet-Link oben — den zählt release.sh mit. -->
-<script src="js/icons.js?v=225"></script>
-<script src="js/kueste.js?v=225"></script>
-<script src="js/radar.js?v=225"></script>
-<script src="js/forecast.js?v=225"></script>
-<script src="js/briefing.js?v=225"></script>
-<script src="js/app.js?v=225"></script>
+<script src="js/icons.js?v=227"></script>
+<script src="js/ausland.js?v=227"></script>
+<script src="js/kueste.js?v=227"></script>
+<script src="js/radar.js?v=227"></script>
+<script src="js/forecast.js?v=227"></script>
+<script src="js/briefing.js?v=227"></script>
+<script src="js/app.js?v=227"></script>
 </body>
 </html>
