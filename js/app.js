@@ -1333,14 +1333,50 @@ function daySymbol(dayIndex) {
   }
   if (!idx.length) return raw;
 
-  // Niederschlag hat Vorrang: häufigster Regen-/Schnee-Code der nassen Stunden
+  /* Der Sonnenanteil wird vorab gebraucht: Er entscheidet nicht nur über das
+     Wolkensymbol weiter unten, sondern auch, ob ein nasser Tag grau oder als
+     Schauertag gezeichnet wird. */
+  const sonneWerte = idx.map(i => sonneFuer(h.time[i], h.sunshine_duration?.[i]))
+    .filter(v => v != null);
+  const moeglich = idx.length * 3600;
+  const sonneAnteil = (sonneWerte.length && moeglich > 0)
+    ? sonneWerte.reduce((a, b) => a + b, 0) / moeglich : null;
+
+  // Niederschlag hat Vorrang: stärkster Regen-/Schnee-Code der nassen Stunden
   const wet = idx.filter(i => (h.precipitation[i] ?? 0) >= 0.1);
   const wetShare = wet.length / idx.length;
-  if (wetShare >= 0.2 || (d.precipitation_sum[dayIndex] ?? 0) >= 1.5) {
+  const regenSumme = d.precipitation_sum[dayIndex] ?? 0;
+  if (wetShare >= 0.2 || regenSumme >= 1.5) {
+    /* Nach REGENMENGE gewichten, nicht nach Stundenzahl: Bei je einer Stunde
+       61/63/80 entschied vorher die Sortierreihenfolge der Zahlen — also der
+       Zufall — statt der kräftigste Schauer. */
     const counts = {};
-    wet.forEach(i => { const c = h.weather_code[i]; counts[c] = (counts[c] || 0) + 1; });
+    wet.forEach(i => {
+      const c = h.weather_code[i];
+      counts[c] = (counts[c] || 0) + (h.precipitation[i] ?? 0);
+    });
     const top = Object.entries(counts).sort((a, b) => b[1] - a[1])[0];
-    if (top) return +top[0];
+    if (top) {
+      const code = +top[0];
+      /* Ein Schauer macht aus einem Sonnentag keinen Regentag.
+         Gemessen an 156 Tagen (April–September) bekamen 44 Tage eine GRAUE
+         Regenwolke, obwohl mindestens 7 Sonnenstunden gemessen wurden — am
+         21.06. bei 15 h Sonne und 1,4 mm Niesel. Grund: Dieser Zweig übersprang
+         die Sonnenprüfung komplett, und Niesel-/Regencodes zeichnen eine Wolke
+         ohne Sonne.
+         Ab Sonnenanteil 0,54 (dieselbe geeichte Schwelle wie „wolkig mit Sonne")
+         und unter 10 mm zeigen wir deshalb das Schauer-Symbol MIT Sonne. Es
+         bleibt ehrlich — die Tropfen bleiben drin —, sagt aber dazu, dass die
+         Sonne den Tag beherrscht. Kreuzgeprüft Tübingen/Reutlingen:
+         41 bzw. 48 Tage verbessert, KEIN Fehlgriff (kein Tag unter 4 h Sonne).
+         Nur echter Regen/Niesel wird umgedeutet — gefrierender Niederschlag
+         (56/57/66/67) und Schnee bleiben, wie sie sind. */
+      const istRegen = (code >= 51 && code <= 55) || (code >= 61 && code <= 65);
+      if (istRegen && sonneAnteil != null && sonneAnteil >= 0.54 && regenSumme < 10) {
+        return regenSumme < 2.5 ? 80 : 81;
+      }
+      return code;
+    }
   }
   // Gewitter nie verschlucken
   if (idx.some(i => [95, 96, 99].includes(h.weather_code[i]))) return 95;
@@ -1351,11 +1387,7 @@ function daySymbol(dayIndex) {
      10,9 Sonnenstunden. Die App zeigte „bedeckt", DWD und WetterOnline
      zeigten Sonne mit Wolken. Gemessen wird der Anteil der Sonnenstunden
      an der möglichen Tageslänge. */
-  const sonneWerte = idx.map(i => sonneFuer(h.time[i], h.sunshine_duration?.[i]))
-    .filter(v => v != null);
-  const sonneSek = sonneWerte.reduce((a, b) => a + b, 0);
-  const moeglich = idx.length * 3600;
-  if (moeglich > 0 && sonneWerte.length) {
+  if (sonneAnteil != null) {
     /* Geeicht an gemessenen Sonnenstunden der Station, 15 Tage:
        Die Modelle ÜBERSCHÄTZEN die Sonne massiv — Median Faktor 2,2, im
        Einzelfall 7,7 (77 % vorhergesagt, 10 % gemessen). An echten
@@ -1374,7 +1406,7 @@ function daySymbol(dayIndex) {
          0,84/0,70/0,54   Treffer 68,5 / 70,0 %                    0,315 / 0,300
        Auch zeitlich getrennt geprüft (Juni/Juli gelernt, August/September
        geprüft) hält der Gewinn. */
-    const anteil = sonneSek / moeglich;
+    const anteil = sonneAnteil;
     if (anteil >= 0.84) return 0;     // überwiegend sonnig
     if (anteil >= 0.70) return 1;     // heiter
     if (anteil >= 0.54) return 2;     // wolkig mit Sonne
