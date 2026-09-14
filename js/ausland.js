@@ -236,5 +236,61 @@
     };
   }
 
-  window.WF_AUSLAND = { warnungen, gebieteFuer };
+  /** In welchem Land liegt dieser Punkt? Beantwortet aus den Umrissen, die
+      die App ohnehin mitbringt — ohne Netz und ohne Rückfrage.
+
+      Gebraucht wird das, wenn die Rückwärtssuche keine Länderkennung
+      liefert (sie fällt auf „Mein Standort" ohne `country` zurück, sobald
+      Nominatim klemmt oder bremst). Ohne Kennung hielte die App den Ort für
+      deutsch, fragte den DWD und fände dort nichts — kein Warnhinweis, aber
+      auch kein „geprüft, nichts gemeldet". Genau die stille Fläche also,
+      die es im Ausland nicht geben soll.
+
+      Streng geprüft, ohne den 20-km-Spielraum von `treffer`: Sonst
+      bekäme das Allgäu österreichische Warnungen. Erst wenn nirgends etwas
+      passt, gilt ein Saum von sechs Kilometern — und der nur an der Küste,
+      wo der vereinfachte Umriss ein Stück Land abschneiden kann: Piran
+      liegt dreieinhalb Kilometer außerhalb des slowenischen Umrisses, die
+      Halbinsel fällt bei dieser Vereinfachung schlicht weg.
+      Ohne diese Einschränkung fiele Passau an Österreich: Die Grenze läuft
+      dort zwei Kilometer vom Bahnhof entfernt. */
+  function imLandStreng(d, lat, lon) {
+    if (d.kerne) return (d.umriss || []).some(r => imRing(lon, lat, entpacke(r)));
+    return d.gebiete.some(g => !g.see
+      && lon >= g.bb[0] && lon <= g.bb[2] && lat >= g.bb[1] && lat <= g.bb[3]
+      && g.p.some(r => imRing(lon, lat, entpacke(r))));
+  }
+
+  function abstandKm(d, lat, lon) {
+    const cos = Math.cos(lat * Math.PI / 180);
+    let beste = Infinity;
+    const ringe = d.kerne ? (d.umriss || []) : d.gebiete.filter(g => !g.see).flatMap(g => g.p);
+    for (const r of ringe) {
+      for (const [x, y] of entpacke(r)) {
+        const dx = (x - lon) * cos, dy = y - lat;
+        const e = dx * dx + dy * dy;
+        if (e < beste) beste = e;
+      }
+    }
+    return Math.sqrt(beste) * 111;
+  }
+
+  async function landFuer(lat, lon) {
+    const geladen = [];
+    for (const cc of MIT_UMRISS) {
+      const d = await ladeLand(cc);
+      if (!d) continue;
+      if (imLandStreng(d, lat, lon)) return cc;
+      geladen.push([cc, d]);
+    }
+    let nah = null, beste = 6;
+    for (const [cc, d] of geladen) {
+      if (!d.meer || !amWasser(d.meer, lat, lon)) continue;   // nur an der Küste
+      const km = abstandKm(d, lat, lon);
+      if (km < beste) { beste = km; nah = cc; }
+    }
+    return nah;
+  }
+
+  window.WF_AUSLAND = { warnungen, gebieteFuer, landFuer };
 })();
