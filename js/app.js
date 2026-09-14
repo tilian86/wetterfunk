@@ -503,7 +503,16 @@ function loadModels(lat, lon) {
 
     Antwort des DWD ist JSONP: warnWetter.loadWarnings({…}); */
 async function loadWarnings() {
-  const land = (place?.country || '').toUpperCase();
+  let land = (place?.country || '').toUpperCase();
+  /* Fehlt die Länderkennung, wird sie aus den mitgelieferten Umrissen
+     bestimmt. Die Rückwärtssuche liefert sie nämlich nicht immer: Klemmt
+     Nominatim — im Ausland mit magerem Empfang keine Seltenheit —, kommt
+     „Mein Standort" ganz ohne `country` zurück. Die App hielte den Ort dann
+     für deutsch, fragte den DWD und zeigte stillschweigend nichts an. */
+  if (!land && place && window.WF_AUSLAND?.landFuer) {
+    land = (await window.WF_AUSLAND.landFuer(place.lat, place.lon).catch(() => null)) || '';
+    if (land) place.country = land;
+  }
   if (land && land !== 'DE') {
     return window.WF_AUSLAND?.warnungen(place).catch(() => null) ?? null;
   }
