@@ -49,7 +49,10 @@ const store = {
   set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch {} }
 };
 const proxyUrl = () => (store.get('wf.proxy', '') || DEFAULT_PROXY).replace(/\/+$/, '');
-const model = () => store.get('wf.model', 'claude-opus-5');
+const model = () => {
+  const m = store.get('wf.model', 'claude-opus-5-5');
+  return ['claude-opus-5', 'claude-opus-4-8'].includes(m) ? 'claude-opus-5-5' : m;
+};
 const count = () => store.get(LS.count, 3);
 
 // ══ Feeds holen ════════════════════════════════════════════

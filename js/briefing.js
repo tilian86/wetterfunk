@@ -7,7 +7,7 @@ const Briefing = (() => {
 'use strict';
 
 const MODELS = [
-  { id: 'claude-opus-5',    name: 'Opus 5',    note: 'am gründlichsten' },
+  { id: 'claude-opus-5-5',  name: 'Opus 5.5',  note: 'am gründlichsten' },
   { id: 'claude-sonnet-5',  name: 'Sonnet 5',  note: 'schneller' },
   { id: 'claude-haiku-4-5', name: 'Haiku 4.5', note: 'am schnellsten' }
 ];
@@ -84,7 +84,12 @@ const store = {
 
 const selectedParts = () => store.get(LS.parts, PARTS.filter(p => p.on).map(p => p.id));
 const selectedLength = () => store.get(LS.len, 'mittel');
-const selectedModel = () => store.get(LS.model, MODELS[0].id);
+// Gespeicherte ältere Opus-Kennungen laufen aufs neueste Opus (Florian will nie alte Versionen)
+const ALTE_OPUS = ['claude-opus-5', 'claude-opus-4-8'];
+const selectedModel = () => {
+  const m = store.get(LS.model, MODELS[0].id);
+  return ALTE_OPUS.includes(m) ? MODELS[0].id : m;
+};
 const hhmm = (d) => new Date(d).toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' });
 const wd = (d) => new Date(d).toLocaleDateString('de-DE', { weekday: 'long' });
 const r0 = (v) => (v == null ? '–' : Math.round(v));
@@ -584,13 +589,13 @@ function setBusy(on) {
   $('#bfGoLabel').textContent = on ? 'Wird geschrieben…' : 'Bericht erstellen';
 }
 
-const PRICES = { 'claude-opus-5': [5, 25], 'claude-sonnet-5': [3, 15], 'claude-haiku-4-5': [1, 5] };
+const PRICES = { 'claude-opus-5-5': [4, 20], 'claude-opus-5': [5, 25], 'claude-sonnet-5': [3, 15], 'claude-haiku-4-5': [1, 5] };
 
 /** Fußzeile unter dem Text: welcher Weg, welches Modell, ggf. was es gekostet hat. */
 function viaLabel(model, out) {
   const mName = (MODELS.find(m => m.id === model) || {}).name || model;
   if (out?.via !== 'api') return `${mName} <i>über Max-Abo · keine Zusatzkosten</i>`;
-  const [pin, pout] = PRICES[model] || PRICES['claude-opus-5'];
+  const [pin, pout] = PRICES[model] || PRICES['claude-opus-5-5'];
   const u = out.usage || {};
   const cost = ((u.input_tokens ?? 0) / 1e6) * pin + ((u.output_tokens ?? 0) / 1e6) * pout;
   return `${mName} <i>über API · ${(cost * 100).toFixed(1)} Cent</i>`;
