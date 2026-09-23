@@ -871,7 +871,7 @@ export default {
           method: 'POST',
           headers,
           body: JSON.stringify({
-            model: req.model || 'claude-opus-5',
+            model: req.model || 'claude-opus-5-5',
             system: req.system,
             user: req.user,
             effort: req.effort || 'low'
