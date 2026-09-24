@@ -306,7 +306,15 @@ export function meldungsBilanz(journal) {
 /** Der tägliche Lauf: gestern prüfen, Ergebnis ablegen. */
 export async function taeglichePruefung(env) {
   const tag = iso(Date.now() - TAG);
-  if (await env.WF_PUSH.get(`pruef:${tag}`)) return;      // schon gelaufen
+  /* „Schon gelaufen" heißt: alle erwarteten Orte sind drin. Vorher genügte
+     irgendein Eintrag — ein Lauf, der nur einen von zwei Orten schaffte
+     oder bloß die Meldungs-Bilanz hatte (so am 18.09.: null Orte), setzte
+     damit den Merker, und die stündlichen Nachzügler bis Mittag stiegen
+     sofort aus. Genau die sollten solche Lücken aber schließen. Einträge
+     ohne `erwartet` stammen von vorher und gelten als fertig. */
+  const vorhanden = await env.WF_PUSH.get(`pruef:${tag}`, 'json');
+  if (vorhanden && (vorhanden.erwartet == null
+                    || (vorhanden.orte || []).length >= vorhanden.erwartet)) return;
 
   /* Geprüft wird dort, wo jemand die App benutzt — auf zwei Kilometer
      gerundet, damit derselbe Ort nicht mehrfach zählt. Höchstens zwei
@@ -322,19 +330,31 @@ export async function taeglichePruefung(env) {
   }
   if (!orte.size) orte.set('tübingen', { lat: 48.5216, lon: 9.0576, ort: 'Tübingen' });
 
-  const ergebnisse = [];
+  // Nur nachholen, was fehlt — ein gelungener Ort wird nicht neu gerechnet
+  const stelle = (o) => `${o.lat.toFixed(2)},${o.lon.toFixed(2)}`;
+  const bisher = vorhanden?.orte || [];
+  const erledigt = new Set(bisher.map(stelle));
+  const ergebnisse = [...bisher];
   for (const o of orte.values()) {
+    if (ergebnisse.length >= orte.size) break;
+    if (erledigt.has(stelle(o))) continue;
     const r = await pruefeOrt(o.lat, o.lon, tag);
     if (r) ergebnisse.push({ ...r, ort: o.ort });
   }
+  // Nachzügler ohne neuen Ort: nichts schreiben, das Kontingent ist knapp
+  if (vorhanden && ergebnisse.length === bisher.length) return;
 
   // Auch wenn die Station schweigt: Die Meldungs-Bilanz gibt es trotzdem
-  const journal = await env.WF_PUSH.get(`wach:${tag}`, 'json');
-  const meldungen = journal ? meldungsBilanz(journal) : null;
+  let meldungen = vorhanden?.meldungen ?? null;
+  if (!meldungen) {
+    const journal = await env.WF_PUSH.get(`wach:${tag}`, 'json');
+    meldungen = journal ? meldungsBilanz(journal) : null;
+  }
   if (!ergebnisse.length && !meldungen) return;
 
   await env.WF_PUSH.put(`pruef:${tag}`,
-                        JSON.stringify({ tag, orte: ergebnisse, meldungen, stand: Date.now() }),
+                        JSON.stringify({ tag, orte: ergebnisse, meldungen, erwartet: orte.size,
+                                         stand: Date.now() }),
                         { expirationTtl: HALTBAR });
 }
 
