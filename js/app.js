@@ -7498,7 +7498,7 @@ async function refresh(leise = false) {
   loadDwdText(place.lat, place.lon);
   ladeStationen(place.lat, place.lon);
   ladeRueckblick(place.lat, place.lon);
-  ladePunktVerlauf(place.lat, place.lon).then(() => renderVerdict());
+  ladePunktVerlauf(place.lat, place.lon).then(() => { if (data?.current) renderVerdict(); });
   renderPush();
 
   try {
