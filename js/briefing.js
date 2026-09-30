@@ -8,7 +8,7 @@ const Briefing = (() => {
 
 const MODELS = [
   { id: 'claude-opus-5-5',  name: 'Opus 5.5',  note: 'am gründlichsten' },
-  { id: 'claude-sonnet-5',  name: 'Sonnet 5',  note: 'schneller' },
+  { id: 'claude-sonnet-5-5', name: 'Sonnet 5.5', note: 'schneller' },
   { id: 'claude-haiku-4-5', name: 'Haiku 4.5', note: 'am schnellsten' }
 ];
 
@@ -88,6 +88,7 @@ const selectedLength = () => store.get(LS.len, 'mittel');
 const ALTE_OPUS = ['claude-opus-5', 'claude-opus-4-8'];
 const selectedModel = () => {
   const m = store.get(LS.model, MODELS[0].id);
+  if (m === 'claude-sonnet-5') return 'claude-sonnet-5-5';   // altes Sonnet → neuestes
   return ALTE_OPUS.includes(m) ? MODELS[0].id : m;
 };
 const hhmm = (d) => new Date(d).toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' });
@@ -589,7 +590,7 @@ function setBusy(on) {
   $('#bfGoLabel').textContent = on ? 'Wird geschrieben…' : 'Bericht erstellen';
 }
 
-const PRICES = { 'claude-opus-5-5': [4, 20], 'claude-opus-5': [5, 25], 'claude-sonnet-5': [3, 15], 'claude-haiku-4-5': [1, 5] };
+const PRICES = { 'claude-opus-5-5': [4, 20], 'claude-opus-5': [5, 25], 'claude-sonnet-5-5': [3, 15], 'claude-sonnet-5': [3, 15], 'claude-haiku-4-5': [1, 5] };
 
 /** Fußzeile unter dem Text: welcher Weg, welches Modell, ggf. was es gekostet hat. */
 function viaLabel(model, out) {
