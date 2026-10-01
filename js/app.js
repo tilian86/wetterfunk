@@ -4344,7 +4344,7 @@ function openStundeSheet(i) {
   const wandel = vorher == null ? '' : temp - vorher >= 0.8 ? ' steigend'
                : vorher - temp >= 0.8 ? ' fallend' : ' gleichbleibend';
 
-  $('#explainTitle').textContent = `${tag}, ${hhmm(t)} Uhr`;
+  $('#explainTitle').textContent = `${tag}, ${hhmm(t)} Uhr${place?.name ? ` · ${place.name}` : ''}`;
   $('#explainText').innerHTML = `
     <div class="sh-kopf">
       <span class="sh-icon">${WX.icon(himmelCode(i), h.is_day[i])}</span>
@@ -4412,7 +4412,12 @@ function openDaySheet(i) {
   const uvMax = d.uv_index_max?.[i];
   const heute = new Date(dayISO).toDateString() === new Date().toDateString();
 
-  $('#explainTitle').textContent = heute ? 'Heute' : `${weekday(dayISO)}, ${new Date(dayISO).toLocaleDateString('de-DE', { day: 'numeric', month: 'long' })}`;
+  /* Der Ort gehört in die Überschrift: Am 02.10.2026 stand auf dem Mac
+     noch Vabriga vom Urlaub, auf dem Handy Tübingen — „Heute: kein Regen"
+     neben Regen vor dem Fenster, und niemand sah, dass das Blatt von einem
+     anderen Ort erzählt. */
+  $('#explainTitle').textContent = `${heute ? 'Heute' : `${weekday(dayISO)}, ${new Date(dayISO).toLocaleDateString('de-DE', { day: 'numeric', month: 'long' })}`}${
+    place?.name ? ` · ${place.name}` : ''}`;
 
   $('#explainText').innerHTML = `
     <div class="ds-spans">
