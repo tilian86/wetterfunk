@@ -4176,7 +4176,8 @@ function dayHours(dayISO) {
       ? (mitte >= auf && mitte <= unter)
       : h.is_day[k] === 1;
     out.push({ u, temp: h.temperature_2m[k], mm: h.precipitation[k] ?? 0,
-               wolken: wolkenFuer(h.time[k], h.cloud_cover[k] ?? 0), wind: h.wind_speed_10m[k],
+               wolken: wolkenFuer(h.time[k], h.cloud_cover[k] ?? 0), code: himmelCode(k),
+               wind: h.wind_speed_10m[k],
                boe: h.wind_gusts_10m[k], tags, uv: h.uv_index[k],
                gefuehlt: h.apparent_temperature?.[k], feuchte: h.relative_humidity_2m?.[k] });
   }
@@ -4193,8 +4194,17 @@ function daySpans(stunden) {
   /* Dieselbe Schwelle wie überall sonst (REGEN.nichts): Bei 0,1 mm stand
      hier „ein paar Tropfen", während die Leiste darüber „bedeckt" zeigte
      und der Klartext „trocken" sagte — drei Aussagen für eine Stunde. */
+  /* Der Himmel kommt aus himmelCode() — derselben Einstufung wie in der
+     Stundenleiste, nach gerechnetem Sonnenschein statt Gesamtbewölkung.
+     Am 02.10.2026 meldeten die Modelle 75–98 % Wolken bei 50–60 Minuten
+     Sonne je Stunde: Das Blatt sagte „07–19 Uhr bedeckt", zwei Zeilen
+     tiefer „Sonne 10 Stunden — viel", und die Leiste darüber zeigte
+     Sonnen. Die Bewölkung bleibt nur Ersatz, wo der Code nichts hergibt. */
+  const HIMMEL = ['sonnig', 'heiter', 'wolkig', 'bedeckt'];
   const art = (s) => (s.mm >= 0.5 ? 'regen' : s.mm >= REGEN.nichts ? 'tropfen'
                     : !s.tags ? 'nacht'
+                    : s.code === 45 || s.code === 48 ? 'nebel'
+                    : HIMMEL[s.code] ? HIMMEL[s.code]
                     : s.wolken < 25 ? 'sonnig' : s.wolken < 55 ? 'heiter'
                     : s.wolken < 80 ? 'wolkig' : 'bedeckt');
   const spans = [];
@@ -4217,7 +4227,7 @@ function daySpans(stunden) {
 }
 
 const SPAN_WORT = { sonnig: '☀️ sonnig', heiter: '🌤 heiter', wolkig: '⛅ wolkig',
-                    bedeckt: '☁️ bedeckt', regen: '🌧 Regen',
+                    bedeckt: '☁️ bedeckt', nebel: '🌫 Nebel', regen: '🌧 Regen',
                     tropfen: '🌦 ein paar Tropfen', nacht: '🌙 Nacht' };
 
 /** Was 11 km/h bedeuten, weiß kaum jemand — die Beaufort-Skala in Worten. */
