@@ -1037,6 +1037,7 @@ select#bfModel {
 .d-rainval { font-size: 10px; color: var(--accent); white-space: nowrap; }
 .d-windval { font-size: 10px; color: var(--ink-faint); white-space: nowrap; }
 .d-windval i { font-style: normal; opacity: .75; }
+.d-schwuel { font-size: 10px; color: #f2a65a; white-space: nowrap; }
 .d-temps { font-size: 14px; color: var(--ink-faint); white-space: nowrap; }
 .d-temps b { font-size: 15px; font-weight: 600; color: var(--ink); }
 

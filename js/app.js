@@ -1556,6 +1556,7 @@ function renderDaily() {
     const boe = round(d.wind_gusts_10m_max?.[i]);
     const w = mm >= 0.2 ? rainWindow(i) : null;
     const worte = mm >= 0.2 ? rainWords(mm) : null;
+    const sw = schwuele(day);
 
     return `<div class="drow${isToday ? ' is-today' : ''}" data-day="${i}">
       <span class="d-day">${isToday ? 'Heute' : weekday(day)}${
@@ -1565,6 +1566,7 @@ function renderDaily() {
         <span class="d-sunval">☀ ${sun} Std.</span>
         ${prob >= 10 ? `<span class="d-rainval">💧 ${prob}%</span>` : ''}
         <span class="d-windval">🌬 ${wind} km/h${boe >= wind + 15 ? ` <i>Böen ${boe}</i>` : ''}</span>
+        ${sw?.istSchwuel ? `<span class="d-schwuel">💦 ${sw.wort}</span>` : ''}
       </span>
       <span class="d-temps"><b>${round(max)}°</b> / ${round(min)}°</span>
       ${dayStrip(day)}
@@ -4179,9 +4181,51 @@ function dayHours(dayISO) {
                wolken: wolkenFuer(h.time[k], h.cloud_cover[k] ?? 0), code: himmelCode(k),
                wind: h.wind_speed_10m[k],
                boe: h.wind_gusts_10m[k], tags, uv: h.uv_index[k],
-               gefuehlt: h.apparent_temperature?.[k], feuchte: h.relative_humidity_2m?.[k] });
+               gefuehlt: h.apparent_temperature?.[k], feuchte: h.relative_humidity_2m?.[k],
+               taupunkt: h.dew_point_2m?.[k] });
   }
   return out;
+}
+
+/* Schwüle eines Tages, gemessen am Taupunkt in den wachen Stunden (8–22 Uhr).
+   Ab 16 °C empfinden die meisten die Luft als schwül — dieselbe Schwelle wie
+   taupunktWort(). Eine einzelne Stunde zählt nicht, das ist Rauschen.
+
+   Anlass: Nach einer Woche mit Taupunkt 5–11° (Ende 09/2026) maß
+   Rottenburg-Kiebingen am 01.10. bis 16,9° — die App hatte das nirgends
+   erwähnt, man stand überrascht in feuchtwarmer Luft. Deshalb auch der
+   Vergleich mit dem Vortag: Der Sprung fällt mehr auf als der Wert. */
+function schwuele(dayISO) {
+  const AB = 16;
+  const wachIn = (iso) => dayHours(iso).filter(s => s.u >= 8 && s.u <= 22 && s.taupunkt != null);
+  const schnitt = (liste) => liste.reduce((a, s) => a + s.taupunkt, 0) / liste.length;
+
+  const wach = wachIn(dayISO);
+  if (!wach.length) return null;
+  const max = Math.max(...wach.map(s => s.taupunkt));
+  const feucht = wach.filter(s => s.taupunkt >= AB);
+  const istSchwuel = feucht.length >= 2;
+
+  // Vortag zum Vergleich — für „heute" fehlt er, die Vorhersage beginnt um 0 Uhr
+  let sprung = null;
+  const k = data.daily.time.indexOf(dayISO);
+  if (k > 0) {
+    const vor = wachIn(data.daily.time[k - 1]);
+    if (vor.length) sprung = schnitt(wach) - schnitt(vor);
+  }
+
+  /* Im Tagesblatt nur, wenn Schwüle überhaupt Thema ist: fast schwül oder
+     spürbar feuchter als gestern. Sonst stünde im Januar „sehr trocken"
+     (Taupunkt 2°) neben Nieselregen bei 100 % Luftfeuchte. */
+  const zeigen = max >= 13 || (sprung != null && Math.abs(sprung) >= 4 && max >= 10);
+
+  return {
+    istSchwuel, zeigen, max, sprung,
+    wort: istSchwuel ? taupunktWort(Math.max(...feucht.map(s => s.taupunkt)))
+        : feucht.length ? 'nur kurz schwül' : 'nicht schwül',
+    von: feucht.length ? feucht[0].u : null,
+    bis: feucht.length ? feucht[feucht.length - 1].u + 1 : null
+  };
 }
 
 /** Zusammenhängende Abschnitte gleicher Art zusammenfassen ("9–14 Uhr sonnig").
@@ -4411,6 +4455,10 @@ function openDaySheet(i) {
     : null;
   const uvMax = d.uv_index_max?.[i];
   const heute = new Date(dayISO).toDateString() === new Date().toDateString();
+  const sw = schwuele(dayISO);
+  const swSprung = sw?.sprung >= 4 ? ' · deutlich feuchter als am Vortag'
+                 : sw?.sprung <= -4 ? ' · deutlich trockener als am Vortag' : '';
+  const gross = (s) => s.charAt(0).toUpperCase() + s.slice(1);
 
   /* Der Ort gehört in die Überschrift: Am 02.10.2026 stand auf dem Mac
      noch Vabriga vom Urlaub, auf dem Handy Tübingen — „Heute: kein Regen"
@@ -4463,6 +4511,12 @@ function openDaySheet(i) {
         kalt.gefuehlt != null ? ` <i>fühlt sich an wie ${round(kalt.gefuehlt)}°</i>` : ''}</dd>
       <dt>Sonne</dt><dd>${sun} Stunden${sun >= 8 ? ' — viel' : sun <= 2 ? ' — wenig' : ''}</dd>
       <dt>Regen</dt><dd>${mm < 0.2 ? 'keiner erwartet' : `${dez(mm)} mm — ${rainWords(mm)}`}</dd>
+      ${sw?.zeigen ? `<dt>Luft</dt><dd>${gross(sw.wort)}${
+        sw.istSchwuel ? ` ${String(sw.von).padStart(2, '0')}–${String(sw.bis).padStart(2, '0')} Uhr`
+        : sw.von != null ? ` gegen ${String(sw.von).padStart(2, '0')} Uhr` : ''}
+        <i>Taupunkt bis ${round(sw.max)}°${sw.von != null ? ''
+          : round(sw.max) >= 16 ? ' — knapp unter der Schwüle-Grenze'
+          : ' — schwül wird es ab 16°'}${swSprung}</i></dd>` : ''}
       <dt>Wind</dt><dd>bis ${round(wind)} km/h, Böen bis ${round(boe)} km/h${
         windSpitze != null ? ` gegen ${String(windSpitze).padStart(2, '0')} Uhr` : ''}
         <i>${windWorte(wind)}${boe >= 60 ? ' · in Böen auf lose Gegenstände achten' : ''}</i></dd>
