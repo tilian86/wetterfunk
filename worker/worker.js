@@ -1013,12 +1013,15 @@ async function regenPruefen(env) {
      wie viele verschiedene Orte je Durchgang aufs Radar dürfen. */
   const radarSpeicher = new Map();
   let radarVorrat = RADAR_PRO_LAUF;
+  /* Der Vorposten-Blick je Ort, einmal je Durchgang — zwei Geräte am
+     selben Ort teilen sich die Beobachtung. */
+  const vorposten = new Map();
 
   /* Cloudflare erlaubt 50 ausgehende Anfragen je Durchgang. Fest verplant
      sind: eine für die Warnungen, je Gerät eine für das Modell und im
      Zweifel eine für die Meldung selbst. Was übrig bleibt, gehört dem
-     Radar — ein Vorposten kostet bis zu 2 (jetzt und der Trend +30 Min),
-     eine Gegenprobe vor dem Senden 1 bis 2, ein voller Blick 20.
+     Radar — ein Vorposten kostet 1 (jetzt) oder 2 (mit Trend +30 Min),
+     eine Gegenprobe vor dem Senden 5 bis 10, ein voller Blick 20.
 
      Vorher stand hier nur „höchstens zwei Orte". Das reichte, solange nur
      der teure Blick am Radar hing; mit dem Vorposten je Gerät wäre die
@@ -1085,21 +1088,38 @@ async function regenPruefen(env) {
           const stillJetzt = !lage.laeuft
             && (!lage.naechste || lage.naechste.start - Date.now() > 30 * 60000);
           /* Zwei Wege zum Radar: Das Modell hält Regen für möglich — oder
-             der Vorposten meldet, dass es bereits fällt. Der zweite Weg
-             wird nur beschritten, wenn der erste zu ist; sonst zahlte man
-             die Vorposten-Anfrage umsonst. */
+             der Vorposten meldet, dass es bereits fällt.
+
+             Der Vorposten schaut seit dem 4. Oktober bei JEDEM Durchgang auf
+             die eigene Zelle, nicht mehr nur, wenn das Modell schweigt.
+             Grund ist die Bilanz: Sie kann eine Ankündigung nur beurteilen,
+             wenn danach eine Beobachtung vorliegt — und genau dann, wenn
+             das Modell „Regen in 20 Minuten" oder „Niesel jetzt" sagte,
+             schaute niemand aufs Radar. 67 von 108 Ankündigungen (62 %)
+             blieben so im September unbewertet, darunter am 1. Oktober eine
+             Kette von sieben Ankündigungen zwischen 13:40 und 16:55 Uhr für
+             Regen, den das Radar erst um 21:25 Uhr sah. Ob das Fehlalarme
+             waren, lässt sich aus dem Journal nicht mehr sagen. Ein Abruf je
+             Ort und Durchgang (nicht je Gerät) schließt die Lücke; der
+             Trend-Blick (+30 Min) bleibt dem Fall vorbehalten, in dem das
+             Modell nichts sieht und sonst niemand nachschaut. */
           let radarNoetig = false, obsErfasst = false;
-          if (stillJetzt && imRadargebiet(eintrag.lat, eintrag.lon)) {
-            radarNoetig = (lage.risiko ?? 0) >= RADAR_AB_RISIKO;
-            if (!radarNoetig && radarVorrat > 0 && reichtFuer(2)) {
-              radarAusgegeben += 2;
-              const vp = await radarVorposten(eintrag.lat, eintrag.lon);
-              if (vp) {
-                merke(ortKey, 'obs', { nass: vp.nun >= RADAR_NASS,
-                                       mm: Math.round(vp.nun * 100) / 100 });
-                obsErfasst = true;
-                radarNoetig = vp.nun >= RADAR_NASS || (vp.gleich ?? 0) >= RADAR_NAHE;
-              }
+          if (imRadargebiet(eintrag.lat, eintrag.lon)) {
+            const mitTrend = stillJetzt && (lage.risiko ?? 0) < RADAR_AB_RISIKO;
+            let vp = vorposten.get(ortKey);
+            if (vp === undefined && reichtFuer(mitTrend ? 2 : 1)) {
+              radarAusgegeben += mitTrend ? 2 : 1;
+              vp = await radarVorposten(eintrag.lat, eintrag.lon, mitTrend);
+              vorposten.set(ortKey, vp);
+            }
+            if (vp) {
+              merke(ortKey, 'obs', { nass: vp.nun >= RADAR_NASS,
+                                     mm: Math.round(vp.nun * 100) / 100 });
+              obsErfasst = true;
+            }
+            if (stillJetzt) {
+              radarNoetig = (lage.risiko ?? 0) >= RADAR_AB_RISIKO
+                || (!!vp && (vp.nun >= RADAR_NASS || (vp.gleich ?? 0) >= RADAR_NAHE));
             }
           }
           if (radarNoetig) {
@@ -1760,11 +1780,13 @@ async function radarWert(lat, lon, t) {
     Schwelle RADAR_NAHE — eine Vorhersage ist unsicherer als eine Messung.
     Fällt der DWD aus, kommt null zurück und es bleibt beim Modell; ein
     stiller Ausfall darf keine Meldung erfinden. */
-async function radarVorposten(lat, lon) {
+async function radarVorposten(lat, lon, mitTrend = true) {
   const takt = Math.floor(Date.now() / 300000) * 300000;
   const nun = await radarWert(lat, lon, takt);
   if (typeof nun !== 'number') return null;
-  if (nun >= RADAR_NASS) return { nun, gleich: null };
+  /* Ohne Trend bleibt es beim einen Abruf: Das ist die reine Beobachtung
+     für das Wach-Journal, wenn das Modell ohnehin schon Regen im Blick hat. */
+  if (nun >= RADAR_NASS || !mitTrend) return { nun, gleich: null };
   const gleich = await radarWert(lat, lon, takt + 30 * 60000);
   return { nun, gleich: typeof gleich === 'number' ? gleich : null };
 }

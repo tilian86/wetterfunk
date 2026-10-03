@@ -296,8 +296,19 @@ export function meldungsBilanz(journal) {
     }
     for (const u of still) {
       b.unterdrueckt++;
-      // Wurde es kurz nach der Unterdrückung doch nass, war sie falsch
-      if (obs.some(x => x.nass && Math.abs(x.t - u.t) <= 45 * 60000)) b.unterdruecktFalsch++;
+      /* Falsch ist eine Unterdrückung erst, wenn sie etwas gekostet hat:
+         Es wurde binnen 45 Minuten nass, und bis dahin kam KEINE Meldung.
+         Vorher zählte jede nasse Beobachtung im Umkreis von 45 Minuten —
+         auch die Fälle, in denen die Gegenprobe genau richtig lag. Am
+         2. Oktober sagte das Modell um 00:10 „es regnet", das Radar war
+         trocken; um 00:30 wurde es nass, und in derselben Minute ging die
+         Meldung raus. Sechs Unterdrückungen, alle als „falsch" gezählt —
+         dabei hatte die Gegenprobe die Meldung nur auf den Moment
+         verschoben, in dem sie stimmte. So kam die alte Zählung im
+         September auf 52 % „falsch", ohne eine einzige verpasste Phase.
+         Seit dem 4. Oktober gilt die neue Zählung. */
+      const nassDanach = obs.find(x => x.nass && x.t >= u.t && x.t - u.t <= 45 * 60000);
+      if (nassDanach && !meld.some(m => m.t > u.t && m.t <= nassDanach.t)) b.unterdruecktFalsch++;
     }
   }
   return b;
