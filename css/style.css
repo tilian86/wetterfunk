@@ -3063,3 +3063,12 @@ body.ar-offen { overflow: hidden; }
 }
 .warn-ok span { display: block; margin-top: 2px; font-size: .8rem; opacity: .72; }
 .warn-en { opacity: .66; font-size: .85em; }
+
+/* Schmale iPhones (≤ 400 px): Die Schrittleiste mit „Jetzt“ und „Verlauf laden“
+   war 10 px breiter als der Bildschirm, die ganze Seite ließ sich seitlich
+   schieben. Etwas engere Abstände reichen, die Knöpfe bleiben gleich groß. */
+@media (max-width: 400px) {
+  .zeit-ctrl, .card-radar.is-full .zeit-ctrl { gap: 8px; }
+  .schritt-paar { gap: 2px; }
+  .jetzt-btn { margin-left: 2px; padding: 0 9px; }
+}
