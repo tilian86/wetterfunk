@@ -8145,7 +8145,7 @@ function openImpressum() {
     <p style="margin:0 0 14px">Angaben gemäß § 5 Digitale-Dienste-Gesetz (DDG).</p>
     <dl class="ds-facts">
       <dt>Verantwortlich</dt><dd>Florian S. Thiel</dd>
-      <dt>Anschrift</dt><dd>72070 Tübingen<br>Deutschland</dd>
+      <dt>Anschrift</dt><dd>Sonnenhalde 72<br>72829 Engstingen<br>Deutschland</dd>
       <dt>Kontakt</dt><dd><a href="mailto:florian.s.thiel@gmail.com">florian.s.thiel@gmail.com</a></dd>
     </dl>
     <p class="ds-untertitel">Haftung für Inhalte</p>
