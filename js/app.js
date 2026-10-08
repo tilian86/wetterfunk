@@ -4244,19 +4244,68 @@ function daySpans(stunden) {
      Sonne je Stunde: Das Blatt sagte „07–19 Uhr bedeckt", zwei Zeilen
      tiefer „Sonne 10 Stunden — viel", und die Leiste darüber zeigte
      Sonnen. Die Bewölkung bleibt nur Ersatz, wo der Code nichts hergibt. */
+  /* Nachts stand hier bis Oktober 2026 nur „🌙 Nacht" — Regen ja, aber
+     ob der Himmel klar ist, Wolken aufziehen oder Nebel liegt, verschwand.
+     „Nacht" ist eine Information, aber nicht die einzige: Wer um sechs
+     losfährt, will von Nebel wissen; wer Sterne sehen will, vom klaren
+     Himmel. Nachts eigene Wörter, wo das Tageswort nicht passt — „sonnig"
+     und „heiter" gibt es im Dunkeln nicht. Wolkig und bedeckt bleiben
+     gemeinsam, damit „16–24 Uhr bedeckt" eine Zeile bleibt und nicht am
+     Sonnenuntergang zerbricht. Das Zeichen richtet sich danach, ob der
+     Abschnitt überwiegend im Hellen oder im Dunkeln liegt (spanWort). */
   const HIMMEL = ['sonnig', 'heiter', 'wolkig', 'bedeckt'];
+  const NACHT  = ['klar', 'locker', 'wolkig', 'bedeckt'];
+  const NACHT_TAUGLICH = new Set(NACHT);
+  /** Himmelsstufe 0–3 (klar … bedeckt), null bei Regen und Nebel. */
+  const stufe = (s) => (s.mm >= REGEN.nichts || s.code === 45 || s.code === 48 ? null
+                      : s.code >= 0 && s.code <= 3 ? s.code
+                      : s.wolken < 25 ? 0 : s.wolken < 55 ? 1 : s.wolken < 80 ? 2 : 3);
   const art = (s) => (s.mm >= 0.5 ? 'regen' : s.mm >= REGEN.nichts ? 'tropfen'
-                    : !s.tags ? 'nacht'
                     : s.code === 45 || s.code === 48 ? 'nebel'
-                    : HIMMEL[s.code] ? HIMMEL[s.code]
-                    : s.wolken < 25 ? 'sonnig' : s.wolken < 55 ? 'heiter'
-                    : s.wolken < 80 ? 'wolkig' : 'bedeckt');
+                    : (s.tags ? HIMMEL : NACHT)[stufe(s)]);
   const spans = [];
   for (const s of stunden) {
     const a = art(s);
     const letzt = spans[spans.length - 1];
     if (letzt && letzt.art === a) { letzt.bis = s.u + 1; letzt.mm += s.mm; letzt.h.push(s); }
-    else spans.push({ art: a, von: s.u, bis: s.u + 1, mm: s.mm, h: [s] });
+    else spans.push({ art: a, von: s.u, bis: s.u + 1, mm: s.mm, h: [s], stufe: stufe(s) });
+  }
+
+  /* Nachts schwankt die Bewölkung von Stunde zu Stunde um die Schwellen.
+     Ohne Glättung stand für den 11.10.2026 „00–01 klar, 01–02 wolkig,
+     02–03 bedeckt, 03–04 wolkig, 04–05 leicht bewölkt …" — sechzehn
+     Zeilen für einen Tag. Eine einzelne Nachtstunde geht deshalb im
+     Nachbarn auf, wenn der höchstens eine Stufe entfernt ist und nachts
+     gelten kann (nicht „sonnig"). Größere Sprünge bleiben stehen —
+     bedeckt → klar ist ein echtes Aufklaren —, Regen und Nebel ebenso:
+     Die zählen immer, auch für eine Stunde. Am Tag bleibt alles, wie es
+     ist; der Sonnenschein als Maß schwankt dort kaum.
+
+     Zwei Durchgänge: Zuerst verschwinden Stunden, die zwischen zwei
+     gleichen Nachbarn eingeklemmt sind („klar, leicht bewölkt, klar"),
+     erst dann der Rest. In einem Durchgang schluckte sonst die erste
+     Stunde ihren Nachbarn, und aus zweimal klar wurde „leicht bewölkt". */
+  for (const nurEingeklemmt of [true, false]) for (let k = 0; k < spans.length; k++) {
+    const sp = spans[k];
+    if (sp.bis - sp.von !== 1 || sp.h[0].tags || sp.stufe == null) continue;
+    const vor = spans[k - 1], nach = spans[k + 1];
+    if (nurEingeklemmt && !(vor && nach && vor.art === nach.art)) continue;
+    const ziel = [vor, nach]
+      .filter(n => n && NACHT_TAUGLICH.has(n.art) && Math.abs(n.stufe - sp.stufe) <= 1)
+      .sort((a, b) => Math.abs(a.stufe - sp.stufe) - Math.abs(b.stufe - sp.stufe)
+                   || (b.bis - b.von) - (a.bis - a.von))[0];
+    if (!ziel) continue;
+    ziel.von = Math.min(ziel.von, sp.von);
+    ziel.bis = Math.max(ziel.bis, sp.bis);
+    ziel.mm += sp.mm;
+    ziel.h = ziel === vor ? [...ziel.h, ...sp.h] : [...sp.h, ...ziel.h];
+    spans.splice(k, 1);
+    // Sind dadurch zwei gleiche Abschnitte Nachbarn geworden, werden sie einer
+    const a = spans[k - 1], b = spans[k];
+    if (a && b && a.art === b.art) {
+      a.bis = b.bis; a.mm += b.mm; a.h.push(...b.h); spans.splice(k, 1);
+    }
+    k = Math.max(-1, k - 2);
   }
 
   const groesste = (liste) => (liste.length ? Math.max(...liste) : null);
@@ -4272,7 +4321,18 @@ function daySpans(stunden) {
 
 const SPAN_WORT = { sonnig: '☀️ sonnig', heiter: '🌤 heiter', wolkig: '⛅ wolkig',
                     bedeckt: '☁️ bedeckt', nebel: '🌫 Nebel', regen: '🌧 Regen',
-                    tropfen: '🌦 ein paar Tropfen', nacht: '🌙 Nacht' };
+                    tropfen: '🌦 ein paar Tropfen',
+                    klar: '🌙 klar', locker: '🌙 leicht bewölkt' };
+
+/** Wort mit Zeichen für einen Abschnitt. Liegt er überwiegend im Dunkeln,
+    verliert das Zeichen die Sonne: ⛅ und 🌦 zeigen sie, nachts wäre das
+    falsch. */
+function spanWort(sp) {
+  const dunkel = sp.h.filter(x => !x.tags).length * 2 > sp.h.length;
+  if (dunkel && sp.art === 'wolkig') return '☁️ wolkig';
+  if (dunkel && sp.art === 'tropfen') return '💧 ein paar Tropfen';
+  return SPAN_WORT[sp.art];
+}
 
 /** Was 11 km/h bedeuten, weiß kaum jemand — die Beaufort-Skala in Worten. */
 function windWorte(kmh) {
@@ -4442,7 +4502,7 @@ function openDaySheet(i) {
   if (!dayISO) return;
   offenerTag = dayISO;
   const stunden = dayHours(dayISO);
-  const spans = daySpans(stunden).filter(s => s.art !== 'nacht' || s.bis - s.von >= 3);
+  const spans = daySpans(stunden);
   const sun = Math.round(sonnenStunden(dayISO));
   const mm = d.precipitation_sum[i] ?? 0;
   const warm = stunden.reduce((a, b) => (b.temp > a.temp ? b : a), stunden[0] || { u: 12, temp: 0 });
@@ -4497,7 +4557,7 @@ function openDaySheet(i) {
           <span class="ds-kopf">
             <b>${String(s.von).padStart(2, '0')}–${String(s.bis).padStart(2, '0')} Uhr${
               laeuft ? '<em>jetzt</em>' : ''}</b>
-            <span class="ds-wort">${SPAN_WORT[s.art]}</span>
+            <span class="ds-wort">${spanWort(s)}</span>
           </span>
           ${zahlen.length ? `<span class="ds-zahlen">${
             zahlen.map(z => `<i>${z}</i>`).join('')}</span>` : ''}
