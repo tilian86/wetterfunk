@@ -331,6 +331,11 @@ const LS = {
 
 // ══ State ══════════════════════════════════════════════════
 let place = null;           // {name, lat, lon, region, county}
+/* In der iPhone-App „Wetterfunk“ (wetterfunk-ios) gibt es window.wfNativ:
+   Die App übernimmt dann die Regenwarnung (lokal, für den Ort, an dem das
+   Telefon gerade ist) und bekommt Ort + Ortskorrektur fürs Widget. Im
+   Browser bleibt NATIV null und alles wie bisher. */
+const NATIV = window.wfNativ || null;
 let data = null;            // Forecast-Antwort
 let air = null;             // Luftqualität + Pollen
 let modelData = null;       // Modellvergleich
@@ -7701,6 +7706,12 @@ async function refresh(leise = false) {
       `Quelle: ${quellenName()}` +
       (veraltet ? ' · aus dem Zwischenspeicher' : umweg ? ' · über den Umweg geholt' : '');
     setzeStand(standZeitpunkt);
+    if (NATIV && place?.lat != null) {
+      // Widget und Regenwache der App rechnen mit demselben Ort und derselben Ortskorrektur
+      NATIV.stand({ place: { name: place.name, lat: place.lat, lon: place.lon },
+                    versatz: ortsVersatz?.bloecke || null, quelle: effektiveQuelle() });
+      $('#footStamp').textContent += ` · iPhone-App ${NATIV.version}`;
+    }
     tagesblattAuffrischen();     // erst jetzt — das Blatt zeigt den Stand mit an
     if (!leise || veraltet) {
       toast(veraltet ? 'Der Wetterdienst antwortet gerade nicht — angezeigt werden die zuletzt geholten Daten.'
@@ -8792,7 +8803,7 @@ const geraeteZone = () => {
   catch { return 'Europe/Berlin'; }
 };
 
-const alsAppInstalliert = () => window.matchMedia('(display-mode: standalone)').matches
+const alsAppInstalliert = () => !!NATIV || window.matchMedia('(display-mode: standalone)').matches
   || window.navigator.standalone === true;
 
 function urlB64ToUint8(b64) {
@@ -8807,9 +8818,57 @@ async function aktuellesAbo() {
   return reg ? reg.pushManager.getSubscription() : null;
 }
 
+/* ── Regenwache der iPhone-App ──────────────────────────────
+   Gleiche Karte, aber nur „Regen“ und „Nachtruhe“: Die App warnt per
+   lokaler Mitteilung für den Ort, an dem das Telefon gerade ist — auch
+   bei geschlossener App. Warnungen und Sonne/Mond gibt es nur per Web Push. */
+let nativKarteVorbereitet = false;
+function nativKarteVorbereiten(karte) {
+  if (nativKarteVorbereitet) return;
+  nativKarteVorbereitet = true;
+  PUSH_ARTEN.forEach(([name, , sel]) => {
+    const zeile = $(sel)?.closest('.pa-zeile');
+    if (zeile && name !== 'regen') zeile.style.display = 'none';   // .pa-zeile hat display:flex, hidden wirkt nicht
+  });
+  karte.querySelectorAll('.pa-gruppe').forEach(g => {
+    const liste = g.nextElementSibling;
+    if (liste && !liste.querySelector('#artNachtruhe')) { g.style.display = 'none'; liste.style.display = 'none'; }
+  });
+  const regen = $('#artRegen');
+  if (regen) {
+    regen.checked = true; regen.disabled = true;
+    const i = regen.closest('.pa-zeile')?.querySelector('i');
+    if (i) i.textContent = 'Für den Ort, an dem dein iPhone gerade ist — auch wenn die App zu ist. '
+      + 'Mit Beginn, Ende und Menge; regnet es schon, kommt die Meldung, wann es aufhört.';
+  }
+  const nr = $('#artNachtruhe')?.closest('.pa-zeile')?.querySelector('i');
+  if (nr) nr.textContent = 'Eingeschaltet meldet die App zwischen 23 und 6 Uhr nichts. '
+    + 'Wenn dein Telefon nachts ohnehin stumm ist, brauchst du das hier nicht.';
+  const desc = $('#pushDesc');
+  if (desc) desc.textContent = 'Die iPhone-App meldet dir:';
+}
+
+async function renderPushNativ(karte) {
+  nativKarteVorbereiten(karte);
+  karte.hidden = false;
+  let w = null;
+  try { w = await NATIV.wache.lesen(); } catch (e) { console.warn('Regenwache:', e); }
+  const an = !!w?.an;
+  const nrEl = $('#artNachtruhe');
+  if (nrEl) nrEl.checked = w ? !!w.nachtruhe : nachtruheAn();
+  $('#pushState').textContent = an ? (w.ort ? `Regen · ${w.ort}` : 'Regen') : 'aus';
+  $('#pushToggle').textContent = an ? 'Ausschalten' : 'Einschalten';
+  $('#pushToggle').classList.toggle('on', an);
+  $('#pushToggle').disabled = !w;
+  $('#pushTest').hidden = !an;
+  karte.classList.toggle('is-on', an);
+  $('#pushHint').textContent = w?.hinweis || (w ? '' : 'Die App antwortet gerade nicht.');
+}
+
 async function renderPush() {
   const karte = $('#pushCard');
   if (!karte) return;
+  if (NATIV) return renderPushNativ(karte);
 
   if (!pushMoeglich()) {
     karte.hidden = true;
@@ -8866,6 +8925,21 @@ async function renderPush() {
 async function pushUmschalten() {
   const knopf = $('#pushToggle');
   knopf.disabled = true;
+  if (NATIV) {
+    try {
+      const w = await NATIV.wache.lesen();
+      const neu = await NATIV.wache.setzen({ an: !w.an, nachtruhe: nachtruheAn() });
+      toast(!neu.an ? 'Regenwarnungen ausgeschaltet.'
+        : neu.mitteilungen === 'verboten' ? 'Mitteilungen sind gesperrt — siehe Hinweis.'
+        : 'Regenwarnungen eingeschaltet.', 3000);
+    } catch (e) {
+      toast(`Hat nicht geklappt: ${e.message}`.slice(0, 120), 5000);
+    } finally {
+      knopf.disabled = false;
+      renderPush();
+    }
+    return;
+  }
   try {
     const reg = await navigator.serviceWorker.ready;
     const vorhanden = await reg.pushManager.getSubscription();
@@ -8915,6 +8989,11 @@ async function pushUmschalten() {
 }
 
 async function pushProbe() {
+  if (NATIV) {
+    try { toast((await NATIV.wache.probe())?.text || 'Probemeldung unterwegs.', 4500); }
+    catch (e) { toast(`Probemeldung fehlgeschlagen: ${e.message}`.slice(0, 120), 4000); }
+    return;
+  }
   const abo = await aktuellesAbo();
   if (!abo) return;
   try {
@@ -9290,6 +9369,12 @@ function wire() {
   });
   $('#artNachtruhe')?.addEventListener('change', (e) => {
     store.set('wf.nachtruhe', e.target.checked);
+    if (NATIV) {
+      NATIV.wache.setzen({ nachtruhe: e.target.checked }).catch(() => {}).finally(renderPush);
+      toast(e.target.checked ? 'Zwischen 23 und 6 Uhr meldet die App nichts.'
+                             : 'Meldungen kommen wieder rund um die Uhr.', 3000);
+      return;
+    }
     renderPush();      // meldet den Stand beim Worker nach
     toast(e.target.checked
       ? 'Zwischen 23 und 6 Uhr kommt nur noch Unwetter.'
@@ -9351,6 +9436,7 @@ function wire() {
   renderInstall();
   $('#pushTest')?.addEventListener('click', pushProbe);
   renderPush();
+  NATIV?.an('wache', () => renderPush());   // App meldet: Erlaubnis oder Wache geändert
   $('#refreshBtn').addEventListener('click', refresh);
 
   // Datenquelle
