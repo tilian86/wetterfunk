@@ -244,22 +244,37 @@ export async function pruefeOrt(lat, lon, tag) {
    Radar-Beobachtungen am Ort (nur Übergänge nass/trocken), gesendete
    Regenmeldungen, unterdrückte Meldungen. Hieraus entsteht die Bilanz.
 
-   Ehrlichkeit über die Grenzen: Beobachtet wird nur, wenn der Wächter aufs
-   Radar schaut — bei angekündigtem Regen ohne fällige Meldung entstehen
-   Lücken. Eine Phase ohne Gegenstimme wird nach einer Stunde geschlossen.
-   Die Bilanz ist damit eine Untergrenze der Wahrheit, kein Ersatz für sie. */
-export function meldungsBilanz(journal) {
+   Ehrlichkeit über die Grenzen: Bis zum 4. Oktober wurde nur beobachtet,
+   wenn der Wächter ohnehin aufs Radar schaute — bei angekündigtem Regen
+   ohne fällige Meldung entstanden Lücken. Seitdem schaut der Vorposten in
+   jedem Durchgang, und das Journal kennt den Zustand lückenlos (außer der
+   DWD schweigt oder das Anfragebudget ist erschöpft). Außerhalb des
+   Radargebiets gibt es keine Beobachtung, dort bleibt alles unbewertet.
+   Eine Phase ohne Gegenstimme wird nach einer Stunde geschlossen. */
+export function meldungsBilanz(journal, folge = null, bis = null) {
+  /* `folge` ist das Journal des nächsten Tages, `bis` der Zeitpunkt, bis zu
+     dem es fortgeschrieben ist. Eine Ankündigung um 23:36 Uhr hat ihren
+     Regen erst nach Mitternacht — im eigenen Journal stand danach nichts,
+     sie blieb „unbewertet" (so am 9. Oktober). Aus dem Folgetag kommen nur
+     die Beobachtungen: Phasen und Meldungen gehören dem Tag, an dem sie
+     stattfanden. */
   const je = new Map();
-  for (const e of journal?.eintraege || []) {
-    if (!je.has(e.o)) je.set(e.o, []);
-    je.get(e.o).push(e);
-  }
+  const fach = (o) => {
+    if (!je.has(o)) je.set(o, { evs: [], spaeter: [] });
+    return je.get(o);
+  };
+  for (const e of journal?.eintraege || []) fach(e.o).evs.push(e);
+  for (const e of folge?.eintraege || []) if (e.art === 'obs') fach(e.o).spaeter.push(e);
+  const ende = bis ?? Math.max(0, ...(journal?.eintraege || []).map(e => e.t),
+                                  ...(folge?.eintraege || []).map(e => e.t));
+
   const b = { phasen: 0, gemeldet: 0, verpasst: 0, leise: 0, ankuendigungen: 0,
-              treffer: 0, fehlalarm: 0, unbewertet: 0,
+              treffer: 0, fehlalarm: 0, unbewertet: 0, waehrendRegen: 0, ketten: 0,
               unterdrueckt: 0, unterdruecktFalsch: 0 };
-  for (const evs of je.values()) {
+  for (const { evs, spaeter } of je.values()) {
     evs.sort((a, x) => a.t - x.t);
     const obs = evs.filter(e => e.art === 'obs');
+    const obsAlle = [...obs, ...spaeter.sort((a, x) => a.t - x.t)];
     const meld = evs.filter(e => e.art === 'meldung');
     const still = evs.filter(e => e.art === 'unterdrueckt');
 
@@ -288,12 +303,59 @@ export function meldungsBilanz(journal) {
       if (mengen.length && Math.max(...mengen) < 0.6) b.leise++;
       else b.verpasst++;
     }
-    for (const m of meld.filter(x => x.typ === 'start')) {
+
+    /* Ankündigungen nach dem ZUSTAND bewerten, nicht nur nach Übergängen.
+       Seit dem 4. Oktober schaut der Vorposten bei jedem Durchgang aufs
+       Radar und schreibt jeden Wechsel nass/trocken mit — wer den letzten
+       Eintrag vor einem Zeitpunkt kennt, kennt den Zustand. Vorher wurde
+       nur nach einer nassen Beobachtung NACH der Meldung gesucht. Am
+       9. Oktober regnete es von 14:30 bis 18:25 Uhr durchgehend; die
+       Ankündigung um 16:41 Uhr fand danach nur noch „trocken" (18:36) und
+       galt als Fehlalarm. Dabei war sie das Gegenteil: eine Ankündigung
+       mitten im Regen. Solche zählen jetzt eigens (waehrendRegen). Und wer
+       drei Stunden lang trockenen Zustand kennt, kann auch einen echten
+       Fehlalarm erkennen, statt die Meldung als „unbewertet" abzulegen. */
+    const zustand = (t) => {
+      let z;
+      for (const x of obsAlle) { if (x.t > t) break; z = x.nass; }
+      return z;
+    };
+    const fenster = 3 * 36e5;
+    const starts = meld.filter(x => x.typ === 'start');
+    const imRegen = new Set();
+    for (const m of starts) {
       b.ankuendigungen++;
-      const danach = obs.filter(x => x.t >= m.t && x.t <= m.t + 3 * 36e5);
-      if (!danach.length) { b.unbewertet++; continue; }
-      danach.some(x => x.nass) ? b.treffer++ : b.fehlalarm++;
+      if (!obsAlle.length) { b.unbewertet++; continue; }
+      const jetzt = zustand(m.t);
+      // Zehn Minuten Vorlauf: „Gleich Regen" im Durchgang, in dem es nass wird, ist richtig
+      if (jetzt === true && zustand(m.t - 10 * 60000) === true) {
+        b.waehrendRegen++; imRegen.add(m); continue;
+      }
+      const nass = jetzt === true
+        || obsAlle.some(x => x.nass && x.t > m.t && x.t <= m.t + fenster);
+      if (nass) b.treffer++;
+      else if (jetzt === false && m.t + fenster <= ende) b.fehlalarm++;
+      else b.unbewertet++;
     }
+
+    /* Ketten: Gedacht sind zwei Meldungen je Phase — Ankündigung und
+       Erinnerung. Verschiebt das Modell den Beginn, kommt beides neu; am
+       8. Oktober waren es vier für einen Schauer (07:46, 08:36, 09:02,
+       09:26 — nass um 09:40). Gezählt wird je Phase einmal, nicht je
+       Gerät: Jede Ankündigung gehört zur nächsten Phase, die nach ihr
+       beginnt, und Meldungen desselben Durchgangs (beide Geräte) zählen
+       als eine. Drei und mehr ist eine Kette. */
+    for (const ph of phasen) {
+      const laeufe = [];
+      for (const m of starts) {
+        // Bis zwei Minuten nach Beginn: Beobachtung und Meldung fallen in denselben Durchgang
+        if (imRegen.has(m) || m.t > ph.von + 2 * 60000 || m.t < ph.von - 150 * 60000) continue;
+        if (phasen.some(q => q.von > m.t && q.von < ph.von)) continue;
+        if (!laeufe.some(t => Math.abs(t - m.t) < 2 * 60000)) laeufe.push(m.t);
+      }
+      if (laeufe.length >= 3) b.ketten++;
+    }
+
     for (const u of still) {
       b.unterdrueckt++;
       /* Falsch ist eine Unterdrückung erst, wenn sie etwas gekostet hat:
@@ -307,7 +369,7 @@ export function meldungsBilanz(journal) {
          verschoben, in dem sie stimmte. So kam die alte Zählung im
          September auf 52 % „falsch", ohne eine einzige verpasste Phase.
          Seit dem 4. Oktober gilt die neue Zählung. */
-      const nassDanach = obs.find(x => x.nass && x.t >= u.t && x.t - u.t <= 45 * 60000);
+      const nassDanach = obsAlle.find(x => x.nass && x.t >= u.t && x.t - u.t <= 45 * 60000);
       if (nassDanach && !meld.some(m => m.t > u.t && m.t <= nassDanach.t)) b.unterdruecktFalsch++;
     }
   }
@@ -359,7 +421,9 @@ export async function taeglichePruefung(env) {
   let meldungen = vorhanden?.meldungen ?? null;
   if (!meldungen) {
     const journal = await env.WF_PUSH.get(`wach:${tag}`, 'json');
-    meldungen = journal ? meldungsBilanz(journal) : null;
+    // Der Folgetag ist heute — sein Journal läuft seit Mitternacht mit
+    const folge = await env.WF_PUSH.get(`wach:${iso(Date.parse(tag) + TAG)}`, 'json');
+    meldungen = journal ? meldungsBilanz(journal, folge, folge ? Date.now() : null) : null;
   }
   if (!ergebnisse.length && !meldungen) return;
 
@@ -410,7 +474,8 @@ export async function pruefVerlauf(env, tage = 30) {
                verpasst: summe('verpasst'), leise: summe('leise'),
                ankuendigungen: summe('ankuendigungen'),
                treffer: summe('treffer'), fehlalarm: summe('fehlalarm'),
-               unbewertet: summe('unbewertet'), unterdrueckt: summe('unterdrueckt'),
+               unbewertet: summe('unbewertet'), waehrendRegen: summe('waehrendRegen'),
+               ketten: summe('ketten'), unterdrueckt: summe('unterdrueckt'),
                unterdruecktFalsch: summe('unterdruecktFalsch') };
     })()
   };

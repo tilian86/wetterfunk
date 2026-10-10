@@ -1120,6 +1120,17 @@ async function regenPruefen(env) {
             if (stillJetzt) {
               radarNoetig = (lage.risiko ?? 0) >= RADAR_AB_RISIKO
                 || (!!vp && (vp.nun >= RADAR_NASS || (vp.gleich ?? 0) >= RADAR_NAHE));
+            } else if (!lage.laeuft && vp && vp.nun >= RADAR_NASS) {
+              /* Das Modell sagt „gleich Regen", das Radar misst ihn schon.
+                 Bisher blieb hier das Modell allein am Zug — die Gegenprobe
+                 fragt bei einer Ankündigung nur, ob es zum Beginn nass ist,
+                 und das war es ja. So ging am 8. Oktober um 12:11 Uhr
+                 „Regen in … Min." hinaus, während das Radar 4 mm/h maß, und
+                 am 9. Oktober um 16:41 Uhr dasselbe mitten in zwei Stunden
+                 Dauerregen. Jetzt übernimmt das Radar die Lage: Es regnet,
+                 also kommt „Regen bis etwa …" oder „hält an" — oder bei
+                 Tropfen gar nichts. */
+              radarNoetig = true;
             }
           }
           if (radarNoetig) {
@@ -1138,6 +1149,13 @@ async function regenPruefen(env) {
                  keine eigene hat — sie liefert das „ab 16:30 wieder" am Ende
                  der Meldung, und so weit voraus sieht das Radar nicht. */
               lage.naechste = rl.naechste || lage.naechste;
+              /* Eine Modell-Phase, die mitten im gemessenen Regen beginnt,
+                 ist dieselbe Phase — „Regen bis 16:50 · ab 16:45 wieder"
+                 wäre Unsinn. Nur was nach dem Ende kommt, bleibt stehen. */
+              if (lage.laeuft && lage.naechste
+                  && (lage.laeuft.offen || lage.naechste.start <= lage.laeuft.ende)) {
+                lage.naechste = null;
+              }
               lage.quelle = 'radar';
             }
           }
