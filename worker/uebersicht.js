@@ -164,7 +164,7 @@ export async function uebersicht(url, request, env, { gleich, zuVieleAnfragen, s
 const SEITE = `<!doctype html>
 <html lang="de"><head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
 <meta name="robots" content="noindex, nofollow">
 <title>Wetterfunk — angemeldete Geräte</title>
 <style>
