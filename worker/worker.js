@@ -20,11 +20,13 @@
      wrangler secret put BRIDGE_URL      # https://…ts.net
      wrangler secret put BRIDGE_SECRET   # gleiches Geheimnis wie in der Bridge
      wrangler secret put VAPID_PRIVATE   # privater Schlüssel für Web Push
+     wrangler secret put APNS_KEY        # Apple-Push für die iPhone-App (.p8-Inhalt)
+     wrangler secret put APNS_KEY_ID     # zehn Zeichen aus dem Dateinamen AuthKey_….p8
      wrangler secret put XAI_API_KEY     # für die KI-Stimme (xAI/Grok)
      wrangler secret put TTS_PASSWORT    # schützt die Stimme vor fremder Nutzung
 */
 
-import { sendPush } from './push.js';
+import { sendPush, apnsBereit } from './push.js';
 import { sonnenTermine, mondTermine, mondPhase } from './himmel.js';
 import { uebersicht } from './uebersicht.js';
 import { taeglichePruefung, pruefVerlauf, pruefeOrt } from './pruefung.js';
@@ -705,8 +707,19 @@ export default {
     if (url.pathname === '/push/an' && request.method === 'POST') {
       let req;
       try { req = await request.json(); } catch { return json({ error: 'Ungültige Anfrage' }, 400, origin); }
-      const { abo, lat, lon, ort, kreis, arten, tz, geraet, nachtruhe } = req || {};
-      if (!abo?.endpoint || !abo?.keys?.p256dh || !abo?.keys?.auth) {
+      const { lat, lon, ort, kreis, arten, tz, geraet, nachtruhe } = req || {};
+      let abo = req?.abo;
+      /* Die eigene iPhone-App meldet sich mit dem Gerätetoken von Apple an
+         statt mit einem Web-Push-Abo. Die Adresse baut der Worker selbst:
+         Angefragt wird nur Apple, nie ein Server aus der Anfrage. */
+      if (abo?.apns) {
+        const token = String(abo.apns).toLowerCase();
+        if (!/^[0-9a-f]{64,200}$/.test(token) || !APNS_THEMEN.includes(abo.thema)) {
+          return json({ error: 'Unvollständiges Abo' }, 400, origin);
+        }
+        abo = { endpoint: `apns:${token}`, apns: token, thema: abo.thema,
+                umgebung: abo.umgebung === 'production' ? 'production' : 'development' };
+      } else if (!abo?.endpoint || !abo?.keys?.p256dh || !abo?.keys?.auth) {
         return json({ error: 'Unvollständiges Abo' }, 400, origin);
       }
       if (typeof lat !== 'number' || typeof lon !== 'number') {
@@ -715,7 +728,7 @@ export default {
       /* Nur die echten Push-Dienste der Hersteller. Ohne diese Prüfung könnte
          jemand eine beliebige Adresse eintragen und den Worker Anfragen an
          fremde Server schicken lassen. */
-      if (!istPushDienst(abo.endpoint)) {
+      if (!abo.apns && !istPushDienst(abo.endpoint)) {
         return json({ error: 'Unbekannter Push-Dienst' }, 400, origin);
       }
       if (await zuVieleAnfragen(env, request, 'push', 20, 3600)) {
@@ -801,7 +814,10 @@ export default {
            genau die Auflistungen sollen ja weg. */
         if (!alt) await aboIndexVerwerfen(env);
       }
-      return json({ ok: true, geschrieben: !unveraendert || stempelFaellig }, 200, origin);
+      /* Die App muss wissen, ob der Server wirklich zustellen kann. Solange
+         der Apple-Schlüssel fehlt, meldet ihre eigene Wache weiter selbst. */
+      return json({ ok: true, geschrieben: !unveraendert || stempelFaellig,
+                    ...(abo.apns ? { apns: apnsBereit(env) } : {}) }, 200, origin);
     }
 
     if (url.pathname === '/push/aus' && request.method === 'POST') {
@@ -1063,6 +1079,8 @@ async function regenPruefen(env) {
   for (const eintragMeta of liste.keys) {
     const eintrag = await env.WF_PUSH.get(eintragMeta.name, 'json');
     if (!eintrag) continue;
+    // App-Abo ohne Apple-Schlüssel: zustellen ginge nicht, also gar nicht erst rechnen
+    if (eintrag.abo?.apns && !apnsBereit(env)) continue;
     const arten = eintrag.arten || { regen: true, warnungen: true };
 
     try {
@@ -1919,6 +1937,9 @@ async function zuVieleAnfragen(env, request, bereich, grenze, fensterSek) {
     return false;        // Zähler kaputt? Dann lieber durchlassen als sperren
   }
 }
+
+/** Bundle-IDs der eigenen Apps, die Apple-Push bekommen dürfen. */
+const APNS_THEMEN = ['de.florianthiel.wetterfunk'];
 
 /** Nur die echten Push-Dienste der Hersteller. */
 function istPushDienst(endpoint) {

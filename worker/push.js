@@ -1,4 +1,5 @@
-/* Web Push nach RFC 8291 (Verschlüsselung) und RFC 8292 (VAPID).
+/* Web Push nach RFC 8291 (Verschlüsselung) und RFC 8292 (VAPID),
+   dazu Apple-Push (APNs) für die eigene iPhone-App.
    Ohne fremde Pakete — Cloudflare Workers bringen die nötige Krypto mit.
    Der Ablauf ist starr vorgegeben, deshalb sind die Schritte nummeriert. */
 
@@ -88,8 +89,87 @@ async function verschluesseln(nutzlast, p256dhB64, authB64) {
   return verketten(salt, rs, new Uint8Array([eigenerPub.length]), eigenerPub, chiffre);
 }
 
+/** ── 3. Apple-Push (APNs) für die eigene iPhone-App ──
+   Die App meldet sich mit ihrem Gerätetoken statt mit einem Web-Push-Abo an.
+   Absender ist ein Schlüssel aus dem Apple-Entwicklerkonto (.p8). Er liegt
+   als Geheimnis APNS_KEY im Worker, nie im Code. Er gilt für das ganze Team,
+   also für jede eigene App: Welche gemeint ist, sagt das Thema (Bundle-ID). */
+const APNS_HOST = { development: 'api.sandbox.push.apple.com', production: 'api.push.apple.com' };
+
+export const apnsBereit = (env) => !!(env.APNS_KEY && env.APNS_KEY_ID && env.APNS_TEAM_ID);
+
+let apnsToken = null;
+
+/* Apple nimmt ein Token bis zu einer Stunde, verbietet aber, es öfter als
+   alle 20 Minuten zu erneuern. Jede Worker-Instanz baute sonst ihr eigenes —
+   deshalb liegt es zusätzlich in KV, geschrieben nur, wenn wirklich eine
+   Meldung hinausgeht. */
+async function apnsJwt(env) {
+  const jetzt = Math.floor(Date.now() / 1000);
+  const frisch = (t) => t?.jwt && jetzt - t.seit < 45 * 60;
+  if (frisch(apnsToken)) return apnsToken.jwt;
+  const gemerkt = await env.WF_PUSH.get('apns:jwt', 'json');
+  if (frisch(gemerkt)) { apnsToken = gemerkt; return gemerkt.jwt; }
+
+  const pem = env.APNS_KEY.replace(/-----[^-]+-----/g, '').replace(/\s+/g, '');
+  const key = await crypto.subtle.importKey('pkcs8', Uint8Array.from(atob(pem), c => c.charCodeAt(0)),
+    { name: 'ECDSA', namedCurve: 'P-256' }, false, ['sign']);
+  const kopf = b64uEncode(text(JSON.stringify({ alg: 'ES256', kid: env.APNS_KEY_ID })));
+  const nutz = b64uEncode(text(JSON.stringify({ iss: env.APNS_TEAM_ID, iat: jetzt })));
+  const sig = await crypto.subtle.sign({ name: 'ECDSA', hash: 'SHA-256' }, key, text(`${kopf}.${nutz}`));
+  apnsToken = { jwt: `${kopf}.${nutz}.${b64uEncode(sig)}`, seit: jetzt };
+  await env.WF_PUSH.put('apns:jwt', JSON.stringify(apnsToken), { expirationTtl: 50 * 60 });
+  return apnsToken.jwt;
+}
+
+async function sendApns(abo, nutzlast, env) {
+  // Ohne Schlüssel kein Versand — die Wache in der App meldet dann selbst.
+  if (!apnsBereit(env)) return 503;
+  const d = JSON.parse(nutzlast);
+  const art = d.art || 'regen';
+  const koerper = JSON.stringify({
+    aps: {
+      alert: { title: d.titel || 'Wetterfunk', body: d.text || '' },
+      sound: 'default',
+      // Gruppiert die Meldungen in der Mitteilungszentrale wie die App selbst
+      'thread-id': art === 'warnung' ? 'warnung' : ['himmel', 'abend'].includes(art) ? 'himmel' : 'regen'
+    },
+    art
+  });
+  const schicken = async (umgebung) => fetch(`https://${APNS_HOST[umgebung]}/3/device/${abo.apns}`, {
+    method: 'POST',
+    headers: {
+      'authorization': `bearer ${await apnsJwt(env)}`,
+      'apns-topic': abo.thema,
+      'apns-push-type': 'alert',
+      'apns-priority': '10',
+      // Nach einer halben Stunde ist eine Regenmeldung wertlos — wie beim Web-Push
+      'apns-expiration': String(Math.floor(Date.now() / 1000) + 1800),
+      // Gleiche Kennung ersetzt die vorige Meldung, wie „tag" im Browser
+      ...(d.tag ? { 'apns-collapse-id': String(d.tag).slice(0, 64) } : {})
+    },
+    body: koerper
+  });
+
+  const umgebung = abo.umgebung === 'production' ? 'production' : 'development';
+  let res = await schicken(umgebung);
+  if (res.status === 400 && (await res.json().catch(() => ({}))).reason === 'BadDeviceToken') {
+    /* Token aus der anderen Umgebung: Entwickler- und App-Store-Signatur
+       haben getrennte Push-Server. Einmal drüben versuchen; klappt es, merkt
+       sich das Abo die Umgebung (wird mit dem Eintrag gespeichert). */
+    const andere = umgebung === 'production' ? 'development' : 'production';
+    res = await schicken(andere);
+    if (res.status < 300) abo.umgebung = andere;
+    else if (res.status === 400) return 410;
+  }
+  // Abgelehntes Token (abgelaufen, falscher Schlüssel): beim nächsten Mal neu bauen
+  if (res.status === 403) { apnsToken = null; await env.WF_PUSH.delete('apns:jwt'); }
+  return res.status;
+}
+
 /** Eine Nachricht zustellen. Gibt den HTTP-Status des Push-Dienstes zurück. */
 export async function sendPush(abo, nutzlast, env) {
+  if (abo.apns) return sendApns(abo, nutzlast, env);
   const koerper = await verschluesseln(nutzlast, abo.keys.p256dh, abo.keys.auth);
   const auth = await vapidHeader(abo.endpoint, env.VAPID_PRIVATE, env.VAPID_PUBLIC, env.VAPID_SUBJECT);
 

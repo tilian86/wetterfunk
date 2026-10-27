@@ -21,7 +21,8 @@ const PUSH_DIENSTE = {
   'web.push.apple.com': 'Apple — iPhone, iPad oder Mac (Safari)',
   'fcm.googleapis.com': 'Google — Chrome oder Edge, gleich auf welchem Gerät',
   'android.googleapis.com': 'Google — Chrome oder Edge',
-  'updates.push.services.mozilla.com': 'Mozilla — Firefox'
+  'updates.push.services.mozilla.com': 'Mozilla — Firefox',
+  'apns': 'Apple — Wetterfunk-App (iPhone)'
 };
 
 const KOPF = {
@@ -136,7 +137,7 @@ export async function uebersicht(url, request, env, { gleich, zuVieleAnfragen, s
   for (const k of await aboEintraege(env)) {
     const e = await env.WF_PUSH.get(k.name, 'json');
     if (!e) continue;
-    const host = (e.abo?.endpoint || '').split('/')[2] || '';
+    const host = e.abo?.apns ? 'apns' : (e.abo?.endpoint || '').split('/')[2] || '';
     geraete.push({
       key: k.name,
       notiz: e.geraet || '',
