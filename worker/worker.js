@@ -31,6 +31,9 @@ import { sonnenTermine, mondTermine, mondPhase } from './himmel.js';
 import { uebersicht } from './uebersicht.js';
 import { taeglichePruefung, pruefVerlauf, pruefeOrt } from './pruefung.js';
 
+// Wann diese Instanz das Radar zuletzt vorgewärmt hat (siehe /dwdbild)
+let radarWarmZuletzt = 0;
+
 // Nur diese Absender dürfen den Worker nutzen.
 const ALLOWED_ORIGINS = [
   'https://tilian86.github.io',
@@ -280,11 +283,12 @@ export default {
 
       /* Nutzungsmarke für den Cron: Solange die App in den letzten zwei
          Stunden Radarbilder wollte, wärmt er auch die Vorhersageschritte
-         vor. Geschrieben wird höchstens alle 20 Minuten — das KV-Kontingent
+         vor. Geschrieben wird höchstens einmal je Stunde — das KV-Kontingent
          (1000 Schreibvorgänge/Tag frei) bleibt praktisch unberührt. */
       ctx.waitUntil((async () => {
         const marke = +(await env.WF_PUSH.get('radar:aktiv') || 0);
-        if (Date.now() - marke > 20 * 60000) {
+        // Stündlich genügt: Der Cron fragt nur, ob es in den letzten zwei Stunden war
+        if (Date.now() - marke > 60 * 60000) {
           await env.WF_PUSH.put('radar:aktiv', String(Date.now()));
         }
         /* Nach einer Pause hat der Cron nichts vorgewärmt — die Zeitleiste
@@ -293,10 +297,24 @@ export default {
            anstoßen, statt bis zu fünf Minuten auf den nächsten Cron zu
            warten. Höchstens alle vier Minuten, damit sich die Läufe nicht
            überlappen. */
-        const letzte = +(await env.WF_PUSH.get('radar:warm') || 0);
-        if (Date.now() - letzte > 4 * 60000) {
-          await env.WF_PUSH.put('radar:warm', String(Date.now()));
-          await radarBildVorwaermen(env, true);
+        /* Seit dem 2. November holt die iPhone-App (Widget, Regenwache)
+           auch im Hintergrund Bilder, Tag und Nacht. Mit einer KV-Marke je
+           Anstoß kostete das bis zu 360 der 1000 freien Schreibvorgänge am
+           Tag. Die Marke lebt deshalb im Speicher der Instanz; KV dient nur
+           frischen Instanzen als Anhalt und wird höchstens alle 30 Minuten
+           geschrieben. Der Cache wäre die naheliegende Wahl, wirkt auf
+           workers.dev aber nicht. Doppelte Läufe zweier Instanzen sind
+           harmlos, nur unnötig. */
+        if (Date.now() - radarWarmZuletzt > 4 * 60000) {
+          const gemerkt = +(await env.WF_PUSH.get('radar:warm') || 0);
+          radarWarmZuletzt = Math.max(radarWarmZuletzt, gemerkt);
+          if (Date.now() - radarWarmZuletzt > 4 * 60000) {
+            radarWarmZuletzt = Date.now();
+            if (Date.now() - gemerkt > 30 * 60000) {
+              await env.WF_PUSH.put('radar:warm', String(radarWarmZuletzt));
+            }
+            await radarBildVorwaermen(env, true);
+          }
         }
       })().catch(() => {}));
 
