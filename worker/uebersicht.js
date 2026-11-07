@@ -301,7 +301,7 @@ function zeichne(d) {
     const notiz = document.createElement('div');
     notiz.className = 'notiz';
     const feld = document.createElement('input');
-    feld.value = g.notiz; feld.placeholder = 'Notiz, z. B. Jeanettes iPhone'; feld.maxLength = 40;
+    feld.value = g.notiz; feld.placeholder = 'Notiz, z. B. iPad Küche'; feld.maxLength = 40;
     const knopf = document.createElement('button');
     knopf.className = 'klein'; knopf.textContent = 'Merken';
     knopf.onclick = async () => {
