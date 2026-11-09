@@ -532,12 +532,23 @@ export default {
           : { t, mm: eigen };
       };
 
-      const werte = (await Promise.all(schritte.map(holen))).filter(Boolean);
+      let werte = (await Promise.all(schritte.map(holen))).filter(Boolean);
+      let quelle = 'DWD RV 1 km';
       if (werte.length < schritte.length / 2) {
-        return json({ error: 'DWD antwortet nicht vollständig' }, 502, origin);
+        /* 09.11.2026: Der DWD-Kartendienst war zeitweise zu langsam für die
+           rund 39 Einzelabfragen → 502, und die App fiel still auf das Modell
+           zurück: „ein paar Tropfen in 117 Minuten", während es in Hirschau
+           mit 1,5 mm/h regnete. Bright Sky gibt dasselbe RV-Produkt als
+           Raster heraus — mit EINER Abfrage. Ersatz statt Fehler. */
+        const ersatz = await brightSkyVerlauf(lat, lon, schritte, ringBis, RING_KM);
+        if (!ersatz || ersatz.length < schritte.length / 2) {
+          return json({ error: 'DWD antwortet nicht vollständig' }, 502, origin);
+        }
+        werte = ersatz;
+        quelle = 'DWD RV 1 km (über Bright Sky)';
       }
       const koerper = JSON.stringify({ punkte: werte, einheit: 'mm/h',
-                                       umkreisKm: RING_KM, quelle: 'DWD RV 1 km' });
+                                       umkreisKm: RING_KM, quelle });
       ctx.waitUntil(env.RADAR_BILDER.put(vKey, koerper));
       return new Response(koerper, {
         headers: { ...cors(origin), 'content-type': 'application/json',
@@ -1982,6 +1993,45 @@ async function hashText(s) {
   const digest = await crypto.subtle.digest("SHA-256", bytes);
   return [...new Uint8Array(digest)].slice(0, 16)
     .map(b => b.toString(16).padStart(2, "0")).join("");
+}
+
+/** Ersatz für /dwdverlauf: dasselbe DWD-RV-Raster (1 km, 5 Min., gemessen +
+    Vorhersage) über api.brightsky.dev — eine Abfrage statt ~39. Einheit dort:
+    0,01 mm je 5 Minuten. Eigene Zelle = gerundete `latlon_position` (gegen
+    die DWD-Punktwerte geprüft: 0,13 mm ↔ 13), Umkreis = vier Zellen im
+    Abstand `ringKm` wie beim DWD-Weg. */
+async function brightSkyVerlauf(lat, lon, schritte, ringBis, ringKm) {
+  const iso = (t) => new Date(t).toISOString().replace(/\.\d+Z$/, 'Z');
+  const u = `https://api.brightsky.dev/radar?lat=${lat}&lon=${lon}`
+    + `&distance=${Math.ceil((ringKm + 1.5) * 1000)}&format=plain`
+    + `&date=${encodeURIComponent(iso(schritte[0]))}`
+    + `&last_date=${encodeURIComponent(iso(schritte[schritte.length - 1]))}`;
+  try {
+    const r = await withTimeout(fetch(u, {
+      headers: { 'accept-encoding': 'gzip' },
+      cf: { cacheTtl: 120, cacheEverything: true } }), 8000);
+    if (!r.ok) return null;
+    const d = await r.json();
+    const pos = d?.latlon_position;
+    if (!pos || !Array.isArray(d?.radar)) return null;
+    const nachZeit = new Map(d.radar.map(b => [new Date(b.timestamp).getTime(), b.precipitation_5]));
+    const zelle = (g, y, x) => {
+      const v = g?.[Math.round(y)]?.[Math.round(x)];
+      return typeof v === 'number' && v >= 0 ? +(v / 100 * 12).toFixed(2) : null;   // → mm/h
+    };
+    const out = [];
+    for (const t of schritte) {
+      const g = nachZeit.get(t);
+      const mm = zelle(g, pos.y, pos.x);
+      if (mm == null) continue;
+      if (t > ringBis) { out.push({ t, mm }); continue; }
+      const rund = [[pos.y + ringKm, pos.x], [pos.y - ringKm, pos.x],
+                    [pos.y, pos.x + ringKm], [pos.y, pos.x - ringKm]]
+        .map(([y, x]) => zelle(g, y, x)).filter(v => v != null);
+      out.push(rund.length ? { t, mm, umfeld: Math.max(...rund) } : { t, mm });
+    }
+    return out;
+  } catch { return null; }
 }
 
 function withTimeout(promise, ms) {

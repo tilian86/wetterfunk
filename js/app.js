@@ -1995,16 +1995,33 @@ function regenStufe(mmProStunde) {
    Schirme an Messstationen — hier steht der Wert für deinen Standort. */
 let punktVerlauf = null;          // { punkte: [{t, mm}], geholt }
 
-async function ladePunktVerlauf(lat, lon) {
+async function ladePunktVerlauf(lat, lon, nochmal = true) {
   const proxy = (store.get('wf.proxy', '') || 'https://wetterfunk.florian-s-thiel.workers.dev')
     .replace(/\/+$/, '');
+  const ort = `${lat.toFixed(3)},${lon.toFixed(3)}`;
   try {
     const r = await fetch(`${proxy}/dwdverlauf?lat=${lat.toFixed(3)}&lon=${lon.toFixed(3)}`);
-    if (!r.ok) { punktVerlauf = null; return; }
-    const d = await r.json();
-    punktVerlauf = Array.isArray(d?.punkte) && d.punkte.length
-      ? { punkte: d.punkte, geholt: Date.now() } : null;
-  } catch { punktVerlauf = null; }
+    if (r.ok) {
+      const d = await r.json();
+      if (Array.isArray(d?.punkte) && d.punkte.length) {
+        punktVerlauf = { punkte: d.punkte, geholt: Date.now(), ort };
+        return;
+      }
+    }
+  } catch {}
+  /* 09.11.2026: Ein einzelner Fehlschlag löschte den Verlauf bis zum nächsten
+     Laden zehn Minuten später — die Zeile fiel aufs Modell zurück und sagte
+     „in 117 Minuten ein paar Tropfen", während es draußen regnete. Jetzt
+     bleibt ein Verlauf für denselben Ort bis 20 Minuten stehen (er reicht
+     90 Minuten voraus), und nach 20 Sekunden folgt ein zweiter Versuch. */
+  if (punktVerlauf && (punktVerlauf.ort !== ort || Date.now() - punktVerlauf.geholt > 20 * 60000)) {
+    punktVerlauf = null;
+  }
+  if (!nochmal) return;
+  await new Promise(ok => setTimeout(ok, 20000));
+  if (place && `${place.lat.toFixed(3)},${place.lon.toFixed(3)}` === ort) {
+    await ladePunktVerlauf(lat, lon, false);
+  }
 }
 
 /** Aus dem Verlauf einen Satz machen: Wann fängt es an, wann hört es auf? */
