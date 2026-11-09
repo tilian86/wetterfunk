@@ -461,7 +461,9 @@ export default {
          Fuenf-Minuten-Schritt lohnt sie sich genau einmal. Der Cron stoesst
          sie im Voraus an, sodass der Nutzer den fertigen Stand vorfindet. */
       const vKey = `verlauf/${lat.toFixed(3)},${lon.toFixed(3)}`;
-      const vDa = await env.RADAR_BILDER.get(vKey);
+      // Prüfschalter: ?quelle=brightsky überspringt DWD und Zwischenspeicher (Ersatzweg testen)
+      const nurErsatz = url.searchParams.get('quelle') === 'brightsky';
+      const vDa = nurErsatz ? null : await env.RADAR_BILDER.get(vKey);
       if (vDa && Date.now() - new Date(vDa.uploaded).getTime() < 6 * 60000) {
         return new Response(await vDa.text(), {
           headers: { ...cors(origin), 'content-type': 'application/json',
@@ -511,8 +513,15 @@ export default {
              gilt jetzt einen Tag, nur Gegenwart und Vorhersage kurz. */
           const alterMin = (Date.now() - t) / 60000;
           const ttl = alterMin > 6 ? 86400 : 240;
-          const r = await withTimeout(
-            fetch(u, { cf: { cacheTtl: ttl, cacheEverything: true } }), 8000);
+          /* Abbrechen statt nur aufgeben (09.11.2026): Ein Worker hält höchstens
+             sechs Verbindungen gleichzeitig offen, die übrigen warten. Ohne
+             Abbruch blockierte eine hängende DWD-Abfrage ihren Platz weiter. */
+          const ac = new AbortController();
+          const wecker = setTimeout(() => ac.abort(), 8000);
+          let r;
+          try {
+            r = await fetch(u, { signal: ac.signal, cf: { cacheTtl: ttl, cacheEverything: true } });
+          } finally { clearTimeout(wecker); }
           if (!r.ok) return null;
           const d = await r.json();
           const v = d?.features?.[0]?.properties?.RV_ANALYSIS;
@@ -532,24 +541,35 @@ export default {
           : { t, mm: eigen };
       };
 
-      let werte = (await Promise.all(schritte.map(holen))).filter(Boolean);
+      /* Bright Sky ZUERST anstoßen, damit die eine Abfrage vorn in der
+         Warteschlange steht (sechs Verbindungen je Worker): Hinter den 39
+         DWD-Abfragen lief sie am 09.11. in ihre eigene Zeitgrenze. */
+      const ersatzLaeuft = brightSkyVerlauf(lat, lon, schritte, ringBis, RING_KM);
+      let werte = nurErsatz ? [] : (await Promise.all(schritte.map(holen))).filter(Boolean);
       let quelle = 'DWD RV 1 km';
-      if (werte.length < schritte.length / 2) {
+      if (werte.length < schritte.length) {
         /* 09.11.2026: Der DWD-Kartendienst war zeitweise zu langsam für die
-           rund 39 Einzelabfragen → 502, und die App fiel still auf das Modell
-           zurück: „ein paar Tropfen in 117 Minuten", während es in Hirschau
-           mit 1,5 mm/h regnete. Bright Sky gibt dasselbe RV-Produkt als
-           Raster heraus — mit EINER Abfrage. Ersatz statt Fehler. */
-        const ersatz = await brightSkyVerlauf(lat, lon, schritte, ringBis, RING_KM);
-        if (!ersatz || ersatz.length < schritte.length / 2) {
-          return json({ error: 'DWD antwortet nicht vollständig' }, 502, origin);
+           rund 39 Einzelabfragen → 502 oder Lücken (Reutlingen: 8 von 15 nach
+           12 s), und die App fiel still auf das Modell zurück: „ein paar
+           Tropfen in 117 Minuten", während es in Hirschau mit 1,5 mm/h
+           regnete. Bright Sky gibt dasselbe RV-Produkt als Raster heraus —
+           mit EINER Abfrage. Fehlende Schritte kommen von dort. */
+        const ersatz = await ersatzLaeuft;
+        if (ersatz?.length) {
+          const da = new Set(werte.map(w => w.t));
+          const dazu = ersatz.filter(e => !da.has(e.t));
+          if (dazu.length) {
+            quelle = werte.length ? 'DWD RV 1 km (Lücken über Bright Sky)' : 'DWD RV 1 km (über Bright Sky)';
+            werte = [...werte, ...dazu].sort((a, b) => a.t - b.t);
+          }
         }
-        werte = ersatz;
-        quelle = 'DWD RV 1 km (über Bright Sky)';
+      }
+      if (werte.length < schritte.length / 2) {
+        return json({ error: 'DWD antwortet nicht vollständig' }, 502, origin);
       }
       const koerper = JSON.stringify({ punkte: werte, einheit: 'mm/h',
                                        umkreisKm: RING_KM, quelle });
-      ctx.waitUntil(env.RADAR_BILDER.put(vKey, koerper));
+      if (!nurErsatz) ctx.waitUntil(env.RADAR_BILDER.put(vKey, koerper));
       return new Response(koerper, {
         headers: { ...cors(origin), 'content-type': 'application/json',
                    'cache-control': 'public, max-age=120' }
@@ -2010,7 +2030,7 @@ async function brightSkyVerlauf(lat, lon, schritte, ringBis, ringKm) {
     const r = await withTimeout(fetch(u, {
       headers: { 'accept-encoding': 'gzip' },
       cf: { cacheTtl: 120, cacheEverything: true } }), 8000);
-    if (!r.ok) return null;
+    if (!r.ok) { console.log('brightsky', r.status, (await r.text()).slice(0, 200)); return null; }
     const d = await r.json();
     const pos = d?.latlon_position;
     if (!pos || !Array.isArray(d?.radar)) return null;
@@ -2031,7 +2051,7 @@ async function brightSkyVerlauf(lat, lon, schritte, ringBis, ringKm) {
       out.push(rund.length ? { t, mm, umfeld: Math.max(...rund) } : { t, mm });
     }
     return out;
-  } catch { return null; }
+  } catch (e) { console.log('brightsky fehler', String(e)); return null; }
 }
 
 function withTimeout(promise, ms) {
