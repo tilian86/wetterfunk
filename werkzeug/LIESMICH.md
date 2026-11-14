@@ -22,3 +22,22 @@ Grenzen: geoBoundaries (CC BY 4.0), auf 1/1000 Grad gerundet und
 delta-kodiert. Die Zuordnung der kroatischen Gespanschaften auf die sieben
 Vorhersageregionen des DHMZ und die slowenischen Landesviertel stehen als
 Tabellen oben in `bau.py`.
+
+## messung/ — Tagessymbol und Sonnenstunden nachmessen
+
+Vergleicht die Vorhersage der letzten drei Jahre (Open-Meteo Historical
+Forecast) mit den DWD-Messungen (Bright Sky). Daraus stammen die Schwellen
+in `daySymbol()` und die Eichkurve `sonneGeeicht()` in `js/app.js`.
+
+```bash
+cd werkzeug/messung
+python3 symbol_messung.py               # Regensymbol gegen gemessene Sonne
+python3 symbol_messung.py --stuttgart   # Gegenprobe am Ort der Sonnen-Station
+python3 sonne_eichung.py --stuttgart    # Fehler der Sonnenstunden, roh und geeicht
+python3 trocken_klassen.py              # trockene Tage je Sonnenanteil
+```
+
+Wichtig: Sonnenschein misst der DWD nur an wenigen Stationen. Für Tübingen
+liefert Bright Sky die Werte von Stuttgart-Schnarrenberg (36 km). Deshalb
+jede Schwelle auch mit `--stuttgart` prüfen — dort passen Vorhersage und
+Messung zum selben Ort. Abrufe landen in `cache/` (nicht im Repo, ~35 MB).

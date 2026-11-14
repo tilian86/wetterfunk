@@ -2,3 +2,5 @@
 node_modules/
 .wrangler/
 .claude/
+werkzeug/messung/cache/
+__pycache__/
