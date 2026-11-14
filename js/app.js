@@ -1352,9 +1352,24 @@ function daySymbol(dayIndex) {
      Schauertag gezeichnet wird. */
   const sonneWerte = idx.map(i => sonneFuer(h.time[i], h.sunshine_duration?.[i]))
     .filter(v => v != null);
-  const moeglich = idx.length * 3600;
-  const sonneAnteil = (sonneWerte.length && moeglich > 0)
-    ? sonneWerte.reduce((a, b) => a + b, 0) / moeglich : null;
+  /* Möglich ist nur Sonne, solange es hell ist. Vorher stand hier fest
+     14 Stunden (7–20 Uhr) — im Sommer stimmt das, im November ist es aber
+     nur gut 9 Stunden hell. Ein Tag mit 5 Sonnenstunden kam so auf 35 %
+     statt 54 % und bekam eine graue Regenwolke; „heiter" oder „sonnig"
+     war im Winter gar nicht erreichbar (höchstens 66 %). Jetzt zählt je
+     Stunde nur der helle Teil (Stundenwerte gelten für die Stunde DAVOR).
+     Im Hochsommer (Aufgang vor 6, Untergang nach 20 Uhr) bleibt alles wie
+     geeicht. */
+  const auf = d.sunrise?.[dayIndex] ? new Date(d.sunrise[dayIndex]).getTime() : NaN;
+  const unter = d.sunset?.[dayIndex] ? new Date(d.sunset[dayIndex]).getTime() : NaN;
+  const moeglich = (unter > auf)
+    ? idx.reduce((s, i) => {
+        const ende = new Date(h.time[i]).getTime(), anfang = ende - 3600e3;
+        return s + Math.max(0, Math.min(ende, unter) - Math.max(anfang, auf)) / 1000;
+      }, 0)
+    : idx.length * 3600;
+  const sonneAnteil = (sonneWerte.length && moeglich >= 3600)
+    ? Math.min(1, sonneWerte.reduce((a, b) => a + b, 0) / moeglich) : null;
 
   // Niederschlag hat Vorrang: stärkster Regen-/Schnee-Code der nassen Stunden
   const wet = idx.filter(i => (h.precipitation[i] ?? 0) >= 0.1);
