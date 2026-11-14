@@ -1375,37 +1375,70 @@ function daySymbol(dayIndex) {
   const wet = idx.filter(i => (h.precipitation[i] ?? 0) >= 0.1);
   const wetShare = wet.length / idx.length;
   const regenSumme = d.precipitation_sum[dayIndex] ?? 0;
-  if (wetShare >= 0.2 || regenSumme >= 1.5) {
+  if (wet.length && (wetShare >= 0.2 || regenSumme >= 1.5)) {
     /* Nach REGENMENGE gewichten, nicht nach Stundenzahl: Bei je einer Stunde
        61/63/80 entschied vorher die Sortierreihenfolge der Zahlen — also der
-       Zufall — statt der kräftigste Schauer. */
+       Zufall — statt der kräftigste Schauer.
+       Gezählt werden nur Niederschlags-Codes (ab 51). Weiter in der Ferne
+       passen Stunden-Code und Regenmenge der Modelle oft nicht zusammen: Für
+       den 18.11. standen 6 mm über zehn nasse Stunden in der Vorhersage, die
+       meisten davon mit Code 3 („bedeckt"). Der trockene Code gewann, und der
+       Regentag bekam eine Wolke ganz ohne Tropfen. */
     const counts = {};
     wet.forEach(i => {
       const c = h.weather_code[i];
+      if (!(c >= 51)) return;
       counts[c] = (counts[c] || 0) + (h.precipitation[i] ?? 0);
     });
     const top = Object.entries(counts).sort((a, b) => b[1] - a[1])[0];
+    let code;
     if (top) {
-      const code = +top[0];
-      /* Ein Schauer macht aus einem Sonnentag keinen Regentag.
-         Gemessen an 156 Tagen (April–September) bekamen 44 Tage eine GRAUE
-         Regenwolke, obwohl mindestens 7 Sonnenstunden gemessen wurden — am
-         21.06. bei 15 h Sonne und 1,4 mm Niesel. Grund: Dieser Zweig übersprang
-         die Sonnenprüfung komplett, und Niesel-/Regencodes zeichnen eine Wolke
-         ohne Sonne.
-         Ab Sonnenanteil 0,54 (dieselbe geeichte Schwelle wie „wolkig mit Sonne")
-         und unter 10 mm zeigen wir deshalb das Schauer-Symbol MIT Sonne. Es
-         bleibt ehrlich — die Tropfen bleiben drin —, sagt aber dazu, dass die
-         Sonne den Tag beherrscht. Kreuzgeprüft Tübingen/Reutlingen:
-         41 bzw. 48 Tage verbessert, KEIN Fehlgriff (kein Tag unter 4 h Sonne).
-         Nur echter Regen/Niesel wird umgedeutet — gefrierender Niederschlag
-         (56/57/66/67) und Schnee bleiben, wie sie sind. */
-      const istRegen = (code >= 51 && code <= 55) || (code >= 61 && code <= 65);
-      if (istRegen && sonneAnteil != null && sonneAnteil >= 0.54 && regenSumme < 10) {
-        return regenSumme < 2.5 ? 80 : 81;
-      }
-      return code;
+      code = +top[0];
+    } else {
+      // Kein einziger Niederschlags-Code: aus Menge und Temperatur ableiten
+      const staerkste = Math.max(...wet.map(i => h.precipitation[i] ?? 0));
+      const kalt = wet.every(i => (h.temperature_2m?.[i] ?? 5) <= 0.5);
+      code = kalt ? (staerkste >= 1 ? 73 : 71)
+        : staerkste >= 7.5 ? 65 : staerkste >= 2.5 ? 63 : 61;
     }
+
+    /* Ein Schauer macht aus einem Sonnentag keinen Regentag — aber die Sonne
+       muss dann auch wirklich kommen.
+       Bis v240 galt: Sonne im Regensymbol ab Sonnenanteil 0,54 (geeicht an
+       156 Sommertagen), und die Schauer-Codes 80–82 zeichneten IMMER eine
+       Sonne. Nachgemessen über drei Jahre (11/2023–11/2026, 1105 Tage,
+       archivierte Vorhersage mit dem Sonnen-Mittel der sechs Modelle gegen
+       die gemessene Sonnenscheindauer der nächsten DWD-Station mit
+       Sonnenmessung, Stuttgart-Schnarrenberg; Gegenprobe mit der Vorhersage
+       genau für diesen Ort):
+         · graue Regenwolke: fast nie falsch (2 von 191 Tagen sonnig)
+         · „Sonne mit Regen": nur 35 % der Tage hatten wirklich Sonne
+           (mindestens 30 % der hellen Zeit), im Winterhalbjahr 20 %
+         · Schauer-Code bei Sonnenanteil unter 0,54: 1 von 20 Tagen sonnig
+       Die Modelle überschätzen die Sonne an Regentagen kräftig: Bei
+       vorhergesagten 40–54 % kamen im Mittel 11 % (1 von 46 Tagen sonnig).
+       Schwelle durchprobiert (244 bzw. 256 Regentage unter 10 mm):
+         0,54 → 79 / 84 % richtig     0,65 → 89 / 88 %     0,70 → 91 / 86 %
+         alte Regel (0,54 oder Schauer-Code) → 73 / 79 %
+       0,65 liegt an beiden Orten vorn oder höchstens zwei Punkte dahinter.
+       Ab 10 mm bleibt es grau (zum Messen zu selten: 4 bzw. 6 Tage).
+       Nur Regen, Niesel und Schauer werden umgedeutet — gefrierender
+       Niederschlag (56/57/66/67), Schnee und Gewitter bleiben, wie sie sind. */
+    const istRegen = (code >= 51 && code <= 55) || (code >= 61 && code <= 65)
+      || (code >= 80 && code <= 82);
+    if (!istRegen) return code;
+    if (sonneAnteil != null && sonneAnteil >= 0.65 && regenSumme < 10) {
+      return regenSumme < 2.5 ? 80 : 81;
+    }
+    /* Grau, aber kaum Regen am Tag (unter 1 mm zwischen 7 und 20 Uhr): kleine
+       Tropfen statt Regenwolke. Gemessen an 54 bzw. 74 solchen Tagen fielen
+       im Median 0,3 mm, vier von zehn blieben ganz trocken. Ab 1 mm waren es
+       2,0 mm, und nur 7 von 162 Tagen blieben trocken. */
+    const tagRegen = wet.reduce((s, i) => s + (h.precipitation[i] ?? 0), 0);
+    if (tagRegen < 1) return 51;
+    // Schauer ohne Sonne: dieselbe Stärke als Regenwolke
+    if (code >= 80) return code === 82 ? 65 : code === 81 ? 63 : 61;
+    return code;
   }
   // Gewitter nie verschlucken
   if (idx.some(i => [95, 96, 99].includes(h.weather_code[i]))) return 95;
