@@ -1531,7 +1531,7 @@ function rainWindow(dayIndex) {
    trotzdem, bleibt die Bewölkung als Notbehelf. */
 function sonnenStunden(dayISO) {
   const h = data.hourly;
-  let sekunden = 0, gefunden = false, ersatz = 0;
+  let sekunden = 0, gefunden = false, ersatz = 0, helleStunden = 0;
   for (let u = 0; u < 24; u++) {
     const k = h.time.indexOf(`${dayISO}T${String(u).padStart(2, '0')}:00`);
     if (k < 0) continue;
@@ -1539,11 +1539,38 @@ function sonnenStunden(dayISO) {
       sekunden += h.sunshine_duration[k];
       gefunden = true;
     }
+    if (h.is_day[k] === 1) helleStunden++;
     if (h.is_day[k] === 1 && (h.precipitation[k] ?? 0) < 0.3) {
       ersatz += Math.max(0, (100 - wolkenFuer(h.time[k], h.cloud_cover[k] ?? 100)) / 100);
     }
   }
-  return gefunden ? sekunden / 3600 : ersatz;
+  if (!gefunden) return ersatz;
+  // Tageslänge aus Auf- und Untergang, sonst aus den hellen Stunden
+  const di = data.daily?.time?.indexOf(dayISO) ?? -1;
+  const auf = di >= 0 && data.daily.sunrise?.[di] ? new Date(data.daily.sunrise[di]).getTime() : NaN;
+  const unter = di >= 0 && data.daily.sunset?.[di] ? new Date(data.daily.sunset[di]).getTime() : NaN;
+  return sonneGeeicht(sekunden / 3600, unter > auf ? (unter - auf) / 3600e3 : helleStunden);
+}
+
+/* Die Modelle rechnen zu viel Sonne — die rohe Summe stand deshalb oft im
+   Widerspruch zum Tagessymbol („☀ 5 Std." neben einer grauen Wolke).
+   Nachgemessen an 1105 Tagen (11/2023–11/2026, archivierte Vorhersage für den
+   Ort der DWD-Station Stuttgart-Schnarrenberg gegen deren gemessene
+   Sonnenscheindauer): Die Tagessumme lag im Mittel 1,5 h zu hoch, der mittlere
+   Fehler bei 1,7 h. Standen 2–5 Stunden in der Liste, wurden im Mittel 1,8 h
+   gemessen. Der Fehler hängt am Anteil der hellen Zeit, kaum an der Jahreszeit:
+     vorhergesagt  10 %  30 %  50 %  60 %  70 %  80 %  90 %  98 %
+     gemessen       7 %  17 %  29 %  35 %  51 %  61 %  76 %  90 %
+   Zwei Geraden treffen das: Bis 60 % bleibt gut die Hälfte übrig, darüber
+   holt die Messung auf (100 % → 93 %). Damit sinkt der mittlere Fehler auf
+   1,1 h und die Schieflage auf +0,1 h; je Jahr einzeln geprüft (geeicht an
+   den beiden anderen) 1,1–1,2 h. Gegenprobe mit der Tübinger Vorhersage:
+   2,4 → 1,7 h. */
+function sonneGeeicht(stunden, hell) {
+  if (!(hell > 0)) return stunden;
+  const r = Math.min(1, stunden / hell);
+  const g = r <= 0.6 ? r * 0.35 / 0.6 : 0.35 + (r - 0.6) * 0.58 / 0.4;
+  return g * hell;
 }
 
 /** Farbe einer Tagesstunde für den Verlaufsbalken.
@@ -7499,8 +7526,7 @@ function renderCams() {
   const feste = CAM_FEST.map(c => `
     <figure class="cam">
       <a class="cam-img" href="${c.quelle}" target="_blank" rel="noopener noreferrer">
-        <img src="${bild(c.url)}" alt="${c.name}" loading="lazy"
-             onerror="this.closest('.cam').classList.add('cam-err')">
+        <img src="${bild(c.url)}" alt="${c.name}" loading="lazy">
         <span class="cam-err-msg">Bild gerade nicht abrufbar</span>
       </a>
       <figcaption>
@@ -7513,8 +7539,7 @@ function renderCams() {
     <figure class="cam" data-i="${i}">
       <div class="cam-img">
         <img src="${esc(bild(c.url))}" alt="${esc(c.name)}" loading="lazy"
-             referrerpolicy="no-referrer"
-             onerror="this.closest('.cam').classList.add('cam-err')">
+             referrerpolicy="no-referrer">
         <span class="cam-err-msg">Bild nicht abrufbar</span>
       </div>
       <figcaption>
@@ -7524,6 +7549,16 @@ function renderCams() {
     </figure>`).join('');
 
   box.innerHTML = feste + eigene + presets;
+
+  /* Fällt ein Bild aus, zeigt die Kachel den Hinweis statt eines kaputten
+     Bildes. Das stand vorher als onerror="…" direkt im <img> — solche
+     Inline-Handler sperrt die Content-Security-Policy der Seite, der Hinweis
+     kam also nie. */
+  $$('.cam img', box).forEach(img => {
+    const fehlt = () => img.closest('.cam')?.classList.add('cam-err');
+    img.addEventListener('error', fehlt);
+    if (img.complete && img.naturalWidth === 0 && img.currentSrc) fehlt();
+  });
 
   $$('.cam-del', box).forEach(b => b.addEventListener('click', (e) => {
     e.preventDefault();
@@ -9576,7 +9611,7 @@ function wire() {
 /** Schnittstelle für das Berichts-Modul. */
 const hostApi = {
   state: () => ({ place, data, air, models: modelData, warnings: activeWarnings }),
-  toast, openSheet, closeSheet
+  toast, openSheet, closeSheet, sonnenStunden
 };
 
 async function boot() {

@@ -141,7 +141,8 @@ function buildFacts(parts) {
       `Regen max. ${d.precipitation_probability_max[0] ?? 0}% / ${(d.precipitation_sum[0] ?? 0).toFixed(1)} mm, ` +
       `Wind bis ${r0(d.wind_speed_10m_max[0])} km/h (Böen ${r0(d.wind_gusts_10m_max[0])}), ` +
       `UV max. ${r0(d.uv_index_max[0])}, Sonne ${hhmm(d.sunrise[0])}–${hhmm(d.sunset[0])}, ` +
-      `Sonnenschein ca. ${Math.round((d.sunshine_duration?.[0] ?? 0) / 3600)} Std.`);
+      // dieselbe geeichte Zahl wie in der Tagesliste, nicht die rohe Modellsumme
+      `Sonnenschein ca. ${Math.round(host.sonnenStunden?.(d.time[0]) ?? (d.sunshine_duration?.[0] ?? 0) / 3600)} Std.`);
   }
 
   if (parts.includes('week')) {
