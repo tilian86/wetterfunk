@@ -1092,7 +1092,9 @@ async function regenPruefen(env) {
      der teure Blick am Radar hing; mit dem Vorposten je Gerät wäre die
      Grenze ab dem fünften Gerät gerissen — und zwar stillschweigend, denn
      Cloudflare wirft die überzähligen Anfragen einfach weg. */
-  const radarBudget = Math.max(0, 46 - 2 * liste.keys.length);
+  /* Fünf Anfragen bleiben für den Radar-Ersatz frei (Bright Sky, höchstens
+     eine je Punkt: Mitte + vier im Ring), falls der DWD nicht antwortet. */
+  const radarBudget = Math.max(0, 41 - 2 * liste.keys.length);
   let radarAusgegeben = 0;
   const reichtFuer = (n) => radarAusgegeben + n <= radarBudget;
 
@@ -1348,7 +1350,10 @@ async function regenPruefen(env) {
           eintrag.himmelGemeldet = [...(eintrag.himmelGemeldet || []), meldung.merker].slice(-12);
         } else {
           eintrag.gemeldet = meldung.merker;
-          if (['start', 'ende', 'haelt'].includes(meldung.art)) {
+          /* Auch die Entwarnung mitschreiben. „ende" heißt im Journal „es
+             regnet bis etwa …", nicht „vorbei" — wie oft „Von oben kommt
+             nichts mehr" hinausging, ließ sich bisher nicht nachzählen. */
+          if (['start', 'ende', 'haelt', 'vorbei'].includes(meldung.art)) {
             merke(ortKey, 'meldung', { typ: meldung.art });
           }
         }
@@ -1744,13 +1749,28 @@ async function regenLage(lat, lon) {
      den Schirm. */
   const NASS = 0.05;               // je Viertelstunde = 0,2 mm/h, Nachweisgrenze
   const MELDE_SUMME = 0.05;        // ein einzelner nasser Abschnitt genügt
+  /* Eine einzelne trockene Viertelstunde zwischen zwei nassen trennt keine
+     Phasen. Das Modell liefert auf 0,1 mm gerundet — bei Dauerregen steht
+     deshalb immer wieder eine „0,00" in der Reihe, und jede davon zerlegte
+     den Regen in zwei: Am 17.11.2026 wurden aus einem Regen von 4 bis
+     12:30 Uhr fünf Phasen, mit „Regen bis etwa 04:45" (er lief weiter) und
+     neuen Ankündigungen mittendrin.
+     Nachgemessen an 69 Tagen gegen den Regenmesser Rottenburg-Kiebingen
+     (werkzeug/messung/regen_phasen.py): In 7 von 12 solcher Lücken (58 %)
+     fiel am Messer Regen — fern von Modellregen sind es 0,8 %. Bei 30
+     Minuten waren es noch 3 von 9; deshalb bleibt es bei EINER
+     Viertelstunde. Echte Pausen ab einer halben Stunde trennen weiter,
+     jede Phase wird wie bisher einzeln gemeldet (79 → 67 Phasen). */
+  const nass = (k) => (werte[k] ?? 0) >= NASS
+    || (k > 0 && k + 1 < zeiten.length
+        && (werte[k - 1] ?? 0) >= NASS && (werte[k + 1] ?? 0) >= NASS);
   const phasen = [];
   let i = ab;
   while (i < horizont) {
-    if ((werte[i] ?? 0) < NASS) { i++; continue; }
+    if (!nass(i)) { i++; continue; }
     let j = i, summe = 0, spitze = 0;
-    while (j < zeiten.length && (werte[j] ?? 0) >= NASS) {
-      summe += werte[j]; spitze = Math.max(spitze, werte[j]); j++;
+    while (j < zeiten.length && nass(j)) {
+      summe += werte[j] ?? 0; spitze = Math.max(spitze, werte[j] ?? 0); j++;
     }
     phasen.push({
       start: alsZeit(zeiten[i]),
@@ -1783,7 +1803,7 @@ async function regenLage(lat, lon) {
   if (!phasen.length) return { laeuft: null, naechste: null, risiko };
 
   // Regnet es jetzt schon, ist die erste Phase die laufende
-  const esRegnet = (werte[ab] ?? 0) >= NASS && phasen[0].start <= jetzt + 9e5;
+  const esRegnet = nass(ab) && phasen[0].start <= jetzt + 9e5;
   const laeuft = esRegnet ? phasen[0] : null;
   const rest = esRegnet ? phasen.slice(1) : phasen;
   const naechste = rest[0] || null;
@@ -1838,8 +1858,48 @@ const RADAR_NAHE      = 0.5;         // mm/h im Umkreis von 2,5 km
 const imRadargebiet = (lat, lon) =>
   lat > 46.5 && lat < 56 && lon > 4.5 && lon < 16.5;
 
-/* Ein Wert vom DWD-Radar, umgerechnet in Millimeter je Stunde. */
+/* Ein Radarwert in Millimeter je Stunde — vom DWD, und wenn der trödelt, über
+   Bright Sky (dasselbe RV-Raster, siehe brightSkyVerlauf).
+
+   Am 17.11.2026 regnete es über Tübingen von 07:50 bis 09:05 Uhr mit 0,5 bis
+   2 mm/h, im Wach-Journal steht für diese Zeit keine einzige Beobachtung.
+   Der Kartendienst des DWD brauchte an dem Vormittag 6 bis 13 Sekunden je
+   Abfrage; nach 8 Sekunden gibt der Wächter auf und ist dann blind — das
+   Modell meldet allein, die Gegenprobe winkt alles durch. Derselbe Fehler
+   wie am 09.11. in der App, dort schon behoben.
+
+   Der DWD bleibt die erste Quelle (seine Werte sind feiner gestuft, daran
+   sind die Schwellen gemessen). Antwortet er nicht binnen drei Sekunden,
+   springt Bright Sky ein. */
+const ersatzMerk = new Map();        // Ort → { geholt, werte: Promise<Map<t, mm/h>> }
+async function radarErsatz(lat, lon, t) {
+  const ort = `${lat.toFixed(4)},${lon.toFixed(4)}`;
+  let e = ersatzMerk.get(ort);
+  if (!e || Date.now() - e.geholt > 120000) {
+    const takt = Math.floor(Date.now() / 300000) * 300000;
+    const schritte = [];
+    for (let m = -15; m <= 100; m += 5) schritte.push(takt + m * 60000);
+    e = { geholt: Date.now(),
+          werte: brightSkyVerlauf(lat, lon, schritte, 0, 0)
+            .then(v => v ? new Map(v.map(x => [x.t, x.mm])) : null) };
+    if (ersatzMerk.size > 40) ersatzMerk.clear();
+    ersatzMerk.set(ort, e);
+  }
+  const v = (await e.werte)?.get(Math.floor(t / 300000) * 300000);
+  return typeof v === 'number' ? v : null;
+}
+
 async function radarWert(lat, lon, t) {
+  const dwd = radarWertDwd(lat, lon, t);
+  const schnell = await Promise.race([dwd,
+    new Promise(ok => setTimeout(() => ok(undefined), 3000))]);
+  if (typeof schnell === 'number') return schnell;
+  const ersatz = await radarErsatz(lat, lon, t);
+  if (typeof ersatz === 'number') return ersatz;
+  return schnell === undefined ? dwd : null;      // doch noch auf den DWD warten
+}
+
+async function radarWertDwd(lat, lon, t) {
   const zeit = new Date(t).toISOString().replace(/\.\d+Z$/, '.000Z');
   const bb = `${(lon - 0.05).toFixed(4)},${(lat - 0.05).toFixed(4)},`
            + `${(lon + 0.05).toFixed(4)},${(lat + 0.05).toFixed(4)}`;

@@ -839,6 +839,37 @@ function regenKlartext(mmProStunde) {
   return                         { wort: 'Platzregen',         rat: 'Unterstand suchen, Schirm hilft kaum', kurz: 'Unterstand' };
 }
 
+/* ── Dauerregen: die Stunde zählt, nicht der Augenblick ────
+   Am 17.11.2026 regnete es über Tübingen von 5 bis 12 Uhr durch, Stunde für
+   Stunde 0,5–1,6 mm. Der Augenblickswert sprang dabei alle paar Minuten
+   zwischen 0,1 und 2 mm/h — und mit ihm der Rat zwischen „Kapuze reicht" und
+   „kleiner Schirm". Wer im falschen Moment schaute, ging ohne Schirm los.
+
+   Deshalb zählt zusätzlich die Regensumme der Stunde ringsum (die
+   zurückliegende oder die kommende, je vier Viertelstunden). Die Stufen
+   selbst bleiben, nur die Zahl, an der sie gemessen werden, ist ruhiger.
+   Nachgemessen an 69 Tagen gegen den Regenmesser Rottenburg-Kiebingen
+   (werkzeug/messung/regen_phasen.py): Sagte der Augenblick „Kapuze", die
+   Stundensumme aber „Schirm", fielen in der Stunde im Mittel 0,72 mm
+   (sonst 0,15). Erkannte Schirm-Stunden: 96 statt 75 %.
+   Dauer ALLEIN hebt nichts an: lange Phasen mit durchweg 0,1 mm je
+   Viertelstunde brachten am Messer fast nichts (0,06 mm/h). */
+function stundenStaerke(zeit = Date.now()) {
+  const m = data?.minutely_15;
+  if (!m?.time?.length) return 0;
+  const i = m.time.findIndex(t => {
+    const a = new Date(t).getTime();
+    return a <= zeit && a + 9e5 > zeit;
+  });
+  if (i < 0) return 0;
+  const summe = (von, bis) => {
+    let s = 0;
+    for (let k = Math.max(0, von); k <= bis && k < m.time.length; k++) s += m.precipitation[k] ?? 0;
+    return s;
+  };
+  return Math.max(summe(i - 3, i), summe(i, i + 3));
+}
+
 /** Menge und Rat in einem Satzteil: „leichter Regen, 1,2 mm — kleiner Schirm genügt". */
 function regenSatzteil(mmProStunde, summe = null) {
   const k = regenKlartext(mmProStunde);
@@ -935,7 +966,7 @@ function renderVerdict() {
     const wieder = bis ? near.find(x => x.t > bis && proStunde(x.mm) >= REGEN.nichts) : null;
     const nachsatz = wieder ? ` Dann ab ${hhmm(wieder.t)} wieder.` : '';
 
-    const kJetzt = regenKlartext(jetztStaerke);
+    const kJetzt = regenKlartext(Math.max(jetztStaerke, stundenStaerke(now)));
     el.innerHTML = `<b>${kJetzt.wort.charAt(0).toUpperCase()}${kJetzt.wort.slice(1)} gerade.</b> ${
       restMin != null
         ? (restMin <= 5 ? `Hört gleich auf.${nachsatz}`
@@ -962,7 +993,7 @@ function renderVerdict() {
     const mins = Math.max(0, Math.round((first.t - now) / 60000));
     /* Bei 0,2 mm in der Stunde von „Regen" zu sprechen, wäre übertrieben —
        das sind ein paar Tropfen, die kaum den Boden benetzen. */
-    const staerke = proStunde(first.mm);
+    const staerke = Math.max(proStunde(first.mm), stundenStaerke(first.t));
     const k = regenKlartext(staerke);
     // Menge der ganzen Phase, nicht nur des ersten Blocks
     let summe = 0;
@@ -2131,7 +2162,7 @@ function punktSatz() {
   if (eigenJetzt >= NASS) {
     // Vorbei ist es erst, wenn auch der Umkreis frei ist — sonst zieht die Zelle nur weiter
     const trocken = p.find(x => x.t > jetzt && !irgendwoNass(x));
-    const k = regenKlartext(Math.max(eigenJetzt, naheJetzt * 0.6));
+    const k = regenKlartext(Math.max(eigenJetzt, naheJetzt * 0.6, stundenStaerke(jetzt)));
     return { regnet: true, staerke: eigenJetzt,
       text: (trocken
         ? `Bei dir: <b>${k.wort}</b> bis etwa <b>${uhr(trocken.t)}</b> (${inMin(trocken.t)} Min.).`

@@ -35,7 +35,15 @@ python3 symbol_messung.py               # Regensymbol gegen gemessene Sonne
 python3 symbol_messung.py --stuttgart   # Gegenprobe am Ort der Sonnen-Station
 python3 sonne_eichung.py --stuttgart    # Fehler der Sonnenstunden, roh und geeicht
 python3 trocken_klassen.py              # trockene Tage je Sonnenanteil
+python3 regen_phasen.py                 # Regen-Rat und Regenphasen gegen den Regenmesser
 ```
+
+`regen_phasen.py` (17.11.2026) vergleicht die Viertelstundenwerte des
+Modells mit den Zehn-Minuten-Werten des Regenmessers Rottenburg-Kiebingen.
+Daraus stammen zwei Regeln: Eine einzelne trockene Viertelstunde trennt
+keine Regenphasen (Worker, `regenLage`), und der Rat richtet sich auch nach
+der Regensumme der Stunde ringsum (`stundenStaerke()` in `js/app.js`). Die
+Messwerte muss man vorher von Hand holen — der Weg steht im Kopf der Datei.
 
 Wichtig: Sonnenschein misst der DWD nur an wenigen Stationen. Für Tübingen
 liefert Bright Sky die Werte von Stuttgart-Schnarrenberg (36 km). Deshalb

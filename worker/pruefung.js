@@ -275,7 +275,8 @@ export function meldungsBilanz(journal, folge = null, bis = null) {
     evs.sort((a, x) => a.t - x.t);
     const obs = evs.filter(e => e.art === 'obs');
     const obsAlle = [...obs, ...spaeter.sort((a, x) => a.t - x.t)];
-    const meld = evs.filter(e => e.art === 'meldung');
+    // „vorbei" (Entwarnung, seit 17.11.2026 im Journal) ist keine Regenmeldung
+    const meld = evs.filter(e => e.art === 'meldung' && e.typ !== 'vorbei');
     const still = evs.filter(e => e.art === 'unterdrueckt');
 
     // Regenphasen aus den Übergängen
